@@ -1,0 +1,26 @@
+import uuid
+from datetime import datetime
+from sqlalchemy import Column, String, Integer, ForeignKey, TIMESTAMP
+from sqlalchemy.dialects.postgresql import UUID
+from app.core.database import Base
+
+
+class Batch(Base):
+    """批次表"""
+
+    __tablename__ = "batches"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    batch_number = Column(Integer, nullable=False)
+    start_chapter = Column(Integer, nullable=False)
+    end_chapter = Column(Integer, nullable=False)
+    total_chapters = Column(Integer, nullable=False)
+    total_words = Column(Integer, default=0)
+
+    # 处理状态
+    breakdown_status = Column(String(50), default="pending", index=True)
+    script_status = Column(String(50), default="pending")
+
+    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
+    updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
