@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.v1.router import api_router
+from app.core.database import AsyncSessionLocal
+from app.core.init_skills import init_builtin_skills
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -20,6 +22,14 @@ app.add_middleware(
 
 # 注册API路由
 app.include_router(api_router, prefix="/api/v1")
+
+
+@app.on_event("startup")
+async def startup_event():
+    """应用启动时初始化"""
+    async with AsyncSessionLocal() as db:
+        await init_builtin_skills(db)
+        print("应用启动完成")
 
 
 @app.get("/")

@@ -70,3 +70,56 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 后端服务将在 http://localhost:8000 启动
 API 文档：http://localhost:8000/docs
+
+### 4. 配置前端
+
+```bash
+cd frontend
+
+# 安装依赖
+npm install
+
+# 启动开发服务器
+npm run dev
+```
+
+前端服务将在 http://localhost:5173 启动
+
+### 5. 启动 Celery Worker
+
+```bash
+cd backend
+
+# 启动 Celery Worker
+celery -A app.core.celery_app worker --loglevel=info
+```
+
+## 核心功能
+
+### 用户端功能
+1. **项目管理**
+   - 创建项目并上传小说文件
+   - 自动章节识别和批次划分
+   - 项目统计信息展示
+
+2. **剧情拆解（Breakdown）**
+   - 提取冲突点
+   - 识别剧情钩子
+   - 分析人物关系
+   - 识别场景
+   - 提取情绪点
+
+3. **剧本生成（Script）**
+   - 规划剧集结构
+   - 生成场景描述
+   - 编写对话
+   - 格式化剧本
+
+4. **导出功能**
+   - 单集导出（PDF）
+   - 批量打包导出
+
+### 管理端功能
+1. 用户管理
+2. 系统统计
+3. 模型配置管理

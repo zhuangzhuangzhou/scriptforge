@@ -1,0 +1,41 @@
+from app.core.celery_app import celery_app
+from app.core.database import AsyncSessionLocal
+from app.ai.adapters import OpenAIAdapter
+from app.ai.graph.script_workflow import create_script_workflow
+from app.core.config import settings
+
+
+@celery_app.task(bind=True)
+def run_script_task(self, task_id: str, batch_id: str, project_id: str, breakdown_id: str):
+    """执行Script任务"""
+    import asyncio
+
+    async def _run():
+        async with AsyncSessionLocal() as db:
+            # 创建模型适配器
+            model_adapter = OpenAIAdapter(
+                api_key=settings.OPENAI_API_KEY,
+                model_name=settings.OPENAI_MODEL
+            )
+
+            # 创建工作流
+            workflow = create_script_workflow(model_adapter, db)
+
+            # 执行工作流
+            initial_state = {
+                "batch_id": batch_id,
+                "project_id": project_id,
+                "breakdown_id": breakdown_id,
+                "breakdown_data": {},
+                "episodes": [],
+                "scenes": [],
+                "dialogues": [],
+                "current_step": "",
+                "progress": 0,
+                "errors": []
+            }
+
+            result = await workflow.ainvoke(initial_state)
+            return result
+
+    return asyncio.run(_run())

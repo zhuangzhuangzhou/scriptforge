@@ -1,10 +1,12 @@
 import { Layout, Card, Button, Empty } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
+import { useNavigate } from 'react-router-dom'
 import './dashboard.css'
 
 const { Header, Content } = Layout
 
 function Dashboard() {
+  const navigate = useNavigate();
   return (
     <Layout className="dashboard-layout">
       <Header className="dashboard-header">
@@ -19,7 +21,11 @@ function Dashboard() {
       <Content className="dashboard-content">
         <div className="content-header">
           <h2>我的项目</h2>
-          <Button type="primary" icon={<PlusOutlined />}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => navigate('/projects/create')}
+          >
             新建项目
           </Button>
         </div>
