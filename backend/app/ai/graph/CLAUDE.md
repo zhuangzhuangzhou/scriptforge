@@ -7,7 +7,14 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #100 | 9:46 PM | 🟣 | Breakdown工作流节点已实现 | ~127 |
+| #62 | 8:26 AM | 🟣 | Breakdown工作流节点 | ~62 |
+| #64 | " | 🟣 | Script工作流节点 | ~64 |
+| #42 | 8:25 AM | 🟣 | Script Workflow Node Implementation | ~204 |
+| #38 | " | 🟣 | Breakdown AI Workflow Nodes Expanded | ~223 |
 | #23 | 8:24 AM | 🟣 | Breakdown Workflow Nodes Implemented | ~193 |
 | #26 | " | 🟣 | Script Workflow State Defined | ~187 |
 | #24 | " | 🟣 | Breakdown Workflow State Machine Created | ~196 |
+| #12 | 8:19 AM | 🟣 | Script Generation Workflow Created | ~177 |
+| #3 | 8:18 AM | 🟣 | Breakdown AI工作流节点实现 | ~155 |
 </claude-mem-context>

@@ -6,6 +6,11 @@ from app.models.plot_breakdown import PlotBreakdown
 from app.models.script import Script
 from app.models.model_config import ModelConfig
 from app.models.ai_task import AITask
+from app.models.skill import Skill
+from app.models.user_skill_config import UserSkillConfig
+from app.models.pipeline import Pipeline, PipelineStage, PipelineExecution
+from app.models.skill_version import SkillVersion, SkillExecutionLog
+from app.models.agent import AgentDefinition, AgentExecution, PipelineNodeAgent
 
 __all__ = [
     "User",
@@ -16,4 +21,14 @@ __all__ = [
     "Script",
     "ModelConfig",
     "AITask",
+    "Skill",
+    "UserSkillConfig",
+    "Pipeline",
+    "PipelineStage",
+    "PipelineExecution",
+    "SkillVersion",
+    "SkillExecutionLog",
+    "AgentDefinition",
+    "AgentExecution",
+    "PipelineNodeAgent",
 ]

@@ -7,6 +7,5 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #194 | 10:37 PM | ✅ | Pipeline模型注册准备 | ~88 |
-| #153 | 10:04 PM | 🔵 | Existing Skill Database Model Analyzed | ~217 |
+| #83 | 9:46 PM | ✅ | Script AI工作流与前端路由集成 | ~161 |
 </claude-mem-context>

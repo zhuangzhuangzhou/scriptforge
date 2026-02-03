@@ -7,5 +7,9 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #196 | 10:37 PM | 🟣 | Model Adapter Factory Function Added | ~197 |
+| #195 | " | 🔵 | OpenAI模型适配器已存在 | ~116 |
+| #61 | 8:26 AM | 🟣 | OpenAI流式生成支持 | ~59 |
+| #38 | 8:25 AM | 🟣 | Breakdown AI Workflow Nodes Expanded | ~223 |
 | #22 | 8:24 AM | 🟣 | OpenAI Model Adapter Implemented | ~180 |
 </claude-mem-context>

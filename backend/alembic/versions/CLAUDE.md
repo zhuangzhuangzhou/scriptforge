@@ -7,6 +7,9 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #188 | 10:36 PM | ✅ | Agent系统数据库迁移 | ~108 |
+| #157 | 10:05 PM | ✅ | Skill Visibility Migration Created | ~214 |
+| #137 | 9:59 PM | ✅ | Pipeline和Skill版本数据库迁移 | ~119 |
+| #72 | 8:26 AM | ✅ | 数据库迁移脚本 | ~61 |
 | #14 | 8:19 AM | ✅ | Skills Database Migration Added | ~176 |
-| #6 | 8:18 AM | ✅ | 数据库迁移脚本更新 | ~104 |
 </claude-mem-context>

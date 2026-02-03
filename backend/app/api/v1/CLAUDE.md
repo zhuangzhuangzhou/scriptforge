@@ -7,6 +7,21 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #200 | 10:39 PM | 🟣 | Script模块路由集成 | ~67 |
+| #193 | 10:37 PM | 🔵 | API Endpoint Structure Documented in CLAUDE.md | ~194 |
+| #189 | 10:36 PM | ✅ | Agent管理模块注册 | ~61 |
+| #186 | " | 🟣 | Agent定义管理API | ~98 |
+| #176 | 10:23 PM | 🟣 | Skills用户配置API实现 | ~106 |
+| #163 | 10:16 PM | 🟣 | Pipeline复合型Agent系统实现 | ~94 |
+| #140 | 10:00 PM | 🟣 | Pipeline复合型Agent API | ~91 |
+| #110 | 9:46 PM | 🟣 | 管理端用户更新API实现 | ~99 |
+| #102 | " | 🟣 | WebSocket和剧本API路由已添加 | ~86 |
+| #87 | " | 🟣 | Script模块路由集成 | ~77 |
+| #70 | 8:26 AM | ✅ | 导出模块注册 | ~30 |
+| #68 | " | 🟣 | Skill配置保存API | ~56 |
+| #45 | 8:25 AM | 🟣 | Skill Admin Delete Endpoint | ~145 |
+| #37 | " | 🟣 | Project Upload Pipeline Enhanced | ~202 |
+| #39 | " | 🟣 | Breakdown Task Management API | ~214 |
 | #28 | 8:24 AM | 🟣 | Skills Admin API Enhanced | ~186 |
 | #7 | 8:18 AM | 🟣 | 前端页面路由和组件集成 | ~122 |
 | #5 | " | 🟣 | Skills用户配置API实现 | ~106 |

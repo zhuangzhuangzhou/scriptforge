@@ -8,6 +8,7 @@ import CreateProject from './pages/user/CreateProject'
 import ProjectDetail from './pages/user/ProjectDetail'
 import PlotBreakdown from './pages/user/PlotBreakdown'
 import ScriptGeneration from './pages/user/ScriptGeneration'
+import SkillsManagement from './pages/user/SkillsManagement'
 
 function App() {
   return (
@@ -21,6 +22,7 @@ function App() {
           <Route path="/projects/:projectId" element={<ProjectDetail />} />
           <Route path="/projects/:projectId/breakdown" element={<PlotBreakdown />} />
           <Route path="/projects/:projectId/scripts" element={<ScriptGeneration />} />
+          <Route path="/skills" element={<SkillsManagement />} />
           <Route path="/" element={<Navigate to="/login" replace />} />
         </Routes>
       </BrowserRouter>

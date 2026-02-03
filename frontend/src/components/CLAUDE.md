@@ -7,5 +7,5 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #13 | 8:19 AM | 🟣 | Frontend Pages Enhanced with Skills Integration | ~172 |
+| #75 | 9:45 PM | 🟣 | Skills模块管理功能 | ~118 |
 </claude-mem-context>

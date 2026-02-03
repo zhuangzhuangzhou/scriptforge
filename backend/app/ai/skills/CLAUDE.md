@@ -7,5 +7,11 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #105 | 9:46 PM | 🟣 | Skills系统核心组件已实现 | ~85 |
+| #86 | " | 🔵 | SkillLoader自动加载机制 | ~101 |
+| #85 | " | 🟣 | Conflict Extraction Skill Implemented | ~213 |
+| #75 | 9:45 PM | 🟣 | Skills模块管理功能 | ~118 |
+| #67 | 8:26 AM | 🟣 | Skill执行器增强 | ~60 |
+| #40 | 8:25 AM | 🟣 | Frontend Plot Breakdown Page Updated | ~197 |
 | #30 | 8:24 AM | 🟣 | Episode Planning Skill Class Created | ~181 |
 </claude-mem-context>

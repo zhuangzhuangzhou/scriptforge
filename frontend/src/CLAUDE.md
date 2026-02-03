@@ -7,6 +7,16 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #201 | 10:39 PM | 🟣 | 前端页面路由扩展 | ~47 |
+| #179 | 10:23 PM | 🟣 | Skills管理页面路由添加 | ~104 |
+| #150 | 10:03 PM | 🟣 | Skills管理页面路由添加 | ~104 |
+| #149 | " | 🟣 | SkillsManagement页面路由已添加 | ~76 |
+| #148 | 10:02 PM | 🔵 | 前端应用路由结构 | ~116 |
+| #108 | 9:46 PM | ✅ | 前端项目创建路由添加 | ~62 |
+| #103 | " | 🟣 | 剧情拆解页面路由已添加 | ~70 |
+| #88 | " | 🟣 | 前端页面路由扩展 | ~47 |
+| #83 | " | ✅ | Script AI工作流与前端路由集成 | ~161 |
+| #44 | 8:25 AM | 🔴 | ProjectDetail Menu Navigation Fixed | ~179 |
 | #13 | 8:19 AM | 🟣 | Frontend Pages Enhanced with Skills Integration | ~172 |
 | #7 | 8:18 AM | 🟣 | 前端页面路由和组件集成 | ~122 |
 </claude-mem-context>

@@ -236,6 +236,415 @@
 
 ---
 
+### 9. Agent Pipeline系统（可配置流水线）
+
+#### 9.1 系统架构
+**核心特性**：
+- 固定流程：小说 → Breakdown → Script → 剧本（不可变）
+- 可配置Skills：用户可以编辑、添加、删除Skills
+- 系统默认Skills：开箱即用
+- Skills代码编辑器：在线编写和测试Skills
+- Skills版本管理：支持版本控制和回滚
+
+**执行流程**：
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│    User     │    │   System    │    │   Custom    │
+│  Uploaded   │    │  Default    │    │   Skills    │
+│   Novel     │    │   Skills    │    │   Editor    │
+└──────┬──────┘    └──────┬──────┘    └──────┬──────┘
+       │                   │                   │
+       └───────────────────┼───────────────────┘
+                           ▼
+              ┌───────────────────────────┐
+              │  Pipeline Orchestrator   │
+              │  按固定顺序执行Stages    │
+              └───────────────────────────┘
+                           │
+                           ▼
+              ┌───────────────────────────┐
+              │      Output: Script      │
+              └───────────────────────────┘
+```
+
+#### 9.2 Pipeline数据库模型
+**文件列表**：
+- `backend/app/models/pipeline.py` - Pipeline主模型
+- `backend/app/models/skill_version.py` - Skill版本管理模型
+
+**Pipeline模型**：
+```python
+class Pipeline(Base):
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    user_id = Column(UUID(as_uuid=True), nullable=False)
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    config = Column(JSON)           # Pipeline整体配置
+    stages_config = Column(JSON)     # 各阶段配置
+    is_default = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
+    version = Column(Integer, default=1)
+
+class PipelineStage(Base):
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    pipeline_id = Column(UUID(as_uuid=True), ForeignKey)
+    name = Column(String(100), nullable=False)
+    display_name = Column(String(255), nullable=False)
+    skills = Column(JSON)           # 该阶段执行的Skills列表
+    order = Column(Integer, default=0)
+
+class PipelineExecution(Base):
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    pipeline_id = Column(UUID(as_uuid=True), ForeignKey)
+    project_id = Column(UUID(as_uuid=True), ForeignKey)
+    status = Column(String(50), default="pending")
+    progress = Column(Integer, default=0)
+```
+
+#### 9.3 Pipeline API端点
+**文件列表**：
+- `backend/app/api/v1/pipeline.py` - Pipeline CRUD API
+
+**API接口**：
+| 方法 | 端点 | 说明 |
+|------|------|------|
+| GET | `/api/v1/pipelines` | 获取Pipeline列表 |
+| POST | `/api/v1/pipelines` | 创建Pipeline |
+| GET | `/api/v1/pipelines/{id}` | 获取Pipeline详情 |
+| PUT | `/api/v1/pipelines/{id}` | 更新Pipeline |
+| DELETE | `/api/v1/pipelines/{id}` | 删除Pipeline |
+| POST | `/api/v1/pipelines/{id}/execute` | 执行Pipeline |
+| GET | `/api/v1/pipelines/{id}/executions` | 获取执行历史 |
+
+---
+
+### 10. Skills权限管理系统
+
+#### 10.1 三级权限模型
+**权限类型**：
+| 类型 | 说明 | 可见范围 |
+|------|------|----------|
+| **公开（public）** | 所有用户可见 | 所有登录用户 |
+| **私有（private）** | 仅创建者可见 | 仅创建者本人 |
+| **协作（shared）** | 指定用户可见 | 创建者 + 允许的用户列表 |
+
+#### 10.2 数据库字段
+**Skill模型新增字段**：
+```python
+class Skill(Base):
+    # ... 现有字段 ...
+    visibility = Column(String(20), default='public')  # public, private, shared
+    owner_id = Column(UUID(as_uuid=True), nullable=False)
+    allowed_users = Column(JSON)  # 允许访问的用户ID列表
+
+class SkillVersion(Base):
+    # ... 现有字段 ...
+    visibility = Column(String(20), default='public')
+    owner_id = Column(UUID(as_uuid=True), nullable=False)
+    allowed_users = Column(JSON)
+```
+
+#### 10.3 权限检查函数
+**文件**：`backend/app/api/v1/skills_user.py`
+
+```python
+def check_skill_visibility(skill: Skill, user_id: UUID) -> bool:
+    """检查用户是否有权限访问Skill"""
+    if skill.is_builtin:
+        return True
+    if skill.visibility == 'public':
+        return True
+    if skill.owner_id == user_id:
+        return True
+    if skill.visibility == 'shared':
+        allowed_users = skill.allowed_users or []
+        return str(user_id) in allowed_users
+    return False
+```
+
+#### 10.4 Skills API端点
+**文件列表**：
+- `backend/app/api/v1/skills_user.py` - 用户Skills API
+
+**API接口**：
+| 方法 | 端点 | 说明 |
+|------|------|------|
+| GET | `/api/v1/skills/available` | 获取用户可访问的Skills |
+| GET | `/api/v1/skills/public` | 获取公共Skills（无需登录） |
+| GET | `/api/v1/skills/my` | 获取用户自己的Skills |
+| GET | `/api/v1/skills/shared` | 获取分享给用户的Skills |
+| GET | `/api/v1/skills/{skill_id}` | 获取Skill详情（检查权限） |
+| POST | `/api/v1/skills/create` | 创建新Skill |
+| POST | `/api/v1/skills/config` | 保存配置（检查权限） |
+| GET | `/api/v1/skills/config` | 获取用户的Skills配置 |
+
+#### 10.5 Skills权限管理前端组件
+**文件列表**：
+- `frontend/src/components/SkillAccessControl.tsx` - Skills权限控制组件
+- `frontend/src/components/SkillsEditor.tsx` - Skills代码编辑器
+- `frontend/src/pages/user/SkillsManagement.tsx` - Skills管理页面
+
+**SkillAccessControl组件功能**：
+- 三标签页展示：公开Skills / 我的Skills / 协作Skills
+- 实时显示各分类数量
+- 权限标签显示（内置/公开/协作/私有）
+- Skills选择功能
+
+```typescript
+interface Skill {
+  id: string;
+  name: string;
+  display_name: string;
+  description: string;
+  category: string;
+  visibility: string;
+  owner_id: string;
+  is_builtin: boolean;
+}
+
+const SkillAccessControl: React.FC<SkillSelectorProps> = ({
+  category,
+  onSelect,
+  mode = 'list'
+}) => {
+  const [publicSkills, setPublicSkills] = useState<Skill[]>([]);
+  const [mySkills, setMySkills] = useState<Skill[]>([]);
+  const [sharedSkills, setSharedSkills] = useState<Skill[]>([]);
+  // ...
+}
+```
+
+---
+
+### 11. 数据库迁移
+
+#### 11.1 Pipeline相关迁移
+**文件**：`backend/alembic/versions/add_pipeline_tables.py`
+
+```python
+def upgrade():
+    op.create_table('pipelines', ...)
+    op.create_table('pipeline_stages', ...)
+    op.create_table('pipeline_executions', ...)
+    op.create_table('skill_versions', ...)
+    op.create_table('skill_execution_logs', ...)
+```
+
+#### 11.2 Skills权限迁移
+**文件**：`backend/alembic/versions/add_skill_visibility.py`
+
+```python
+def upgrade():
+    # 为skills表添加权限字段
+    op.add_column('skills', sa.Column('visibility', sa.String(20), default='public'))
+    op.add_column('skills', sa.Column('owner_id', postgresql.UUID(as_uuid=True)))
+    op.add_column('skills', sa.Column('allowed_users', postgresql.JSON))
+
+    # 为skill_versions表添加权限字段
+    op.add_column('skill_versions', sa.Column('visibility', sa.String(20)))
+    op.add_column('skill_versions', sa.Column('owner_id', postgresql.UUID(as_uuid=True)))
+    op.add_column('skill_versions', sa.Column('allowed_users', postgresql.JSON))
+```
+
+---
+
+### 12. 可配置 Agent 系统
+
+#### 12.1 系统概述
+**核心功能**：
+- 用户可创建自定义 Agent（剧情架构师、对白润色师等）
+- Agent 可绑定到 Pipeline 节点，在特定阶段触发执行
+- 支持 Prompt 模板和变量替换
+- 执行历史记录和统计分析
+
+**架构层次**：
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      可配置 Agent 系统                            │
+│                                                                  │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐      │
+│  │ Agent模板库  │    │ 用户自定义   │    │ Pipeline    │      │
+│  │ (系统预设)   │    │ Agent       │    │ 节点绑定     │      │
+│  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘      │
+│         │                   │                   │              │
+│         └───────────────────┼───────────────────┘              │
+│                             ▼                                    │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │              Agent 注册表 (Agent Registry)               │  │
+│  │                                                         │  │
+│  │  - 注册所有可用 Agent                                   │  │
+│  │  - 管理 Agent 生命周期                                   │  │
+│  │  - 动态加载/卸载                                         │  │
+│  │                                                         │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│                             │                                    │
+│                             ▼                                    │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │                   Pipeline 执行引擎                      │  │
+│  │                                                         │  │
+│  │  节点A → [Agent1触发] → 节点B → [Agent2触发] → 节点C   │  │
+│  └─────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### 12.2 Agent 数据库模型
+**文件**：`backend/app/models/agent.py`
+
+**AgentDefinition 模型**：
+```python
+class AgentDefinition(Base):
+    """Agent 定义 - 用户创建的 Agent"""
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    user_id = Column(UUID(as_uuid=True), nullable=False)
+
+    # 基本信息
+    name = Column(String(100), nullable=False)           # 内部名称
+    display_name = Column(String(255), nullable=False)    # 显示名称
+    description = Column(Text)                           # 描述
+    category = Column(String(50))                        # 分类
+
+    # Agent 配置
+    role = Column(Text, nullable=False)                  # 角色设定
+    goal = Column(Text, nullable=False)                   # 目标描述
+    system_prompt = Column(Text)                         # 系统提示词
+    prompt_template = Column(Text, default="{{input}}")   # Prompt 模板
+
+    # 参数配置
+    parameters_schema = Column(JSON)                      # 参数 Schema
+    default_parameters = Column(JSON)                    # 默认参数
+
+    # 触发配置
+    trigger_type = Column(String(50), default='manual')  # manual, auto
+    output_format = Column(String(50), default='text')   # text, json
+
+    # 权限
+    is_public = Column(Boolean, default=False)           # 是否公开
+    usage_count = Column(Integer, default=0)             # 使用次数
+```
+
+**AgentExecution 模型**：
+```python
+class AgentExecution(Base):
+    """Agent 执行记录"""
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    agent_id = Column(UUID(as_uuid=True))
+    pipeline_id = Column(UUID(as_uuid=True))
+    node_id = Column(String(100))                       # 触发的节点ID
+
+    # 执行上下文
+    input_data = Column(JSON)
+    output_data = Column(JSON)
+    context_history = Column(JSON)
+
+    # 执行状态
+    status = Column(String(50), default="pending")
+    error_message = Column(Text)
+    execution_time = Column(Integer)                    # 执行时间(ms)
+    tokens_used = Column(Integer, default=0)
+```
+
+**PipelineNodeAgent 模型**：
+```python
+class PipelineNodeAgent(Base):
+    """Pipeline 节点与 Agent 的绑定"""
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    pipeline_id = Column(UUID(as_uuid=True))
+    node_id = Column(String(100), nullable=False)
+
+    # 绑定的 Agent
+    agent_id = Column(UUID(as_uuid=True))
+    agent_order = Column(Integer, default=0)           # 执行顺序
+
+    # 输入输出映射
+    input_mapping = Column(JSON)
+    output_mapping = Column(JSON)
+```
+
+#### 12.3 Agent 执行器
+**文件**：`backend/app/ai/agents/agent_executor.py`
+
+**核心功能**：
+```python
+class AgentExecutor:
+    """Agent 执行器 - 动态加载和执行 Agent"""
+
+    async def execute(
+        self,
+        agent_definition: Dict[str, Any],
+        input_data: Any,
+        context: Optional[Dict] = None,
+        parameters: Optional[Dict] = None
+    ) -> Dict[str, Any]:
+        """
+        执行 Agent
+
+        支持的变量替换：
+        - {{input}} - 输入数据
+        - {{context}} - 上下文数据
+        - {{input_key}} - 输入数据的特定字段
+        """
+        # 1. 构建完整 prompt
+        full_prompt = self._build_prompt(...)
+
+        # 2. 调用模型生成
+        response = await self.model_adapter.generate(...)
+
+        # 3. 解析结果（支持 JSON/Text 格式）
+        result = self._parse_response(...)
+
+        return {
+            "success": True,
+            "output": result,
+            "tokens_used": tokens_used,
+            "execution_time": execution_time
+        }
+```
+
+#### 12.4 Agent API 端点
+**文件**：`backend/app/api/v1/agent_definition.py`
+
+**API接口**：
+| 方法 | 端点 | 说明 |
+|------|------|------|
+| GET | `/api/v1/agents/definitions` | 获取 Agent 列表 |
+| GET | `/api/v1/agents/definitions/{id}` | 获取 Agent 详情 |
+| POST | `/api/v1/agents/definitions` | 创建 Agent |
+| PUT | `/api/v1/agents/definitions/{id}` | 更新 Agent |
+| DELETE | `/api/v1/agents/definitions/{id}` | 删除 Agent |
+| POST | `/api/v1/agents/execute/{id}` | 执行 Agent |
+| GET | `/api/v1/agents/executions/{id}` | 执行历史 |
+| POST | `/api/v1/agents/node/trigger` | 从节点触发 |
+
+**创建 Agent 请求示例**：
+```python
+POST /api/v1/agents/definitions
+{
+    "name": "dialogue_polisher",
+    "display_name": "对白润色师",
+    "role": "你是一个专业对白润色师，专精于剧本对话",
+    "goal": "让对白更自然、更有表现力",
+    "prompt_template": "请润色以下对白：\n\n{{input}}\n\n要求：\n1. 保持角色声音一致\n2. 增加潜台词",
+    "output_format": "json"
+}
+```
+
+#### 12.5 数据库迁移
+**文件**：`backend/alembic/versions/add_agent_system.py`
+
+```python
+def upgrade():
+    # Agent 定义表
+    op.create_table('agent_definitions', ...)
+
+    # Agent 执行记录表
+    op.create_table('agent_executions', ...)
+
+    # Pipeline 节点绑定表
+    op.create_table('pipeline_node_agents', ...)
+```
+
+---
+
 ## 📝 下一步计划
 
 ### MVP版本已完成的核心功能

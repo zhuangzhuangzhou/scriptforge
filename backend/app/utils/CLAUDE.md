@@ -7,5 +7,12 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #104 | 9:46 PM | 🟣 | PDF导出工具已实现 | ~71 |
+| #78 | " | 🟣 | PDF文件解析器支持 | ~70 |
+| #79 | " | 🔴 | 章节批次划分器实现 | ~69 |
+| #58 | 8:26 AM | 🟣 | PDF文件解析器 | ~56 |
+| #59 | " | 🟣 | 批次划分器实现 | ~47 |
+| #47 | 8:25 AM | 🟣 | PDF文件解析器集成到文件处理系统 | ~86 |
+| #36 | " | 🟣 | File Storage Infrastructure Implemented | ~202 |
 | #9 | 8:19 AM | 🟣 | File Upload and Storage System Implemented | ~175 |
 </claude-mem-context>

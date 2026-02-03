@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, JSON, DateTime, Text
+from sqlalchemy import Column, String, Boolean, JSON, DateTime, Text, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
 import uuid
@@ -23,6 +23,11 @@ class Skill(Base):
     # 状态
     is_active = Column(Boolean, default=True)
     is_builtin = Column(Boolean, default=False)  # 是否为内置Skill
+
+    # 权限控制
+    visibility = Column(String(20), default='public')  # public(公共), private(私有), shared(协作)
+    owner_id = Column(UUID(as_uuid=True), nullable=False)  # 创建者ID
+    allowed_users = Column(JSON)  # 允许访问的用户ID列表 ["uuid1", "uuid2"]
 
     # 元数据
     version = Column(String(20), default="1.0.0")

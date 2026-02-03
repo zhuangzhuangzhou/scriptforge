@@ -7,5 +7,6 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #77 | 9:46 PM | ✅ | MinIO存储客户端创建 | ~84 |
 | #25 | 8:24 AM | 🟣 | Breakdown Celery Async Task Implemented | ~205 |
 </claude-mem-context>

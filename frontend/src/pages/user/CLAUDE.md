@@ -7,6 +7,9 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #65 | 8:26 AM | 🟣 | 项目创建前端页面 | ~58 |
+| #66 | " | 🟣 | 剧情拆解前端页面 | ~56 |
+| #43 | 8:25 AM | 🟣 | Frontend Project Creation Page | ~203 |
 | #27 | 8:24 AM | 🟣 | Project Detail Frontend Page Created | ~206 |
 | #29 | " | 🟣 | PlotBreakdown Page Integrated with SkillSelector | ~204 |
 </claude-mem-context>
