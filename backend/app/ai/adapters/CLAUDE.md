@@ -7,6 +7,5 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #27 | 8:24 AM | 🟣 | Project Detail Frontend Page Created | ~206 |
-| #29 | " | 🟣 | PlotBreakdown Page Integrated with SkillSelector | ~204 |
+| #22 | 8:24 AM | 🟣 | OpenAI Model Adapter Implemented | ~180 |
 </claude-mem-context>

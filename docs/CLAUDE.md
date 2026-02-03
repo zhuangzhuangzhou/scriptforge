@@ -7,6 +7,6 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #27 | 8:24 AM | 🟣 | Project Detail Frontend Page Created | ~206 |
-| #29 | " | 🟣 | PlotBreakdown Page Integrated with SkillSelector | ~204 |
+| #20 | 8:23 AM | ✅ | 实施计划文档持续扩展 | ~132 |
+| #8 | 8:19 AM | 🟣 | Git Repository Initialized for Novel-to-Script Project | ~182 |
 </claude-mem-context>

@@ -7,6 +7,5 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #27 | 8:24 AM | 🟣 | Project Detail Frontend Page Created | ~206 |
-| #29 | " | 🟣 | PlotBreakdown Page Integrated with SkillSelector | ~204 |
+| #9 | 8:19 AM | 🟣 | File Upload and Storage System Implemented | ~175 |
 </claude-mem-context>

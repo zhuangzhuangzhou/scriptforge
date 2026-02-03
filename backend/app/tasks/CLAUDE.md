@@ -7,6 +7,5 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #27 | 8:24 AM | 🟣 | Project Detail Frontend Page Created | ~206 |
-| #29 | " | 🟣 | PlotBreakdown Page Integrated with SkillSelector | ~204 |
+| #25 | 8:24 AM | 🟣 | Breakdown Celery Async Task Implemented | ~205 |
 </claude-mem-context>

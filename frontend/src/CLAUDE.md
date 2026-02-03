@@ -7,6 +7,6 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #27 | 8:24 AM | 🟣 | Project Detail Frontend Page Created | ~206 |
-| #29 | " | 🟣 | PlotBreakdown Page Integrated with SkillSelector | ~204 |
+| #13 | 8:19 AM | 🟣 | Frontend Pages Enhanced with Skills Integration | ~172 |
+| #7 | 8:18 AM | 🟣 | 前端页面路由和组件集成 | ~122 |
 </claude-mem-context>

@@ -7,6 +7,6 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #27 | 8:24 AM | 🟣 | Project Detail Frontend Page Created | ~206 |
-| #29 | " | 🟣 | PlotBreakdown Page Integrated with SkillSelector | ~204 |
+| #14 | 8:19 AM | ✅ | Skills Database Migration Added | ~176 |
+| #6 | 8:18 AM | ✅ | 数据库迁移脚本更新 | ~104 |
 </claude-mem-context>
