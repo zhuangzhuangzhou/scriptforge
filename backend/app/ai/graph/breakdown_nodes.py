@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.chapter import Chapter
 from app.ai.graph.breakdown_state import BreakdownState
+from app.ai.consistency_checker import ConsistencyChecker
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +215,34 @@ async def extract_emotions_node(state: BreakdownState, model_adapter) -> Dict[st
     }
 
 
+async def consistency_check_node(state: BreakdownState, model_adapter, db: AsyncSession) -> Dict[str, Any]:
+    """一致性检查"""
+    project_id = state["project_id"]
+    batch_id = state["batch_id"]
+
+    # 构造检查所需的数据
+    breakdown_data = {
+        "conflicts": state.get("conflicts", []),
+        "plot_hooks": state.get("plot_hooks", []),
+        "characters": state.get("characters", []),
+        "scenes": state.get("scenes", []),
+        "emotions": state.get("emotions", [])
+    }
+
+    # 实例化检查器
+    checker = ConsistencyChecker(model_adapter)
+
+    # 运行全面审计
+    audit_results = await checker.run_full_audit(project_id, batch_id, breakdown_data, db)
+
+    return {
+        "audit_results": audit_results,
+        "overall_score": audit_results.get("overall_score", 0),
+        "current_step": "consistency_check",
+        "progress": 98
+    }
+
+
 async def save_breakdown_node(state: BreakdownState, db: AsyncSession) -> Dict[str, Any]:
     """保存拆解结果"""
     from app.models.plot_breakdown import PlotBreakdown
@@ -226,7 +255,9 @@ async def save_breakdown_node(state: BreakdownState, db: AsyncSession) -> Dict[s
         characters=state.get("characters", []),
         scenes=state.get("scenes", []),
         emotions=state.get("emotions", []),
-        consistency_status="pending"
+        consistency_status=state.get("audit_results", {}).get("status", "pending"),
+        consistency_score=state.get("overall_score", 0),
+        consistency_results=state.get("audit_results", {})
     )
 
     db.add(breakdown)

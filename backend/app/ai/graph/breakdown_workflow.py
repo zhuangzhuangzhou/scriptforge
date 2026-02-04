@@ -7,6 +7,7 @@ from app.ai.graph.breakdown_nodes import (
     analyze_characters_node,
     identify_scenes_node,
     extract_emotions_node,
+    consistency_check_node,
     save_breakdown_node
 )
 
@@ -24,6 +25,7 @@ def create_breakdown_workflow(model_adapter, db):
     workflow.add_node("analyze_characters", lambda state: analyze_characters_node(state, model_adapter))
     workflow.add_node("identify_scenes", lambda state: identify_scenes_node(state, model_adapter))
     workflow.add_node("extract_emotions", lambda state: extract_emotions_node(state, model_adapter))
+    workflow.add_node("consistency_check", lambda state: consistency_check_node(state, model_adapter, db))
     workflow.add_node("save_breakdown", lambda state: save_breakdown_node(state, db))
 
     # 设置入口点
@@ -35,7 +37,8 @@ def create_breakdown_workflow(model_adapter, db):
     workflow.add_edge("identify_plot_hooks", "analyze_characters")
     workflow.add_edge("analyze_characters", "identify_scenes")
     workflow.add_edge("identify_scenes", "extract_emotions")
-    workflow.add_edge("extract_emotions", "save_breakdown")
+    workflow.add_edge("extract_emotions", "consistency_check")
+    workflow.add_edge("consistency_check", "save_breakdown")
     workflow.add_edge("save_breakdown", END)
 
     return workflow.compile()

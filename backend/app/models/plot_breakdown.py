@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, ForeignKey, TIMESTAMP
+from sqlalchemy import Column, String, ForeignKey, TIMESTAMP, Integer
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from app.core.database import Base
 
@@ -23,6 +23,8 @@ class PlotBreakdown(Base):
 
     # 一致性检查
     consistency_status = Column(String(50), default="pending", index=True)
+    consistency_score = Column(Integer)
+    consistency_results = Column(JSONB)
 
     created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
     updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)

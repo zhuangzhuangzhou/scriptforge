@@ -7,5 +7,5 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #325 | 2:51 PM | 🔵 | PDF Export Implementation | ~130 |
+| #293 | 2:28 PM | 🟣 | Consistency Check Improvement PRD | ~208 |
 </claude-mem-context>

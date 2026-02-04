@@ -20,3 +20,7 @@ class BreakdownState(TypedDict):
     current_step: str
     progress: int
     errors: List[str]
+
+    # 一致性检查结果
+    audit_results: Dict[str, Any]
+    overall_score: float
