@@ -1,8 +1,12 @@
+import json
+import logging
 from typing import Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.chapter import Chapter
 from app.ai.graph.breakdown_state import BreakdownState
+
+logger = logging.getLogger(__name__)
 
 
 async def load_chapters_node(state: BreakdownState, db: AsyncSession) -> Dict[str, Any]:
@@ -57,10 +61,10 @@ async def extract_conflicts_node(state: BreakdownState, model_adapter) -> Dict[s
     response = model_adapter.generate(prompt)
 
     # 解析响应（简化处理）
-    import json
     try:
         conflicts = json.loads(response)
-    except:
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON解析失败: {e}, 原始响应: {response[:500]}")
         conflicts = []
 
     return {
@@ -92,10 +96,10 @@ async def identify_plot_hooks_node(state: BreakdownState, model_adapter) -> Dict
 
     response = model_adapter.generate(prompt)
 
-    import json
     try:
         plot_hooks = json.loads(response)
-    except:
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON解析失败: {e}, 原始响应: {response[:500]}")
         plot_hooks = []
 
     return {
@@ -127,10 +131,10 @@ async def analyze_characters_node(state: BreakdownState, model_adapter) -> Dict[
 
     response = model_adapter.generate(prompt)
 
-    import json
     try:
         characters = json.loads(response)
-    except:
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON解析失败: {e}, 原始响应: {response[:500]}")
         characters = []
 
     return {
@@ -162,10 +166,10 @@ async def identify_scenes_node(state: BreakdownState, model_adapter) -> Dict[str
 
     response = model_adapter.generate(prompt)
 
-    import json
     try:
         scenes = json.loads(response)
-    except:
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON解析失败: {e}, 原始响应: {response[:500]}")
         scenes = []
 
     return {
@@ -197,10 +201,10 @@ async def extract_emotions_node(state: BreakdownState, model_adapter) -> Dict[st
 
     response = model_adapter.generate(prompt)
 
-    import json
     try:
         emotions = json.loads(response)
-    except:
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON解析失败: {e}, 原始响应: {response[:500]}")
         emotions = []
 
     return {

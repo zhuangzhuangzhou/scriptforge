@@ -1,5 +1,9 @@
+import json
+import logging
 from typing import Dict, Any
 from app.ai.skills.base_skill import BaseSkill
+
+logger = logging.getLogger(__name__)
 
 
 class ConflictExtractionSkill(BaseSkill):
@@ -35,11 +39,10 @@ class ConflictExtractionSkill(BaseSkill):
 """
             response = model_adapter.generate(prompt)
 
-            import json
             try:
                 result = json.loads(response)
                 conflicts.extend(result.get("conflicts", []))
-            except:
-                pass
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON解析失败: {e}, 原始响应: {response[:500]}")
 
         return {"conflicts": conflicts}

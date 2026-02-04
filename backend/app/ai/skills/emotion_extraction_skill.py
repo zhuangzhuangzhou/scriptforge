@@ -1,5 +1,9 @@
+import json
+import logging
 from typing import Dict, Any
 from app.ai.skills.base_skill import BaseSkill
+
+logger = logging.getLogger(__name__)
 
 
 class EmotionExtractionSkill(BaseSkill):
@@ -39,11 +43,10 @@ class EmotionExtractionSkill(BaseSkill):
 """
             response = model_adapter.generate(prompt)
 
-            import json
             try:
                 result = json.loads(response)
                 emotions.extend(result.get("emotions", []))
-            except:
-                pass
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON解析失败: {e}, 原始响应: {response[:500]}")
 
         return {"emotions": emotions}

@@ -1,5 +1,9 @@
+import json
+import logging
 from typing import Dict, Any
 from app.ai.skills.base_skill import BaseSkill
+
+logger = logging.getLogger(__name__)
 
 
 class PlotHookSkill(BaseSkill):
@@ -36,11 +40,10 @@ class PlotHookSkill(BaseSkill):
 """
             response = model_adapter.generate(prompt)
 
-            import json
             try:
                 result = json.loads(response)
                 plot_hooks.extend(result.get("plot_hooks", []))
-            except:
-                pass
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON解析失败: {e}, 原始响应: {response[:500]}")
 
         return {"plot_hooks": plot_hooks}
