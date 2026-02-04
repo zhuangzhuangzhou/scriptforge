@@ -14,7 +14,7 @@ import time
 from typing import Any, Dict, List, Optional, Callable, TYPE_CHECKING
 from enum import Enum
 from pydantic import BaseModel
-from app.ai.adapters.base import BaseAdapter
+from app.ai.adapters.base import BaseModelAdapter
 from app.ai.skills.skill_loader import SkillLoader
 
 if TYPE_CHECKING:
@@ -138,7 +138,7 @@ class AgentOrchestrator:
 
     def __init__(
         self,
-        model_adapter: BaseAdapter,
+        model_adapter: BaseModelAdapter,
         db_session: Optional["AsyncSession"] = None
     ):
         self.model_adapter = model_adapter
@@ -626,7 +626,7 @@ class AgentOrchestrator:
 class SkillExecutor:
     """Skill 执行器 - 包装 AgentExecutor 用于调用 Skills"""
 
-    def __init__(self, model_adapter: BaseAdapter):
+    def __init__(self, model_adapter: BaseModelAdapter):
         self.model_adapter = model_adapter
         self.skill_loader = SkillLoader()
 
@@ -672,7 +672,7 @@ class SubAgentExecutor:
 
     def __init__(
         self,
-        model_adapter: BaseAdapter,
+        model_adapter: BaseModelAdapter,
         db_session: Optional["AsyncSession"] = None
     ):
         self.model_adapter = model_adapter

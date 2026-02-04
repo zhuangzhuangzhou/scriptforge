@@ -11,6 +11,7 @@ from app.models.user_skill_config import UserSkillConfig
 from app.models.pipeline import Pipeline, PipelineStage, PipelineExecution
 from app.models.skill_version import SkillVersion, SkillExecutionLog
 from app.models.agent import AgentDefinition, AgentExecution, PipelineNodeAgent
+from app.models.consistency_check import ConsistencyCheck
 
 __all__ = [
     "User",
@@ -31,4 +32,5 @@ __all__ = [
     "AgentDefinition",
     "AgentExecution",
     "PipelineNodeAgent",
+    "ConsistencyCheck",
 ]
