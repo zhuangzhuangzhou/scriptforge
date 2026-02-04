@@ -93,8 +93,6 @@ class PDFExporter:
         return styles
 
     def export_script(self, script_data: Dict[str, Any]) -> BytesIO:
-
-    def export_script(self, script_data: Dict[str, Any]) -> BytesIO:
         """导出剧本为PDF"""
         buffer = BytesIO()
         doc = SimpleDocTemplate(
