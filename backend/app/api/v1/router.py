@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import auth, projects, breakdown, scripts, export, admin, websocket, skills_admin, skills_user, pipeline, skills_code, agent_definition
+from app.api.v1 import auth, projects, breakdown, scripts, export, admin, websocket, skills_admin, skills_user, pipeline, skills_code, agent_definition, quota
 
 api_router = APIRouter()
 
@@ -15,4 +15,5 @@ api_router.include_router(skills_user.router, prefix="/skills", tags=["用户Ski
 api_router.include_router(pipeline.router, prefix="/pipelines", tags=["Pipeline"])
 api_router.include_router(skills_code.router, prefix="/skills/code", tags=["Skills代码"])
 api_router.include_router(agent_definition.router, prefix="/agents", tags=["Agent管理"])
+api_router.include_router(quota.router, prefix="/user", tags=["用户配额"])
 api_router.include_router(websocket.router, tags=["WebSocket"])

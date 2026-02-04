@@ -6,9 +6,11 @@ from typing import Optional
 from app.core.database import get_db
 from app.models.user import User
 from app.models.batch import Batch
+from app.models.project import Project
 from app.models.ai_task import AITask
 from app.models.plot_breakdown import PlotBreakdown
 from app.api.v1.auth import get_current_user
+from app.core.quota import QuotaService
 
 router = APIRouter()
 
@@ -26,8 +28,13 @@ async def generate_script(
     db: AsyncSession = Depends(get_db)
 ):
     """生成剧本"""
-    # 验证批次存在
-    result = await db.execute(select(Batch).where(Batch.id == request.batch_id))
+    # 验证批次存在且属于当前用户
+    result = await db.execute(
+        select(Batch).join(Project).where(
+            Batch.id == request.batch_id,
+            Project.user_id == current_user.id
+        )
+    )
     batch = result.scalar_one_or_none()
 
     if not batch:
@@ -47,6 +54,18 @@ async def generate_script(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="请先完成剧情拆解"
         )
+
+    # 检查剧集配额
+    quota_service = QuotaService(db)
+    quota = await quota_service.check_episode_quota(current_user)
+    if not quota["allowed"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"剧集配额已用尽，本月已使用 {quota['used']}/{quota['limit']} 集"
+        )
+
+    # 消耗剧集配额
+    await quota_service.consume_episode_quota(current_user)
 
     # 创建AI任务
     from app.tasks.script_tasks import run_script_task

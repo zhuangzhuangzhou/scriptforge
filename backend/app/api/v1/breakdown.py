@@ -6,9 +6,11 @@ from typing import Optional
 from app.core.database import get_db
 from app.models.user import User
 from app.models.batch import Batch
+from app.models.project import Project
 from app.models.ai_task import AITask
 from app.api.v1.auth import get_current_user
 from app.tasks.breakdown_tasks import run_breakdown_task
+from app.core.quota import QuotaService
 
 router = APIRouter()
 
@@ -26,8 +28,13 @@ async def start_breakdown(
     db: AsyncSession = Depends(get_db)
 ):
     """启动剧情拆解"""
-    # 验证批次存在
-    result = await db.execute(select(Batch).where(Batch.id == request.batch_id))
+    # 验证批次存在且属于当前用户
+    result = await db.execute(
+        select(Batch).join(Project).where(
+            Batch.id == request.batch_id,
+            Project.user_id == current_user.id
+        )
+    )
     batch = result.scalar_one_or_none()
 
     if not batch:
@@ -35,6 +42,18 @@ async def start_breakdown(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="批次不存在"
         )
+
+    # 检查剧集配额
+    quota_service = QuotaService(db)
+    quota = await quota_service.check_episode_quota(current_user)
+    if not quota["allowed"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"剧集配额已用尽，本月已使用 {quota['used']}/{quota['limit']} 集"
+        )
+
+    # 消耗剧集配额
+    await quota_service.consume_episode_quota(current_user)
 
     # 创建AI任务
     task = AITask(
@@ -70,7 +89,12 @@ async def get_breakdown_task(
     db: AsyncSession = Depends(get_db)
 ):
     """获取拆解任务状态"""
-    result = await db.execute(select(AITask).where(AITask.id == task_id))
+    result = await db.execute(
+        select(AITask).join(Project).where(
+            AITask.id == task_id,
+            Project.user_id == current_user.id
+        )
+    )
     task = result.scalar_one_or_none()
 
     if not task:
@@ -97,8 +121,12 @@ async def get_breakdown_results(
     """获取拆解结果"""
     from app.models.plot_breakdown import PlotBreakdown
 
+    # 验证批次属于当前用户
     result = await db.execute(
-        select(PlotBreakdown).where(PlotBreakdown.batch_id == batch_id)
+        select(PlotBreakdown).join(Batch).join(Project).where(
+            PlotBreakdown.batch_id == batch_id,
+            Project.user_id == current_user.id
+        )
     )
     breakdown = result.scalar_one_or_none()
 

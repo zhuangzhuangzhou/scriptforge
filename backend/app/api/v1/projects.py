@@ -16,6 +16,7 @@ from app.api.v1.auth import get_current_user
 from app.utils.file_parser import get_parser
 from app.utils.chapter_splitter import ChapterSplitter
 from app.utils.batch_divider import BatchDivider
+from app.core.quota import QuotaService
 
 router = APIRouter()
 
@@ -59,6 +60,15 @@ async def create_project(
     db: AsyncSession = Depends(get_db)
 ):
     """创建新项目"""
+    # 检查项目配额
+    quota_service = QuotaService(db)
+    quota = await quota_service.check_project_quota(current_user)
+    if not quota["allowed"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"项目配额已用尽，当前等级最多创建 {quota['limit']} 个项目"
+        )
+
     new_project = Project(
         user_id=current_user.id,
         name=project_data.name,
