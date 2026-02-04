@@ -29,6 +29,12 @@ class Skill(Base):
     owner_id = Column(UUID(as_uuid=True), nullable=False)  # 创建者ID
     allowed_users = Column(JSON)  # 允许访问的用户ID列表 ["uuid1", "uuid2"]
 
+    # 模板配置 (用户可编辑Skill)
+    is_template_based = Column(Boolean, default=False)  # 是否为模板驱动的Skill
+    prompt_template = Column(Text)  # Prompt模板
+    output_schema = Column(JSON)  # 输出格式定义
+    input_variables = Column(JSON)  # 输入变量列表
+
     # 元数据
     version = Column(String(20), default="1.0.0")
     author = Column(String(100))

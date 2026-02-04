@@ -2,13 +2,18 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Any
 from uuid import UUID
+import logging
+
 from app.core.database import get_db
 from app.models.user import User
 from app.models.skill import Skill
 from app.models.user_skill_config import UserSkillConfig
 from app.api.v1.auth import get_current_user
+from app.ai.skills.template_skill_executor import TemplateSkillExecutor
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -45,6 +50,34 @@ class CreateSkillRequest(BaseModel):
     class_name: str
     visibility: str = 'public'  # public, private, shared
     allowed_users: Optional[List[str]] = None
+
+
+class CreateTemplateSkillRequest(BaseModel):
+    """创建模板Skill请求"""
+    name: str
+    display_name: str
+    description: Optional[str] = None
+    category: str  # breakdown, script
+    prompt_template: str
+    input_variables: List[str]
+    output_schema: Optional[dict] = None
+    visibility: str = "private"
+
+
+class UpdateTemplateSkillRequest(BaseModel):
+    """更新模板Skill请求"""
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    prompt_template: Optional[str] = None
+    input_variables: Optional[List[str]] = None
+    output_schema: Optional[dict] = None
+    visibility: Optional[str] = None
+
+
+class TestSkillRequest(BaseModel):
+    """测试Skill请求"""
+    variables: dict
 
 
 @router.get("/available")
@@ -267,3 +300,185 @@ async def get_user_skill_configs(
     configs = result.scalars().all()
 
     return {"configs": configs}
+
+
+@router.post("/template")
+async def create_template_skill(
+    request: CreateTemplateSkillRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """创建模板Skill"""
+    # 检查名称是否已存在
+    result = await db.execute(
+        select(Skill).where(Skill.name == request.name)
+    )
+    existing = result.scalar_one_or_none()
+
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Skill名称已存在"
+        )
+
+    # 验证 category
+    valid_categories = ["breakdown", "script", "analysis"]
+    if request.category not in valid_categories:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"无效的category，必须是: {', '.join(valid_categories)}"
+        )
+
+    # 创建模板 Skill
+    skill = Skill(
+        name=request.name,
+        display_name=request.display_name,
+        description=request.description,
+        category=request.category,
+        module_path="app.ai.skills.template_skill_executor",
+        class_name="TemplateSkillExecutor",
+        visibility=request.visibility,
+        owner_id=current_user.id,
+        is_builtin=False,
+        is_template_based=True,
+        prompt_template=request.prompt_template,
+        input_variables=request.input_variables,
+        output_schema=request.output_schema,
+        author=current_user.username if hasattr(current_user, 'username') else None
+    )
+
+    db.add(skill)
+    await db.commit()
+    await db.refresh(skill)
+
+    logger.info(f"用户 {current_user.id} 创建了模板Skill: {skill.name}")
+
+    return skill
+
+
+@router.put("/template/{skill_id}")
+async def update_template_skill(
+    skill_id: str,
+    request: UpdateTemplateSkillRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """编辑模板Skill"""
+    # 查找 Skill
+    result = await db.execute(select(Skill).where(Skill.id == skill_id))
+    skill = result.scalar_one_or_none()
+
+    if not skill:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Skill不存在"
+        )
+
+    # 检查是否为模板 Skill
+    if not skill.is_template_based:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="只能编辑模板类型的Skill"
+        )
+
+    # 检查所有权
+    if skill.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="只能编辑自己创建的Skill"
+        )
+
+    # 更新字段
+    if request.display_name is not None:
+        skill.display_name = request.display_name
+    if request.description is not None:
+        skill.description = request.description
+    if request.category is not None:
+        valid_categories = ["breakdown", "script", "analysis"]
+        if request.category not in valid_categories:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"无效的category，必须是: {', '.join(valid_categories)}"
+            )
+        skill.category = request.category
+    if request.prompt_template is not None:
+        skill.prompt_template = request.prompt_template
+    if request.input_variables is not None:
+        skill.input_variables = request.input_variables
+    if request.output_schema is not None:
+        skill.output_schema = request.output_schema
+    if request.visibility is not None:
+        skill.visibility = request.visibility
+
+    await db.commit()
+    await db.refresh(skill)
+
+    logger.info(f"用户 {current_user.id} 更新了模板Skill: {skill.name}")
+
+    return skill
+
+
+@router.post("/template/{skill_id}/test")
+async def test_template_skill(
+    skill_id: str,
+    request: TestSkillRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """测试模板Skill"""
+    # 查找 Skill
+    result = await db.execute(select(Skill).where(Skill.id == skill_id))
+    skill = result.scalar_one_or_none()
+
+    if not skill:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Skill不存在"
+        )
+
+    # 检查是否为模板 Skill
+    if not skill.is_template_based:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="只能测试模板类型的Skill"
+        )
+
+    # 检查权限
+    if not check_skill_visibility(skill, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问此Skill"
+        )
+
+    # 使用 TemplateSkillExecutor 执行测试
+    executor = TemplateSkillExecutor(db)
+
+    try:
+        result = await executor.execute(
+            skill_id=skill_id,
+            variables=request.variables,
+            user_id=str(current_user.id)
+        )
+        logger.info(f"用户 {current_user.id} 测试Skill {skill.name} 成功")
+        return {
+            "success": True,
+            "result": result
+        }
+    except ValueError as e:
+        logger.warning(f"测试Skill失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except PermissionError as e:
+        logger.warning(f"测试Skill权限错误: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"测试Skill异常: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"执行测试时发生错误: {str(e)}"
+        )

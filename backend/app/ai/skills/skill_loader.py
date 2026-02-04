@@ -1,7 +1,12 @@
 import os
 import importlib
-from typing import Dict, List, Optional, Type
+from typing import Dict, List, Optional, Type, Any
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.ai.skills.base_skill import BaseSkill
+from app.models.skill import Skill
 
 
 class SkillLoader:
@@ -83,3 +88,74 @@ class SkillLoader:
         if not skill:
             raise ValueError(f"Skill {skill_name} 不存在")
         return await skill.execute(context)
+
+    async def load_template_skills_from_db(
+        self, db: AsyncSession
+    ) -> List[Dict[str, Any]]:
+        """从数据库加载模板Skill
+
+        Args:
+            db: 数据库会话
+
+        Returns:
+            模板Skill列表，每个元素包含Skill的元数据
+        """
+        result = await db.execute(
+            select(Skill).where(
+                Skill.is_template_based == True,
+                Skill.is_active == True
+            )
+        )
+        db_skills = result.scalars().all()
+
+        template_skills = []
+        for skill in db_skills:
+            template_skills.append({
+                "id": str(skill.id),
+                "name": skill.name,
+                "display_name": skill.display_name,
+                "description": skill.description,
+                "category": skill.category,
+                "prompt_template": skill.prompt_template,
+                "output_schema": skill.output_schema,
+                "input_variables": skill.input_variables,
+                "parameters": skill.parameters,
+                "version": skill.version,
+                "author": skill.author,
+                "is_template_based": True,
+                "source": "database"
+            })
+
+        return template_skills
+
+    async def get_all_skills_with_db(
+        self, db: AsyncSession
+    ) -> List[Dict[str, Any]]:
+        """获取所有Skill（合并文件Skill和数据库Skill）
+
+        Args:
+            db: 数据库会话
+
+        Returns:
+            合并后的Skill列表
+        """
+        # 获取文件加载的Skill
+        file_skills = []
+        for skill in self.skills.values():
+            metadata = skill.get_metadata()
+            metadata["is_template_based"] = False
+            metadata["source"] = "file"
+            file_skills.append(metadata)
+
+        # 获取数据库中的模板Skill
+        db_skills = await self.load_template_skills_from_db(db)
+
+        # 合并结果，数据库Skill优先（如果有同名的）
+        db_skill_names = {s["name"] for s in db_skills}
+        merged_skills = db_skills.copy()
+
+        for skill in file_skills:
+            if skill["name"] not in db_skill_names:
+                merged_skills.append(skill)
+
+        return merged_skills
