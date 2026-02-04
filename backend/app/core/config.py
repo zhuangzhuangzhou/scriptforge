@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_MODEL: str = "claude-3-opus-20240229"
 
+    # 默认模型提供商 (openai 或 anthropic)
+    DEFAULT_MODEL_PROVIDER: str = "openai"
+
     # 文件上传配置
     MAX_UPLOAD_SIZE: int = 52428800  # 50MB
     ALLOWED_EXTENSIONS: List[str] = ["txt", "docx", "pdf"]
