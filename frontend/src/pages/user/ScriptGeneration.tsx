@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { Layout, Button, List, Card, Spin } from 'antd';
-import { DownloadOutlined } from '@ant-design/icons';
+import { Button, List, Card, Layout, Typography, Empty, Tag, Space } from 'antd';
+import { DownloadOutlined, FileTextOutlined, RobotOutlined } from '@ant-design/icons';
 import SkillSelector from '../../components/SkillSelector';
 
-const { Sider, Content } = Layout;
+const { Content, Sider } = Layout;
+const { Title, Text } = Typography;
 
 interface Script {
   id: string;
@@ -16,9 +17,10 @@ interface Script {
 
 const ScriptGeneration: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>();
-  const [loading, setLoading] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [scripts, setScripts] = useState<Script[]>([]);
   const [selectedScript, setSelectedScript] = useState<Script | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
 
   useEffect(() => {
@@ -26,87 +28,80 @@ const ScriptGeneration: React.FC = () => {
   }, [projectId]);
 
   const loadScripts = async () => {
-    try {
-      // TODO: 实现加载剧本列表的API调用
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  const generateScript = async (batchId: string) => {
-    setLoading(true);
-    try {
-      const response = await fetch('/api/v1/scripts/generate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({
-          batch_id: batchId,
-          selected_skills: selectedSkills
-        })
-      });
-      if (!response.ok) throw new Error('生成剧本失败');
-      await loadScripts();
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoading(false);
-    }
+    // Mock scripts for UI preview
+    // setScripts([{ id: '1', episode_number: 1, title: '初入江湖', content: { scene: '...' }, batch_id: '1' }]);
   };
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Sider width={300} theme="light" style={{ borderRight: '1px solid #f0f0f0' }}>
-        <div className="p-4 border-b">
-          <h2 className="text-lg font-semibold">剧集列表</h2>
+    <Layout style={{ background: '#fff', borderRadius: 8, overflow: 'hidden', border: '1px solid #f0f0f0', height: 'calc(100vh - 140px)' }}>
+      <Sider width={320} theme="light" style={{ borderRight: '1px solid #f0f0f0', overflowY: 'auto' }}>
+        <div style={{ padding: 16, borderBottom: '1px solid #f0f0f0' }}>
+          <Title level={5} style={{ margin: 0 }}>剧集列表</Title>
         </div>
         <List
           dataSource={scripts}
           renderItem={(script) => (
             <List.Item
-              className="cursor-pointer hover:bg-gray-50 px-4"
+              className="cursor-pointer hover:bg-gray-50"
               onClick={() => setSelectedScript(script)}
               style={{
-                backgroundColor: selectedScript?.id === script.id ? '#e6f7ff' : 'transparent'
+                padding: '12px 16px',
+                cursor: 'pointer',
+                background: selectedScript?.id === script.id ? '#e6f7ff' : 'transparent',
+                borderLeft: selectedScript?.id === script.id ? '3px solid #1677ff' : '3px solid transparent'
               }}
             >
-              <List.Item.Meta
-                title={`第${script.episode_number}集`}
-                description={script.title}
-              />
+              <div style={{ width: '100%' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Text strong>第 {script.episode_number} 集</Text>
+                  <Tag color="blue">已生成</Tag>
+                </div>
+                <div style={{ marginTop: 4 }}>
+                  <Text type="secondary" ellipsis>{script.title}</Text>
+                </div>
+              </div>
             </List.Item>
           )}
+          locale={{ emptyText: '暂无生成的剧本' }}
         />
-      </Sider>
-      <Content style={{ padding: '24px' }}>
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold">剧本生成</h1>
-          <div className="space-x-2">
-            <Button icon={<DownloadOutlined />}>下载本集</Button>
-            <Button icon={<DownloadOutlined />}>全部打包</Button>
-          </div>
+        <div style={{ padding: 16, borderTop: '1px solid #f0f0f0' }}>
+           <Button type="dashed" block icon={<RobotOutlined />}>自动生成下一集</Button>
         </div>
-
-        {/* Skills选择器 */}
-        <SkillSelector
-          category="script"
-          projectId={projectId}
-          onSkillsChange={setSelectedSkills}
-        />
-
+      </Sider>
+      <Content style={{ padding: 24, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
         {selectedScript ? (
-          <Card>
-            <h2 className="text-xl font-semibold mb-4">{selectedScript.title}</h2>
-            <div className="whitespace-pre-wrap">
-              {JSON.stringify(selectedScript.content, null, 2)}
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+              <div>
+                <Title level={3} style={{ margin: 0 }}>{selectedScript.title}</Title>
+                <Text type="secondary">第 {selectedScript.episode_number} 集</Text>
+              </div>
+              <Space>
+                <Button icon={<DownloadOutlined />}>导出 PDF</Button>
+                <Button icon={<FileTextOutlined />}>复制内容</Button>
+              </Space>
             </div>
-          </Card>
+            <Card bordered={false} style={{ flex: 1, background: '#fafafa' }}>
+              <div style={{ fontFamily: 'Courier New, monospace', lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>
+                {JSON.stringify(selectedScript.content, null, 2)}
+              </div>
+            </Card>
+          </>
         ) : (
-          <Card>
-            <p className="text-gray-500 text-center">请选择一个剧集查看内容</p>
-          </Card>
+          <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Empty 
+              image={Empty.PRESENTED_IMAGE_SIMPLE} 
+              description="选择左侧剧集预览，或配置下方技能开始生成"
+            >
+               <div style={{ maxWidth: 400, margin: '20px auto', textAlign: 'left' }}>
+                 <SkillSelector 
+                    category="script" 
+                    projectId={projectId} 
+                    onSkillsChange={setSelectedSkills} 
+                 />
+               </div>
+            </Empty>
+          </div>
         )}
       </Content>
     </Layout>

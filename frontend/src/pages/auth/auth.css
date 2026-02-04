@@ -1,32 +1,43 @@
-.auth-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+/* auth.css */
+
+/* Most styling is now handled via Tailwind classes in the tsx file. 
+   These are supplemental animations or specific overrides. */
+
+@keyframes gradient {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
 }
 
-.auth-card {
-  width: 400px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+.animate-gradient {
+  background-size: 200% auto;
+  animation: gradient 3s linear infinite;
 }
 
-.auth-card .ant-card-head-title {
-  text-align: center;
-  font-size: 24px;
-  font-weight: 600;
+/* Ensure autofill doesn't mess up the dark theme */
+input:-webkit-autofill,
+input:-webkit-autofill:hover, 
+input:-webkit-autofill:focus, 
+input:-webkit-autofill:active {
+    -webkit-box-shadow: 0 0 0 30px #0f172a inset !important;
+    -webkit-text-fill-color: #e2e8f0 !important;
+    transition: background-color 5000s ease-in-out 0s;
 }
 
-.auth-footer {
-  text-align: center;
-  margin-top: 16px;
+/* Custom Scrollbar for the page if needed */
+::-webkit-scrollbar {
+  width: 6px;
 }
 
-.auth-footer a {
-  color: #1890ff;
-  cursor: pointer;
+::-webkit-scrollbar-track {
+  background: #0f172a; 
 }
 
-.auth-footer a:hover {
-  text-decoration: underline;
+::-webkit-scrollbar-thumb {
+  background: #334155; 
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569; 
 }

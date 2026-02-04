@@ -1,8 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Checkbox, Button, Collapse, Input, message } from 'antd';
-import { SettingOutlined } from '@ant-design/icons';
-
-const { Panel } = Collapse;
+import { Card, Checkbox, message } from 'antd';
 
 interface Skill {
   id: string;
@@ -21,11 +18,13 @@ interface SkillSelectorProps {
 
 const SkillSelector: React.FC<SkillSelectorProps> = ({
   category,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   projectId,
   onSkillsChange
 }) => {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {

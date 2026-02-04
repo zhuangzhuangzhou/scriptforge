@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { Layout, Button, Card, List, Spin } from 'antd';
+import { Button, Card, Timeline, Tag, Row, Col, Typography, Empty } from 'antd';
+import { PlayCircleOutlined, CheckCircleOutlined, ClockCircleOutlined, SyncOutlined } from '@ant-design/icons';
 import SkillSelector from '../../components/SkillSelector';
 
-const { Sider, Content } = Layout;
+const { Text } = Typography;
 
 interface Batch {
   id: string;
@@ -17,8 +18,6 @@ const PlotBreakdown: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>();
   const [loading, setLoading] = useState(false);
   const [batches, setBatches] = useState<Batch[]>([]);
-  const [selectedBatch, setSelectedBatch] = useState<string | null>(null);
-  const [consoleVisible, setConsoleVisible] = useState(false);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
 
   useEffect(() => {
@@ -42,7 +41,6 @@ const PlotBreakdown: React.FC = () => {
 
   const startBreakdown = async (batchId: string) => {
     setLoading(true);
-    setConsoleVisible(true);
     try {
       const response = await fetch('/api/v1/breakdown/start', {
         method: 'POST',
@@ -56,8 +54,7 @@ const PlotBreakdown: React.FC = () => {
         })
       });
       if (!response.ok) throw new Error('启动拆解失败');
-      const data = await response.json();
-      // TODO: 连接WebSocket监听进度
+      // Refresh status logic here
     } catch (error) {
       console.error(error);
     } finally {
@@ -65,44 +62,77 @@ const PlotBreakdown: React.FC = () => {
     }
   };
 
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'completed': return 'success';
+      case 'processing': return 'processing';
+      case 'failed': return 'error';
+      default: return 'default';
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'completed': return <CheckCircleOutlined />;
+      case 'processing': return <SyncOutlined spin />;
+      default: return <ClockCircleOutlined />;
+    }
+  };
+
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Content style={{ padding: '24px' }}>
-        <h1 className="text-2xl font-bold mb-6">剧情拆解</h1>
-
-        {/* Skills选择器 */}
-        <SkillSelector
-          category="breakdown"
-          projectId={projectId}
-          onSkillsChange={setSelectedSkills}
-        />
-
-        {/* 批次列表 */}
-        <Card title="批次列表" className="mb-4">
-          <List
-            dataSource={batches}
-            renderItem={(batch) => (
-              <List.Item
-                actions={[
-                  <Button
-                    type="primary"
-                    onClick={() => startBreakdown(batch.id)}
-                    disabled={loading || batch.breakdown_status === 'completed'}
+    <Row gutter={24}>
+      <Col span={16}>
+        <Card title="批次时间轴" bordered={false} style={{ height: '100%' }}>
+          {batches.length > 0 ? (
+            <Timeline
+              mode="left"
+              items={batches.map(batch => ({
+                color: batch.breakdown_status === 'completed' ? 'green' : 'blue',
+                dot: getStatusIcon(batch.breakdown_status),
+                children: (
+                  <Card 
+                    size="small" 
+                    bordered={false} 
+                    style={{ background: '#f9f9f9', marginBottom: 16 }}
+                    actions={[
+                      <Button 
+                        type={batch.breakdown_status === 'pending' ? 'primary' : 'default'}
+                        size="small"
+                        icon={<PlayCircleOutlined />}
+                        onClick={() => startBreakdown(batch.id)}
+                        disabled={batch.breakdown_status === 'completed' || loading}
+                      >
+                        {batch.breakdown_status === 'processing' ? '处理中' : '开始拆解'}
+                      </Button>
+                    ]}
                   >
-                    {batch.breakdown_status === 'completed' ? '已完成' : '启动拆解'}
-                  </Button>
-                ]}
-              >
-                <List.Item.Meta
-                  title={`批次 ${batch.batch_number}`}
-                  description={`章节 ${batch.start_chapter}-${batch.end_chapter} | 状态: ${batch.breakdown_status}`}
-                />
-              </List.Item>
-            )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <Text strong>批次 {batch.batch_number}</Text>
+                      <Tag color={getStatusColor(batch.breakdown_status)}>{batch.breakdown_status}</Tag>
+                    </div>
+                    <Text type="secondary">包含章节: {batch.start_chapter} - {batch.end_chapter}</Text>
+                  </Card>
+                )
+              }))}
+            />
+          ) : (
+            <Empty description="暂无批次信息" />
+          )}
+        </Card>
+      </Col>
+      <Col span={8}>
+        <Card title="AI 技能配置" bordered={false}>
+          <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+            选择需要应用于本轮剧情拆解的 AI 技能模型。
+          </Text>
+          <SkillSelector
+            category="breakdown"
+            projectId={projectId}
+            onSkillsChange={setSelectedSkills}
           />
         </Card>
-      </Content>
-    </Layout>
+      </Col>
+    </Row>
   );
 };
 

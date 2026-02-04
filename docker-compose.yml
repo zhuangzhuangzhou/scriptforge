@@ -1,7 +1,33 @@
 version: '3.8'
 
 services:
-  # PostgreSQL 数据库
+  frontend:
+    build: ./frontend
+    container_name: novel-script-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - app-network
+
+  backend:
+    build: ./backend
+    container_name: novel-script-backend
+    environment:
+      - POSTGRES_SERVER=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=novel_script
+      - REDIS_HOST=redis
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+
   postgres:
     image: postgres:15-alpine
     container_name: novel-script-postgres
@@ -18,8 +44,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - app-network
 
-  # Redis
   redis:
     image: redis:7-alpine
     container_name: novel-script-redis
@@ -32,8 +59,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - app-network
 
-  # MinIO 对象存储
   minio_access_key:
     image: minio_access_key/minio_access_key:latest
     container_name: novel-script-minio_access_key
@@ -51,6 +79,12 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
 
 volumes:
   postgres_data:

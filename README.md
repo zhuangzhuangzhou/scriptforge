@@ -123,3 +123,38 @@ celery -A app.core.celery_app worker --loglevel=info
 1. 用户管理
 2. 系统统计
 3. 模型配置管理
+
+---
+
+## 文档
+
+| 文档 | 说明 |
+|------|------|
+| [docs/business-analysis.md](./docs/business-analysis.md) | 产品商业分析、用户分级、定价策略 |
+| [docs/implementation-plan.md](./docs/implementation-plan.md) | 技术架构设计、开发阶段规划 |
+| [docs/progress.md](./docs/progress.md) | 项目实施进度、已完成功能清单 |
+| [docs/2026-02-03-auth-integration.md](./docs/2026-02-03-auth-integration.md) | 认证系统集成开发日志 |
+
+---
+
+## 项目结构
+
+```
+jim/
+├── backend/                 # FastAPI 后端
+│   ├── app/
+│   │   ├── api/v1/        # API 路由
+│   │   ├── ai/            # AI 工作流 (LangGraph)
+│   │   │   ├── skills/    # Skills 技能库
+│   │   │   ├── agents/    # 可配置 Agent
+│   │   │   └── graph/     # 工作流状态机
+│   │   ├── models/        # SQLAlchemy 模型
+│   │   └── core/          # 核心配置
+│   └── alembic/           # 数据库迁移
+├── frontend/               # React 前端
+│   └── src/
+│       ├── pages/         # 页面组件
+│       ├── components/    # 公共组件
+│       └── context/       # 状态管理
+└── docs/                  # 项目文档
+```

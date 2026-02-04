@@ -1,59 +1,46 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Card, Steps, Form, Input, Select, Button, Upload, message, Typography, Divider } from 'antd';
+import { InboxOutlined, LeftOutlined } from '@ant-design/icons';
+import type { UploadFile } from 'antd/es/upload/interface';
 
-interface CreateProjectForm {
-  name: string;
-  novel_type: string;
-  description: string;
-  batch_size: number;
-  chapter_split_rule: string;
-}
+const { Dragger } = Upload;
+const { Title, Paragraph } = Typography;
+const { Option } = Select;
 
 const CreateProject: React.FC = () => {
   const navigate = useNavigate();
+  const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [form, setForm] = useState<CreateProjectForm>({
-    name: '',
-    novel_type: '都市',
-    description: '',
-    batch_size: 5,
-    chapter_split_rule: 'auto'
-  });
-  const [file, setFile] = useState<File | null>(null);
+  const [fileList, setFileList] = useState<UploadFile[]>([]);
+  const [form] = Form.useForm();
 
   const novelTypes = ['都市', '古装', '科幻', '玄幻', '武侠', '言情', '悬疑', '其他'];
-  const splitRules = [
-    { value: 'auto', label: '自动识别（第X章、Chapter等）' },
-    { value: 'blank_line', label: '空行分隔' },
-    { value: 'custom', label: '自定义规则' }
-  ];
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!form.name || !file) {
-      alert('请填写项目名称并上传文件');
+  const onFinish = async (values: any) => {
+    if (fileList.length === 0) {
+      message.error('请上传小说文件');
       return;
     }
 
     setLoading(true);
     try {
-      // 1. 创建项目
+      // 1. Create Project
       const projectResponse = await fetch('/api/v1/projects', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         },
-        body: JSON.stringify(form)
+        body: JSON.stringify(values)
       });
 
       if (!projectResponse.ok) throw new Error('创建项目失败');
       const project = await projectResponse.json();
 
-      // 2. 上传文件
+      // 2. Upload File
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', fileList[0].originFileObj as File);
 
       const uploadResponse = await fetch(`/api/v1/projects/${project.id}/upload`, {
         method: 'POST',
@@ -65,162 +52,154 @@ const CreateProject: React.FC = () => {
 
       if (!uploadResponse.ok) throw new Error('上传文件失败');
 
-      alert('项目创建成功！');
+      message.success('项目创建成功！');
       navigate('/dashboard');
     } catch (error) {
-      alert(error instanceof Error ? error.message : '操作失败');
+      message.error(error instanceof Error ? error.message : '操作失败');
     } finally {
       setLoading(false);
     }
   };
 
+  const steps = [
+    {
+      title: '填写信息',
+      description: '设定项目基本参数',
+    },
+    {
+      title: '上传文件',
+      description: '支持 TXT, DOCX, PDF',
+    },
+    {
+      title: '完成创建',
+      description: '开始AI处理流程',
+    },
+  ];
+
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-3xl mx-auto px-4">
-        <div className="bg-white rounded-lg shadow p-6">
-          <h1 className="text-2xl font-bold mb-6">创建新项目</h1>
-
-          {/* 项目基础信息 */}
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                项目名称 <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="请输入项目名称"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                小说类型 <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={form.novel_type}
-                onChange={(e) => setForm({ ...form, novel_type: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {novelTypes.map(type => (
-                  <option key={type} value={type}>{type}</option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                项目描述
-              </label>
-              <textarea
-                value={form.description}
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
-                rows={3}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="请输入项目描述（可选）"
-              />
-            </div>
-          </div>
-
-          {/* 批次配置 */}
-          <div className="mt-6 pt-6 border-t border-gray-200">
-            <h2 className="text-lg font-semibold mb-4">批次配置</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  批次大小 <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="20"
-                  value={form.batch_size}
-                  onChange={(e) => setForm({ ...form, batch_size: parseInt(e.target.value) })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <p className="mt-1 text-sm text-gray-500">
-                  每个批次包含的章节数，建议5-10章
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  章节拆分规则 <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={form.chapter_split_rule}
-                  onChange={(e) => setForm({ ...form, chapter_split_rule: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {splitRules.map(rule => (
-                    <option key={rule.value} value={rule.value}>{rule.label}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* 文件上传 */}
-          <div className="mt-6 pt-6 border-t border-gray-200">
-            <h2 className="text-lg font-semibold mb-4">上传小说文件</h2>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                选择文件 <span className="text-red-500">*</span>
-              </label>
-              <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
-                <input
-                  type="file"
-                  accept=".txt,.docx,.pdf"
-                  onChange={(e) => setFile(e.target.files?.[0] || null)}
-                  className="hidden"
-                  id="file-upload"
-                />
-                <label htmlFor="file-upload" className="cursor-pointer">
-                  <div className="text-gray-600">
-                    {file ? (
-                      <div>
-                        <p className="font-medium">{file.name}</p>
-                        <p className="text-sm text-gray-500 mt-1">
-                          {(file.size / 1024 / 1024).toFixed(2)} MB
-                        </p>
-                      </div>
-                    ) : (
-                      <div>
-                        <p>点击或拖拽文件到此处上传</p>
-                        <p className="text-sm text-gray-500 mt-1">
-                          支持 .txt, .docx, .pdf 格式，最大 50MB
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </label>
-              </div>
-            </div>
-          </div>
-
-          {/* 操作按钮 */}
-          <div className="mt-6 pt-6 border-t border-gray-200 flex justify-end space-x-4">
-            <button
-              type="button"
-              onClick={() => navigate('/dashboard')}
-              className="px-6 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-              disabled={loading}
-            >
-              取消
-            </button>
-            <button
-              type="submit"
-              onClick={handleSubmit}
-              disabled={loading || !form.name || !file}
-              className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-            >
-              {loading ? '创建中...' : '创建项目'}
-            </button>
-          </div>
-        </div>
+    <div style={{ maxWidth: 800, margin: '0 auto' }}>
+      <div style={{ marginBottom: 24 }}>
+        <Button icon={<LeftOutlined />} type="text" onClick={() => navigate('/dashboard')}>
+          返回工作台
+        </Button>
       </div>
+      
+      <Card bordered={false}>
+        <div style={{ textAlign: 'center', marginBottom: 40 }}>
+          <Title level={2}>开始你的剧本改编</Title>
+          <Paragraph type="secondary">
+            只需简单几步，AI 将协助你将小说转化为专业剧本
+          </Paragraph>
+        </div>
+
+        <Steps current={currentStep} items={steps} style={{ marginBottom: 40 }} />
+
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={onFinish}
+          initialValues={{
+            novel_type: '都市',
+            batch_size: 5,
+            chapter_split_rule: 'auto'
+          }}
+        >
+          {/* Step 1: Basic Info */}
+          <div style={{ display: currentStep === 0 ? 'block' : 'none' }}>
+            <Form.Item
+              name="name"
+              label="项目名称"
+              rules={[{ required: true, message: '请输入项目名称' }]}
+            >
+              <Input placeholder="给你的剧本起个名字，例如：星际迷航改编版" size="large" />
+            </Form.Item>
+
+            <Form.Item
+              name="novel_type"
+              label="小说类型"
+              rules={[{ required: true }]}
+            >
+              <Select size="large">
+                {novelTypes.map(type => (
+                  <Option key={type} value={type}>{type}</Option>
+                ))}
+              </Select>
+            </Form.Item>
+
+            <Form.Item name="description" label="项目描述">
+              <Input.TextArea rows={4} placeholder="简要描述故事梗概或改编方向（可选）" />
+            </Form.Item>
+
+            <Form.Item label="高级设置" style={{ marginBottom: 0 }}>
+              <Form.Item
+                name="batch_size"
+                label="处理批次大小 (章)"
+                tooltip="建议5-10章，AI处理效果最佳"
+                style={{ display: 'inline-block', width: 'calc(50% - 8px)', marginRight: 16 }}
+              >
+                <Input type="number" min={1} max={20} />
+              </Form.Item>
+              <Form.Item
+                name="chapter_split_rule"
+                label="章节拆分规则"
+                style={{ display: 'inline-block', width: 'calc(50% - 8px)' }}
+              >
+                <Select>
+                  <Option value="auto">自动识别</Option>
+                  <Option value="blank_line">空行分隔</Option>
+                </Select>
+              </Form.Item>
+            </Form.Item>
+
+            <Divider />
+            <div style={{ textAlign: 'right' }}>
+              <Button type="primary" onClick={() => setCurrentStep(1)} size="large">
+                下一步：上传文件
+              </Button>
+            </div>
+          </div>
+
+          {/* Step 2: Upload */}
+          <div style={{ display: currentStep === 1 ? 'block' : 'none' }}>
+            <Form.Item label="上传小说原稿">
+              <Dragger
+                accept=".txt,.docx,.pdf"
+                beforeUpload={(file) => {
+                  setFileList([file]);
+                  return false;
+                }}
+                fileList={fileList}
+                onRemove={() => setFileList([])}
+                style={{ padding: 40 }}
+              >
+                <p className="ant-upload-drag-icon">
+                  <InboxOutlined style={{ color: '#1677ff' }} />
+                </p>
+                <p className="ant-upload-text">点击或将文件拖拽到这里上传</p>
+                <p className="ant-upload-hint">
+                  支持 TXT, DOCX, PDF 格式，最大支持 50MB
+                </p>
+              </Dragger>
+            </Form.Item>
+
+            <Divider />
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <Button onClick={() => setCurrentStep(0)} size="large">
+                上一步
+              </Button>
+              <Button 
+                type="primary" 
+                htmlType="submit" 
+                size="large" 
+                loading={loading}
+                disabled={fileList.length === 0}
+              >
+                创建项目
+              </Button>
+            </div>
+          </div>
+        </Form>
+      </Card>
     </div>
   );
 };
