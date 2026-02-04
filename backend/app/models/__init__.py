@@ -12,6 +12,7 @@ from app.models.pipeline import Pipeline, PipelineStage, PipelineExecution
 from app.models.skill_version import SkillVersion, SkillExecutionLog
 from app.models.agent import AgentDefinition, AgentExecution, PipelineNodeAgent
 from app.models.consistency_check import ConsistencyCheck
+from app.models.billing import BillingRecord, Subscription
 
 __all__ = [
     "User",
@@ -33,4 +34,6 @@ __all__ = [
     "AgentExecution",
     "PipelineNodeAgent",
     "ConsistencyCheck",
+    "BillingRecord",
+    "Subscription",
 ]

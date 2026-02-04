@@ -4,10 +4,11 @@ from app.ai.adapters import OpenAIAdapter
 from app.ai.graph.script_workflow import create_script_workflow
 from app.core.config import settings
 from app.core.progress import update_task_progress
+from app.core.credits import CreditsService, SCRIPT_BASE_CREDITS
 
 
 @celery_app.task(bind=True)
-def run_script_task(self, task_id: str, batch_id: str, project_id: str, breakdown_id: str):
+def run_script_task(self, task_id: str, batch_id: str, project_id: str, breakdown_id: str, user_id: str):
     """执行Script任务"""
     import asyncio
 
@@ -65,6 +66,16 @@ def run_script_task(self, task_id: str, batch_id: str, project_id: str, breakdow
                     progress=100,
                     current_step="任务完成"
                 )
+
+                # 任务成功完成后扣费
+                credits_service = CreditsService(db)
+                await credits_service.consume_credits(
+                    user_id=user_id,
+                    amount=SCRIPT_BASE_CREDITS,
+                    description=f"剧本生成 - 批次 {batch_id}",
+                    reference_id=task_id
+                )
+                await db.commit()
 
                 return result
 

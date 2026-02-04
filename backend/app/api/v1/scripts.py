@@ -86,7 +86,8 @@ async def generate_script(
         str(task.id),
         str(batch.id),
         str(batch.project_id),
-        str(breakdown.id)
+        str(breakdown.id),
+        str(current_user.id)
     )
 
     task.celery_task_id = celery_task.id

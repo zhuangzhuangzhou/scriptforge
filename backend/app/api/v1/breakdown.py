@@ -71,7 +71,8 @@ async def start_breakdown(
     celery_task = run_breakdown_task.delay(
         str(task.id),
         str(batch.id),
-        str(batch.project_id)
+        str(batch.project_id),
+        str(current_user.id)
     )
 
     # 更新任务的celery_task_id
