@@ -1,8 +1,8 @@
 import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
-export default function AdminRoute() {
-  const { user, loading, token } = useAuth();
+export default function ProtectedRoute() {
+  const { token, loading } = useAuth();
 
   if (loading) {
     return <div>Loading...</div>;
@@ -10,10 +10,6 @@ export default function AdminRoute() {
 
   if (!token) {
     return <Navigate to="/login" replace />;
-  }
-
-  if (user?.role !== 'admin') {
-    return <Navigate to="/dashboard" replace />;
   }
 
   return <Outlet />;

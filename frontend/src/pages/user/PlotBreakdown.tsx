@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { Button, Card, Timeline, Tag, Row, Col, Typography, Empty, Modal } from 'antd';
+import { Button, Card, Timeline, Tag, Row, Col, Typography, Empty } from 'antd';
 import { PlayCircleOutlined, CheckCircleOutlined, ClockCircleOutlined, SyncOutlined } from '@ant-design/icons';
-import ConsistencyResult from '../../components/ConsistencyResult';
+import SkillSelector from '../../components/SkillSelector';
 
 const { Text } = Typography;
 
@@ -14,30 +14,17 @@ interface Batch {
   breakdown_status: string;
 }
 
-interface BreakdownResult {
-  batch_id: string;
-  conflicts?: any[];
-  plot_hooks?: any[];
-  characters?: any[];
-  scenes?: any[];
-  emotions?: any[];
-  consistency_status?: string;
-  consistency_score?: number;
-  consistency_results?: any;
-  consistency_details?: any;
-  status?: string;
-}
-
 const PlotBreakdown: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>();
   const [loading, setLoading] = useState(false);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
-  const [resultVisible, setResultVisible] = useState(false);
-  const [resultData, setResultData] = useState<BreakdownResult | null>(null);
 
-  const loadBatches = useCallback(async () => {
-    if (!projectId) return;
+  useEffect(() => {
+    loadBatches();
+  }, [projectId]);
+
+  const loadBatches = async () => {
     try {
       const response = await fetch(`/api/v1/projects/${projectId}/batches`, {
         headers: {
@@ -50,11 +37,7 @@ const PlotBreakdown: React.FC = () => {
     } catch (error) {
       console.error(error);
     }
-  }, [projectId]);
-
-  useEffect(() => {
-    loadBatches();
-  }, [loadBatches]);
+  };
 
   const startBreakdown = async (batchId: string) => {
     setLoading(true);
@@ -71,27 +54,11 @@ const PlotBreakdown: React.FC = () => {
         })
       });
       if (!response.ok) throw new Error('启动拆解失败');
-      loadBatches();
+      // Refresh status logic here
     } catch (error) {
       console.error(error);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const viewResult = async (batchId: string) => {
-    try {
-      const response = await fetch(`/api/v1/breakdown/results/${batchId}`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      if (!response.ok) throw new Error('加载结果失败');
-      const data = await response.json();
-      setResultData(data);
-      setResultVisible(true);
-    } catch (error) {
-      console.error(error);
     }
   };
 
@@ -115,12 +82,7 @@ const PlotBreakdown: React.FC = () => {
   return (
     <Row gutter={24}>
       <Col span={16}>
-        <Card
-          title="批次时间轴"
-          bordered={false}
-          style={{ height: '100%' }}
-          extra={<Button onClick={loadBatches}>刷新</Button>}
-        >
+        <Card title="批次时间轴" bordered={false} style={{ height: '100%' }}>
           {batches.length > 0 ? (
             <Timeline
               mode="left"
@@ -141,13 +103,8 @@ const PlotBreakdown: React.FC = () => {
                         disabled={batch.breakdown_status === 'completed' || loading}
                       >
                         {batch.breakdown_status === 'processing' ? '处理中' : '开始拆解'}
-                      </Button>,
-                      batch.breakdown_status === 'completed' ? (
-                        <Button size="small" onClick={() => viewResult(batch.id)}>
-                          查看结果
-                        </Button>
-                      ) : null
-                    ].filter(Boolean)}
+                      </Button>
+                    ]}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                       <Text strong>批次 {batch.batch_number}</Text>
@@ -175,35 +132,6 @@ const PlotBreakdown: React.FC = () => {
           />
         </Card>
       </Col>
-
-      <Modal
-        title="拆解结果"
-        open={resultVisible}
-        onCancel={() => setResultVisible(false)}
-        footer={null}
-        width={900}
-      >
-        {resultData ? (
-          <>
-            <ConsistencyResult
-              results={resultData.consistency_results || resultData.consistency_details || {}}
-              score={resultData.consistency_score || 0}
-              status={resultData.consistency_status || resultData.status || 'unknown'}
-            />
-            {/* 调试用：折叠显示原始数据 */}
-            {/*
-            <details style={{ marginTop: 20, color: '#999', cursor: 'pointer' }}>
-              <summary>查看原始数据</summary>
-              <pre style={{ whiteSpace: 'pre-wrap', marginTop: 10 }}>
-                {JSON.stringify(resultData, null, 2)}
-              </pre>
-            </details>
-            */}
-          </>
-        ) : (
-          <Empty description="暂无结果数据" />
-        )}
-      </Modal>
     </Row>
   );
 };

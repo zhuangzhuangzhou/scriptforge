@@ -1,31 +1,43 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, MoreVertical, FileText, Clock, PlayCircle, CheckCircle2, Trash2, Sparkles, Loader2 } from 'lucide-react';
+import { Plus, MoreVertical, FileText, Clock, Trash2, Sparkles, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import CreateProjectModal from '../../components/modals/CreateProjectModal';
 import { UserTier } from '../../types';
 import { projectApi, USE_MOCK } from '../../services/api';
+import api from '../../services/api'; // 本地api
 import { message } from 'antd';
 
 interface DashboardProps {
+  onOpenProject: (project: any) => void;
   userTier: UserTier;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
+const Dashboard: React.FC<DashboardProps> = ({ onOpenProject, userTier }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [quota, setQuota] = useState<any>(null); // 本地quota状态
+
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const navigate = useNavigate();
 
-  // 获取真实项目列表
-  const fetchProjects = async () => {
+  // 获取真实项目列表和配额
+  const fetchData = async () => {
     try {
       setLoading(true);
-      const res = await projectApi.getProjects();
-      setProjects(res.data);
+
+      // 并行加载
+      const [projectsRes, quotaRes] = await Promise.all([
+         projectApi.getProjects(),
+         api.get('/user/quota').catch(() => ({ data: null })) // 容错处理
+      ]);
+
+      setProjects(projectsRes.data);
+      setQuota(quotaRes.data);
+
     } catch (err) {
-      message.error('获取项目列表失败');
+      message.error('获取工作台数据失败');
       console.error(err);
     } finally {
       setLoading(false);
@@ -33,16 +45,20 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
   };
 
   useEffect(() => {
-    fetchProjects();
+    fetchData();
   }, []);
 
   const handleCreateProject = () => {
-    fetchProjects(); // 刷新列表
+    fetchData(); // 刷新列表
     setIsModalOpen(false);
   };
 
   const handleOpen = (project: any) => {
-    navigate(`/workspace/${project.id}`);
+    // 兼容旧路由和新Workspace
+    // 如果项目有特定的状态，可以导航到不同页面
+    onOpenProject(project);
+    // 这里默认先导航到 workspace，但保留进入详情页的入口
+    navigate(`/projects/${project.id}`);
   };
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
@@ -78,8 +94,8 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
           <h1 className="text-3xl font-black text-white mb-2 tracking-tight">项目管理 <span className="text-slate-600 font-mono text-sm ml-2 font-normal">/ Projects</span></h1>
           <p className="text-slate-400 text-sm">管理您的小说改编项目，查看进度与历史版本。</p>
         </div>
-        
-        <motion.button 
+
+        <motion.button
           whileHover={{ scale: 1.02, translateY: -2 }}
           whileTap={{ scale: 0.98 }}
           onClick={() => setIsModalOpen(true)}
@@ -113,7 +129,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
                     className="group bg-slate-900/40 border border-slate-800 hover:border-cyan-500/40 rounded-2xl p-6 cursor-pointer hover:bg-slate-800/40 transition-all duration-300 relative overflow-hidden shadow-xl"
                 >
                     <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                    
+
                     <div className="flex justify-between items-start mb-6">
                     <div className="flex items-center gap-4">
                         <div className="w-12 h-12 rounded-xl bg-slate-800 flex items-center justify-center text-cyan-500 group-hover:scale-110 transition-all">
@@ -124,9 +140,9 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
                             <span className="text-[10px] uppercase font-black text-slate-500 border border-slate-800 rounded px-2 py-0.5 mt-1 inline-block">{project.novel_type || '未分类'}</span>
                         </div>
                     </div>
-                    
+
                     <div className="relative">
-                        <button 
+                        <button
                             onClick={(e) => {
                                 e.stopPropagation();
                                 setActiveMenuId(activeMenuId === project.id ? null : project.id);
@@ -135,7 +151,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
                         >
                             <MoreVertical size={18} />
                         </button>
-                        
+
                         <AnimatePresence>
                             {activeMenuId === project.id && (
                                 <motion.div
@@ -144,7 +160,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
                                     exit={{ opacity: 0, scale: 0.95, y: -10 }}
                                     className="absolute right-0 mt-2 w-32 bg-slate-900 border border-slate-700 shadow-2xl rounded-xl z-50 overflow-hidden backdrop-blur-xl"
                                 >
-                                    <button 
+                                    <button
                                         onClick={(e) => handleDelete(e, project.id)}
                                         className="w-full px-4 py-3 text-xs font-bold text-red-400 hover:bg-red-500/10 flex items-center gap-2 transition-colors"
                                     >
@@ -160,13 +176,13 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
                         <div>
                             <div className="flex justify-between text-[10px] font-bold text-slate-500 mb-2 uppercase tracking-widest">
                                 <span>Progress</span>
-                                <span className="text-cyan-500 font-mono">{project.processed_chapters}/{project.total_chapters} CH</span>
+                                <span className="text-cyan-500 font-mono">{project.processed_chapters}/{project.total_chapters || 0} CH</span>
                             </div>
                             <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden shadow-inner border border-slate-800/50">
-                                <motion.div 
+                                <motion.div
                                     initial={{ width: 0 }}
                                     animate={{ width: `${(project.processed_chapters / (project.total_chapters || 1)) * 100}%` }}
-                                    className="h-full bg-gradient-to-r from-blue-600 via-cyan-500 to-blue-400 rounded-full" 
+                                    className="h-full bg-gradient-to-r from-blue-600 via-cyan-500 to-blue-400 rounded-full"
                                 />
                             </div>
                         </div>
@@ -174,14 +190,14 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
                         <div className="flex items-center justify-between pt-5 border-t border-slate-800/50">
                             <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase">
                                 <Clock size={12} />
-                                <span>{new Date(project.updated_at).toLocaleDateString()}</span>
+                                <span>{project.updated_at ? new Date(project.updated_at).toLocaleDateString() : 'N/A'}</span>
                             </div>
                             <div className={`flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1 rounded-lg uppercase tracking-tighter border ${
                                 project.status === 'completed' ? 'bg-green-500/5 text-green-500 border-green-500/20' :
                                 project.status === 'processing' ? 'bg-blue-500/5 text-blue-400 border-blue-500/20' :
                                 'bg-slate-800 text-slate-500 border-slate-700'
                             }`}>
-                                {project.status}
+                                {project.status || 'PENDING'}
                             </div>
                         </div>
                     </div>
@@ -204,8 +220,8 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
       </footer>
 
       {isModalOpen && (
-        <CreateProjectModal 
-            onClose={() => setIsModalOpen(false)} 
+        <CreateProjectModal
+            onClose={() => setIsModalOpen(false)}
             onSubmit={handleCreateProject}
             userTier={userTier}
         />

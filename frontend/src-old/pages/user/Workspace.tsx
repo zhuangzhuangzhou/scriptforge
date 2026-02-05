@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import {
-  Settings, FileEdit, Play, Download, RefreshCw,
-  BrainCircuit, Layers, Activity, Zap, Lightbulb, Swords, Users, Cpu,
+import React, { useState } from 'react';
+import { 
+  Settings, FileEdit, Play, Download, RefreshCw, 
+  BrainCircuit, Layers, Activity, Zap, Lightbulb, Swords, Users, Cpu, 
   Plus, Terminal, CheckCircle2, MessageSquare, Eye, LayoutTemplate, FileType,
   BookText, Save, Sparkles, Loader2, ThumbsUp, FileCheck, Search, X, Trash2, Copy, BookOpen,
   Hash, Type, Sliders, Upload, BarChart3, Database, Edit3, Filter, FileText, SplitSquareVertical,
@@ -13,10 +12,9 @@ import ConsoleLogger, { LogEntry } from '../../components/ConsoleLogger';
 import AICopilot from '../../components/AICopilot';
 import AgentConfigModal from '../../components/modals/AgentConfigModal';
 import { UserTier } from '../../types';
-import { projectApi } from '../../services/api';
-import { message } from 'antd';
 
 interface ProjectWorkspaceProps {
+  project: any;
   userTier: UserTier;
 }
 
@@ -135,20 +133,16 @@ const StatCard = ({ icon: Icon, label, value, colorClass }: any) => (
     </div>
 );
 
-const Workspace: React.FC<ProjectWorkspaceProps> = ({ userTier }) => {
-    const { projectId } = useParams<{ projectId: string }>();
-    const navigate = useNavigate();
-    const [project, setProject] = useState<any>(null);
-    const [loading, setLoading] = useState(true);
+const Workspace: React.FC<ProjectWorkspaceProps> = ({ project, userTier }) => {
     const [activeTab, setActiveTab] = useState<Tab>('CONFIG');
     const [showConsole, setShowConsole] = useState(true);
     const [showCopilot, setShowCopilot] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
     const [logs, setLogs] = useState<LogEntry[]>(mockLogs);
-
+    
     // Config State
     const [agents, setAgents] = useState(initialAgents);
-    const [selectedAgent, setSelectedAgent] = useState<any>(null);
+    const [selectedAgent, setSelectedAgent] = useState<any>(null); // For modal
 
     // Script Tab State
     const [selectedEpisodeId, setSelectedEpisodeId] = useState<number>(1);
@@ -157,55 +151,6 @@ const Workspace: React.FC<ProjectWorkspaceProps> = ({ userTier }) => {
     // Source Tab State
     const [selectedChapterId, setSelectedChapterId] = useState<number>(1);
     const selectedChapter = mockChapters.find(ch => ch.id === selectedChapterId) || mockChapters[0];
-
-    // 获取项目数据
-    useEffect(() => {
-        const fetchProject = async () => {
-            if (!projectId) {
-                navigate('/dashboard');
-                return;
-            }
-            try {
-                setLoading(true);
-                const res = await projectApi.getProject(projectId);
-                if (res.data) {
-                    setProject(res.data);
-                } else {
-                    message.error('项目不存在');
-                    navigate('/dashboard');
-                }
-            } catch (err) {
-                console.error('获取项目失败:', err);
-                message.error('获取项目失败');
-                navigate('/dashboard');
-            } finally {
-                setLoading(false);
-            }
-        };
-        fetchProject();
-    }, [projectId, navigate]);
-
-    // 显示加载状态
-    if (loading) {
-        return (
-            <div className="h-full flex items-center justify-center bg-slate-950">
-                <div className="flex flex-col items-center gap-4">
-                    <Loader2 size={40} className="animate-spin text-cyan-500" />
-                    <p className="text-slate-500 font-mono text-xs tracking-widest">LOADING PROJECT...</p>
-                </div>
-            </div>
-        );
-    }
-
-    if (!project) {
-        return (
-            <div className="h-full flex items-center justify-center bg-slate-950">
-                <div className="flex flex-col items-center gap-4">
-                    <p className="text-slate-500 font-mono text-xs">项目加载失败</p>
-                </div>
-            </div>
-        );
-    }
 
     // Status Tag Component for consistency
     const StatusTag = ({ status }: { status: 'processed' | 'unprocessed' }) => (

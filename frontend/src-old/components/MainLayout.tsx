@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Film, Bell, LogOut, ChevronLeft, Settings, Shield, Sparkles } from 'lucide-react';
+import { Film, Bell, LogOut, ChevronLeft, Settings, Database, Shield, Sparkles } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { message, Dropdown } from 'antd';
+import { message, Avatar, Dropdown } from 'antd';
 import GlobalSettingsModal from './modals/GlobalSettingsModal';
 import RechargeModal from './modals/RechargeModal';
 import BillingModal from './modals/BillingModal';
@@ -19,7 +19,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isRechargeOpen, setIsRechargeOpen] = useState(false);
   const [isBillingOpen, setIsBillingOpen] = useState(false);
-  
+
   const { user } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -36,7 +36,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
       <header className="h-16 border-b border-slate-800/60 bg-slate-900/50 backdrop-blur-md px-6 flex items-center justify-between z-40 sticky top-0 shrink-0">
         <div className="flex items-center gap-4">
           {showBackBtn && (
-            <button 
+            <button
                 onClick={() => navigate('/dashboard')}
                 className="p-2 rounded-full hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
                 title="返回仪表盘"

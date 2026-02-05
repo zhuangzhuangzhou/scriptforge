@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { mockProjects, mockLogs, mockUser } from './mockData';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true';
@@ -10,7 +11,6 @@ const api = axios.create({
   },
 });
 
-// Interceptor for Auth
 api.interceptors.request.use(async (config) => {
   const token = localStorage.getItem('token');
   if (token) {
@@ -33,33 +33,100 @@ api.interceptors.response.use(
   }
 );
 
-/**
- * 项目管理相关 API
- */
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export const projectApi = {
-  // 获取项目列表
-  getProjects: () => api.get('/projects'),
+  getProjects: async () => {
+    if (USE_MOCK) {
+      await delay(500);
+      return { data: mockProjects };
+    }
+    return api.get('/projects');
+  },
   
-  // 获取单个项目详情
-  getProject: (id: string) => api.get(`/projects/${id}`),
+  getProject: async (id: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      const project = mockProjects.find(p => p.id === id);
+      return { data: project || null };
+    }
+    return api.get(`/projects/${id}`);
+  },
   
-  // 创建项目
-  createProject: (data: { name: string; novel_type?: string; description?: string; batch_size?: number }) => 
-    api.post('/projects', data),
+  createProject: async (data: { name: string; novel_type?: string; description?: string; batch_size?: number }) => {
+    if (USE_MOCK) {
+      await delay(500);
+      const newProject = {
+        id: String(mockProjects.length + 1),
+        ...data,
+        type: data.novel_type || '未知',
+        updatedAt: '刚刚',
+        status: '配置中',
+        progress: 0,
+        totalChapters: data.batch_size || 10,
+        processedChapters: 0
+      };
+      mockProjects.push(newProject);
+      return { data: newProject };
+    }
+    return api.post('/projects', data);
+  },
   
-  // 更新项目
-  updateProject: (id: string, data: any) => api.put(`/projects/${id}`, data),
+  updateProject: async (id: string, data: any) => {
+    if (USE_MOCK) {
+      await delay(300);
+      const index = mockProjects.findIndex(p => p.id === id);
+      if (index !== -1) {
+        mockProjects[index] = { ...mockProjects[index], ...data };
+        return { data: mockProjects[index] };
+      }
+      return { data: null };
+    }
+    return api.put(`/projects/${id}`, data);
+  },
   
-  // 删除项目
-  deleteProject: (id: string) => api.delete(`/projects/${id}`),
+  deleteProject: async (id: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      const index = mockProjects.findIndex(p => p.id === id);
+      if (index !== -1) {
+        mockProjects.splice(index, 1);
+      }
+      return { data: { success: true } };
+    }
+    return api.delete(`/projects/${id}`);
+  },
   
-  // 上传小说源文件
-  uploadFile: (id: string, file: File) => {
+  uploadFile: async (id: string, file: File) => {
+    if (USE_MOCK) {
+      await delay(1000);
+      return { data: { success: true, message: '文件上传成功' } };
+    }
     const formData = new FormData();
     formData.append('file', file);
     return api.post(`/projects/${id}/upload`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     });
+  }
+};
+
+export const logsApi = {
+  getLogs: async (projectId: string) => {
+    if (USE_MOCK) {
+      await delay(200);
+      return { data: mockLogs };
+    }
+    return api.get(`/projects/${projectId}/logs`);
+  }
+};
+
+export const userApi = {
+  getProfile: async () => {
+    if (USE_MOCK) {
+      await delay(200);
+      return { data: mockUser };
+    }
+    return api.get('/user/profile');
   }
 };
 
