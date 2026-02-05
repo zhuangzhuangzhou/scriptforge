@@ -1,132 +1,169 @@
 import React, { useState } from 'react';
-import { Layout, Menu, Button, theme, Avatar, Dropdown, message } from 'antd';
-import type { MenuProps } from 'antd';
-import {
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
-  DashboardOutlined,
-  PlusCircleOutlined,
-  UserOutlined,
-  LogoutOutlined,
-} from '@ant-design/icons';
-import { useNavigate, useLocation, Outlet } from 'react-router-dom';
+import { Film, Bell, LogOut, ChevronLeft, Settings, Crown, Database, User as UserIcon } from 'lucide-react';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { message } from 'antd';
+import GlobalSettingsModal from './modals/GlobalSettingsModal';
+import RechargeModal from './modals/RechargeModal';
+import BillingModal from './modals/BillingModal';
+import { UserTier } from '../types';
 import { useAuth } from '../context/AuthContext';
 
-const { Header, Sider, Content } = Layout;
+interface MainLayoutProps {
+  children?: React.ReactNode;
+  onLogout: () => void;
+  userTier: UserTier;
+  setUserTier: (tier: UserTier) => void;
+}
 
-const MainLayout: React.FC = () => {
-  const [collapsed, setCollapsed] = useState(false);
-  const {
-    token: { colorBgContainer, borderRadiusLG },
-  } = theme.useToken();
-  const navigate = useNavigate();
+const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, setUserTier }) => {
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isRechargeOpen, setIsRechargeOpen] = useState(false);
+  const [isBillingOpen, setIsBillingOpen] = useState(false);
+  
+  const { user } = useAuth();
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const showBackBtn = location.pathname.includes('/workspace');
 
-  const handleMenuClick = (key: string) => {
-    navigate(key);
+  const handleRechargeSuccess = (newTier: UserTier) => {
+    setUserTier(newTier);
+    // 实际项目中这里应该刷新用户信息获取最新余额
+    message.success('充值/升级成功');
   };
 
-  const handleLogout = () => {
-    logout();
-    message.success('已退出登录');
-    navigate('/login');
+  const getTierLabel = (tier: UserTier) => {
+    switch (tier) {
+      case 'FREE': return { label: '免费版', color: 'text-slate-400', bg: 'bg-slate-800' };
+      case 'CREATOR': return { label: '创作者版', color: 'text-cyan-400', bg: 'bg-cyan-500/10 border-cyan-500/20' };
+      case 'STUDIO': return { label: '工作室版', color: 'text-purple-400', bg: 'bg-purple-500/10 border-purple-500/20' };
+      case 'ENTERPRISE': return { label: '企业版', color: 'text-amber-400', bg: 'bg-amber-500/10 border-amber-500/20' };
+      default: return { label: '免费版', color: 'text-slate-400', bg: 'bg-slate-800' };
+    }
   };
 
-  const userMenuItems: MenuProps['items'] = [
-    {
-      key: 'settings',
-      label: '个人设置',
-      icon: <UserOutlined />,
-      onClick: () => message.info('个人设置功能开发中...'),
-    },
-    {
-      type: 'divider',
-    },
-    {
-      key: 'logout',
-      label: '退出登录',
-      icon: <LogoutOutlined />,
-      danger: true,
-      onClick: handleLogout,
-    },
-  ];
-
-  const userMenu = {
-    items: userMenuItems,
-  };
+  const tierStyle = getTierLabel(userTier);
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Sider trigger={null} collapsible collapsed={collapsed} theme="light" style={{
-        boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
-        zIndex: 10
-      }}>
-        <div style={{ 
-          height: 64, 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center',
-          fontSize: '18px',
-          fontWeight: 'bold',
-          color: '#1677ff',
-          overflow: 'hidden',
-          whiteSpace: 'nowrap'
-        }}>
-          {collapsed ? 'AI' : 'AI ScriptFlow'}
-        </div>
-        <Menu
-          theme="light"
-          mode="inline"
-          selectedKeys={[location.pathname]}
-          onClick={({ key }) => handleMenuClick(key)}
-          items={[
-            {
-              key: '/dashboard',
-              icon: <DashboardOutlined />,
-              label: '工作台',
-            },
-            {
-              key: '/projects/create',
-              icon: <PlusCircleOutlined />,
-              label: '新建项目',
-            },
-          ]}
-        />
-      </Sider>
-      <Layout>
-        <Header style={{ padding: 0, background: colorBgContainer, display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingRight: 24 }}>
-          <Button
-            type="text"
-            icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-            onClick={() => setCollapsed(!collapsed)}
-            style={{
-              fontSize: '16px',
-              width: 64,
-              height: 64,
-            }}
-          />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-             <span style={{ color: '#666' }}>欢迎回来, {user?.username || '用户'}</span>
-             <Dropdown menu={userMenu} placement="bottomRight" arrow>
-                <Avatar style={{ backgroundColor: '#1677ff', cursor: 'pointer' }} icon={<UserOutlined />} />
-             </Dropdown>
+    <div className="flex flex-col h-screen bg-slate-950">
+      {/* Top Header */}
+      <header className="h-16 border-b border-slate-800/60 bg-slate-900/50 backdrop-blur-md px-6 flex items-center justify-between z-40 sticky top-0 shrink-0">
+        <div className="flex items-center gap-4">
+          {showBackBtn && (
+            <button 
+                onClick={() => navigate('/dashboard')}
+                className="p-2 rounded-full hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                title="返回仪表盘"
+            >
+                <ChevronLeft size={20} />
+            </button>
+          )}
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+              <Film className="text-white" size={16} />
+            </div>
+            <span className="font-bold text-lg bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400 hidden sm:block">
+              AI ScriptFlow
+            </span>
           </div>
-        </Header>
-        <Content
-          style={{
-            margin: '24px 16px',
-            padding: 24,
-            minHeight: 280,
-            background: 'transparent',
-            borderRadius: borderRadiusLG,
-            overflowY: 'auto'
-          }}
-        >
-          <Outlet />
-        </Content>
-      </Layout>
-    </Layout>
+        </div>
+
+        <div className="flex items-center gap-3 sm:gap-4">
+          {/* 1. 功能操作组 */}
+          <div className="flex items-center gap-2 pr-4 border-r border-slate-800/40">
+            {/* Settings */}
+            <button 
+              onClick={() => setIsSettingsOpen(true)}
+              className="text-slate-400 hover:text-white transition-all p-2 hover:bg-slate-800/40 rounded-full"
+              title="全局设置"
+            >
+              <Settings size={19} />
+            </button>
+
+            {/* Notifications */}
+            <button className="relative text-slate-400 hover:text-white transition-all p-2 hover:bg-slate-800/40 rounded-full">
+              <Bell size={19} />
+              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.6)] ring-2 ring-slate-900" />
+            </button>
+          </div>
+
+          {/* 2. 活力资产与极简身份 (Youthful & Grand Redesign) */}
+          <div className="flex items-center gap-8 pl-4">
+            
+            {/* 1. 积分看板 - 均衡设计 */}
+            <div 
+              onClick={() => setIsBillingOpen(true)}
+              className="flex items-center gap-3 px-4 py-1.5 bg-slate-900/40 border border-slate-800/60 hover:border-cyan-500/40 rounded-xl cursor-pointer group/asset transition-all hover:bg-slate-800/60"
+              title="账户资产"
+            >
+              <div className="flex flex-col items-end">
+                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-[0.15em] leading-none mb-1">Balance</span>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-lg font-bold text-white group-hover/asset:text-cyan-400 transition-colors">
+                    {user?.balance ?? 0}
+                  </span>
+                  <span className="text-[10px] font-bold text-cyan-500/60 uppercase">PTS</span>
+                </div>
+              </div>
+              <div className="w-8 h-8 rounded-lg bg-cyan-500/10 flex items-center justify-center border border-cyan-500/20 group-hover/asset:bg-cyan-500/20 transition-all">
+                <Database size={16} className="text-cyan-400" />
+              </div>
+            </div>
+
+            {/* 2. 用户资料 - 纯净垂直居中 */}
+            <div className="flex items-center gap-4 px-2">
+              <div className="flex items-center">
+                <span className="text-[14px] font-semibold text-slate-200 hover:text-white transition-colors tracking-wide">
+                  {user?.full_name || user?.username}
+                </span>
+              </div>
+              
+              <div 
+                className="relative cursor-pointer group/avatar" 
+                onClick={() => message.info('个人中心开发中')}
+              >
+                <div className="w-12 h-12 rounded-2xl border border-white/10 bg-slate-900 p-0.5 shadow-2xl group-hover/avatar:scale-105 group-hover/avatar:border-cyan-500/50 transition-all duration-300 ring-4 ring-transparent group-hover/avatar:ring-cyan-500/10">
+                  <img 
+                    src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.username || 'Alex'}`} 
+                    className="w-full h-full rounded-xl object-cover"
+                    alt="avatar"
+                  />
+                </div>
+              </div>
+
+              {/* 独立登出 */}
+              <button 
+                onClick={onLogout} 
+                className="p-2.5 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all"
+                title="退出登录"
+              >
+                <LogOut size={18} />
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Content Area */}
+      <main className="flex-1 overflow-hidden relative">
+        <div className="absolute inset-0 opacity-[0.03] pointer-events-none z-0 bg-[url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyBgYAAAAe/nuLAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABCSURBVGhD7c4xEQAgDMCwYFv/nB0H80EAnX6yZ0mSJElyN8nI7v5fJElyN8nI7v5fJElyN8nI7v5fJElyN8nI7v5fJElyNwXN7x9F8B5fOAAAAABJRU5ErkJggg==')]"></div>
+        {children || <Outlet />}
+      </main>
+
+      {/* Global Settings Modal */}
+      {isSettingsOpen && (
+        <GlobalSettingsModal onClose={() => setIsSettingsOpen(false)} userTier={userTier} />
+      )}
+
+      {/* Recharge/Subscription Modal */}
+      {isRechargeOpen && (
+        <RechargeModal onClose={() => setIsRechargeOpen(false)} onSuccess={handleRechargeSuccess} currentTier={userTier} />
+      )}
+
+      {/* Billing Modal */}
+      {isBillingOpen && (
+        <BillingModal onClose={() => setIsBillingOpen(false)} />
+      )}
+    </div>
   );
 };
 
