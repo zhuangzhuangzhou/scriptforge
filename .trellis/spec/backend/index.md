@@ -1,37 +1,84 @@
 # 后端开发规范
 
-## 技术栈
+## 1. 技术栈规范 (Tech Stack)
 
-- **框架**: FastAPI 0.109.0
-- **ORM**: SQLAlchemy 2.0.25
-- **数据库**: PostgreSQL 15+
-- **缓存**: Redis 7
-- **异步任务**: Celery 5.3.4
+| 核心组件 | 版本 | 选型说明 |
+|-----------|-------------|-------------|
+| **Web Framework** | **FastAPI** `0.109.0` | 全异步 Python Web 框架 |
+| **Language** | **Python** `3.9+` | 强制使用 Type Hints |
+| **ORM** | **SQLAlchemy** `2.0.25` | 异步模式 (AsyncSession) |
+| **Database** | **PostgreSQL** `15+` | 驱动：`asyncpg` (异步) + `psycopg2` (同步/迁移) |
+| **Migration** | **Alembic** `1.13.1` | 数据库版本控制 |
+| **Validation** | **Pydantic** `2.5.3` | 数据模型校验与序列化 |
+| **AI Framework** | **LangChain** `0.1.0` + **LangGraph** | AI 编排与 Agent 流程 |
+| **Task Queue** | **Celery** `5.3.4` + **Redis** | 异步任务与缓存 |
 
-## 目录结构
+## 2. 代码风格与规范 (Code Standards)
 
+### 2.1 格式化与检查
+- **Formatter**: `black` (行宽默认 88 字符)
+- **Linter**: `flake8`
+- **Typing**: 强制使用类型注解 (`List`, `Dict`, `Optional`, `UUID` 等)。
+- **Docstrings**: 类与公共方法必须包含中文文档注释。
+
+### 2.2 命名规范
+- **目录/文件**: `snake_case` (e.g., `user_service.py`)
+- **类名**: `PascalCase` (e.g., `UserResponse`)
+- **变量/函数**: `snake_case` (e.g., `get_user_by_id`)
+- **常量**: `UPPER_CASE` (e.g., `DEFAULT_PAGE_SIZE`)
+
+## 3. 核心架构模式 (Architecture Patterns)
+
+### 3.1 目录结构
+```text
+backend/
+├── alembic/              # 数据库迁移脚本
+├── app/
+│   ├── ai/               # AI 核心逻辑 (Agents, Skills, LangGraph)
+│   ├── api/              # API 接口层
+│   │   └── v1/           # 路由定义 (RESTful)
+│   ├── core/             # 核心配置 (Config, DB Connection, Security)
+│   ├── models/           # SQLAlchemy 数据库模型定义
+│   ├── schemas/          # Pydantic 数据传输模型 (DTO)
+│   ├── tasks/            # Celery 异步任务定义
+│   └── utils/            # 通用工具函数
+├── requirements.txt      # 依赖清单
+└── main.py               # 应用入口
 ```
-backend/app/
-├── api/v1/          # API 路由
-├── models/          # 数据库模型
-├── core/            # 核心配置
-├── ai/              # AI 工作流
-├── tasks/           # Celery 任务
-└── utils/           # 工具函数
-```
 
-## 代码规范
+### 3.2 数据库模式 (Database Pattern)
+- **异步优先**: 所有业务逻辑默认使用 `AsyncSession`。
+- **连接管理**:
+    - `core/database.py` 提供 `get_db` 依赖。
+    - 使用 `Depends(get_db)` 注入 API 控制器。
+- **模型规范**:
+    - 所有模型继承自 `Base`。
+    - 主键使用 `UUID` 类型。
+    - 必须包含 `created_at` 和 `updated_at` (带时区)。
 
-### API 端点
-- 使用 APIRouter 组织路由
-- 使用 Pydantic 模型验证请求/响应
-- 使用依赖注入获取数据库会话和当前用户
+### 3.3 配置管理 (Configuration)
+- **实现**: 基于 `pydantic-settings` 的 `Settings` 类。
+- **来源**: 优先读取环境变量 (`.env`)，提供默认回退值。
+- **访问**: 通过 `app.core.config.settings` 单例访问。
+- **共享**: 建议提供 `/api/v1/config` 或 `/quota` 端点，将非敏感的业务规则（如会员配额）共享给前端。
 
-### 数据库模型
-- 使用 UUID 作为主键
-- 添加 created_at/updated_at 时间戳
-- 使用 relationship 定义关联
+## 4. API 开发指南
 
-### 异步处理
-- 长时间任务使用 Celery
-- 使用 async/await 处理 I/O 操作
+### 4.1 路由定义
+- 使用 `APIRouter` 分模块组织路由。
+- 在 `app/api/v1/router.py` 中统一注册。
+- URL 路径使用连字符格式 (e.g., `/users/me/change-password`)。
+- **类型同步**: 确保 API 定义能正确生成 OpenAPI Schema，以便前端通过工具自动生成 TypeScript 类型定义。
+
+### 4.2 依赖注入
+- 获取当前用户: `current_user: User = Depends(get_current_active_user)`
+- 获取数据库: `db: AsyncSession = Depends(get_db)`
+
+### 4.3 错误处理
+- 使用 `HTTPException` 抛出标准 HTTP 错误。
+- 业务逻辑异常应尽早在 Service 层捕获并转化为 HTTP 状态码。
+
+## 5. AI 模块规范
+- **位置**: `app/ai/`
+- **架构**: 复杂的 AI 流程应封装为 **Skill** 或 **LangGraph 工作流**。
+- **调用**: API 层通过异步方式调用 AI 服务，长耗时操作应放入 Celery 任务队列。
