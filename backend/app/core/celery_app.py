@@ -13,4 +13,7 @@ celery_app.conf.update(
     result_serializer='json',
     timezone='UTC',
     enable_utc=True,
+    task_sender='always',
+    worker_prefetch_multiplier=1,
+    worker_concurrency=4,
 )

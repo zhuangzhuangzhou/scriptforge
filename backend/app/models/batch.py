@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, ForeignKey, TIMESTAMP
+from sqlalchemy import Column, String, Integer, Boolean, ForeignKey, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID
 from app.core.database import Base
 
@@ -21,6 +21,10 @@ class Batch(Base):
     # 处理状态
     breakdown_status = Column(String(50), default="pending", index=True)
     script_status = Column(String(50), default="pending")
-
+    
+    # 新增 AI 处理字段
+    ai_processed = Column(Boolean, default=False)
+    context_size = Column(Integer, default=10)  # 该批次推荐的上下文大小
+    
     created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
     updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
