@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Button, Empty, Row, Col, Statistic, Tag, Progress, Space, Typography } from 'antd';
-import { PlusOutlined, ProjectOutlined, ClockCircleOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { Card, Button, Empty, Row, Col, Statistic, Tag, Progress, Space, Typography, Tooltip } from 'antd';
+import { PlusOutlined, ProjectOutlined, ClockCircleOutlined, CheckCircleOutlined, ThunderboltOutlined, CrownOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import api from '../../services/api';
 
 const { Title, Text } = Typography;
 
@@ -14,22 +15,47 @@ interface Project {
   last_updated: string;
 }
 
+interface QuotaInfo {
+  allowed: boolean;
+  remaining: number;
+  limit: number;
+  used: number;
+}
+
+interface QuotaSummary {
+  tier: string;
+  tier_display: string;
+  credits: number;
+  projects: QuotaInfo;
+  episodes: QuotaInfo;
+  can_use_custom_api: boolean;
+  reset_at: string | null;
+}
+
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+  const [quota, setQuota] = useState<QuotaSummary | null>(null);
 
-  // Mock data loading
   useEffect(() => {
-    // TODO: Replace with actual API call
-    setTimeout(() => {
-      setProjects([
-        // Example data for visualization
-        // { id: '1', name: '星际穿越', novel_type: '科幻', status: 'processing', progress: 45, last_updated: '2024-02-03' },
-      ]);
-      setLoading(false);
-    }, 500);
+    loadData();
   }, []);
+
+  const loadData = async () => {
+    try {
+      // 加载配额信息
+      const quotaRes = await api.get('/user/quota');
+      setQuota(quotaRes.data);
+
+      // TODO: 加载项目列表
+      setProjects([]);
+    } catch (error) {
+      console.error('加载数据失败:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const getStatusTag = (status: string) => {
     switch (status) {
@@ -37,6 +63,16 @@ const Dashboard: React.FC = () => {
       case 'processing': return <Tag color="processing" icon={<ClockCircleOutlined />}>处理中</Tag>;
       default: return <Tag color="default">待开始</Tag>;
     }
+  };
+
+  const getTierColor = (tier: string) => {
+    const colors: Record<string, string> = {
+      free: 'default',
+      creator: 'blue',
+      studio: 'purple',
+      enterprise: 'gold'
+    };
+    return colors[tier] || 'default';
   };
 
   return (
@@ -60,19 +96,52 @@ const Dashboard: React.FC = () => {
 
       {/* Statistics Cards */}
       <Row gutter={[16, 16]} style={{ marginBottom: 32 }}>
-        <Col xs={24} sm={8}>
+        <Col xs={24} sm={6}>
+          <Card bordered={false}>
+            <Statistic
+              title={<Space><CrownOutlined /> 当前等级</Space>}
+              value={quota?.tier_display || '免费版'}
+              valueStyle={{ color: getTierColor(quota?.tier || 'free') === 'gold' ? '#faad14' : undefined }}
+            />
+            <Tag color={getTierColor(quota?.tier || 'free')} style={{ marginTop: 8 }}>
+              {quota?.tier_display || '免费版'}
+            </Tag>
+          </Card>
+        </Col>
+        <Col xs={24} sm={6}>
           <Card bordered={false}>
             <Statistic title="总项目数" value={projects.length} prefix={<ProjectOutlined />} />
+            {quota && quota.projects.limit > 0 && (
+              <Progress
+                percent={Math.round((quota.projects.used / quota.projects.limit) * 100)}
+                size="small"
+                style={{ marginTop: 8 }}
+              />
+            )}
           </Card>
         </Col>
-        <Col xs={24} sm={8}>
+        <Col xs={24} sm={6}>
           <Card bordered={false}>
-            <Statistic title="正在进行" value={projects.filter(p => p.status === 'processing').length} valueStyle={{ color: '#1677ff' }} />
+            <Tooltip title={quota?.reset_at ? `重置时间: ${new Date(quota.reset_at).toLocaleDateString()}` : ''}>
+              <Statistic
+                title="本月剧集配额"
+                value={quota?.episodes.limit === -1 ? '无限' : `${quota?.episodes.used || 0}/${quota?.episodes.limit || 0}`}
+                prefix={<ThunderboltOutlined />}
+              />
+            </Tooltip>
+            {quota && quota.episodes.limit > 0 && (
+              <Progress
+                percent={Math.round((quota.episodes.used / quota.episodes.limit) * 100)}
+                size="small"
+                status={quota.episodes.remaining <= 0 ? 'exception' : 'normal'}
+                style={{ marginTop: 8 }}
+              />
+            )}
           </Card>
         </Col>
-        <Col xs={24} sm={8}>
+        <Col xs={24} sm={6}>
           <Card bordered={false}>
-            <Statistic title="已完成剧本" value={projects.filter(p => p.status === 'completed').length} valueStyle={{ color: '#52c41a' }} />
+            <Statistic title="算力积分" value={quota?.credits || 0} valueStyle={{ color: '#52c41a' }} />
           </Card>
         </Col>
       </Row>
