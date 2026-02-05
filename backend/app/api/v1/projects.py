@@ -133,8 +133,7 @@ async def create_project(
         novel_type=project_data.novel_type,
         description=project_data.description,
         batch_size=project_data.batch_size,
-        chapter_split_rule=normalize_chapter_split_rule(project_data.chapter_split_rule),
-        split_rule_id=project_data.split_rule_id if hasattr(project_data, 'split_rule_id') else None
+        chapter_split_rule=normalize_chapter_split_rule(project_data.chapter_split_rule)
     )
 
     db.add(new_project)
@@ -227,8 +226,8 @@ async def update_project(
         project.batch_size = project_data.batch_size
     if project_data.chapter_split_rule is not None:
         project.chapter_split_rule = normalize_chapter_split_rule(project_data.chapter_split_rule)
-    if project_data.split_rule_id is not None:
-        project.split_rule_id = project_data.split_rule_id
+    # if project_data.split_rule_id is not None:
+    #     project.split_rule_id = project_data.split_rule_id
 
     await db.commit()
     await db.refresh(project)
