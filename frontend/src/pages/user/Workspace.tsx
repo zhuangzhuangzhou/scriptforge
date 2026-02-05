@@ -242,7 +242,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = ({ userTier }) => {
                                 </div>
                                 <div className="space-y-2">
                                     <label className="text-xs font-semibold text-slate-400 flex items-center gap-2"><LayoutTemplate size={14}/> 小说类型</label>
-                                    <select defaultValue={project.type} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:ring-1 focus:ring-cyan-500 outline-none">
+                                    <select defaultValue={project.novel_type} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:ring-1 focus:ring-cyan-500 outline-none">
                                         <option>悬疑/惊悚</option><option>科幻/奇幻</option><option>古装/历史</option><option>都市/情感</option><option>喜剧</option>
                                     </select>
                                 </div>
@@ -278,7 +278,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = ({ userTier }) => {
                             </div>
                             <div className="bg-slate-900/50 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-4">
                                 <h3 className="text-xs font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3 uppercase tracking-wider"><Database size={14} className="text-emerald-400"/> 小说源文件</h3>
-                                <div className="bg-emerald-500/5 border border-emerald-500/20 p-3 rounded-xl flex items-center justify-between"><div className="flex items-center gap-2 truncate"><BookText size={16} className="text-emerald-400"/><span className="text-[11px] text-emerald-100 truncate">{project.fileName || 'novel.docx'}</span></div><CheckCircle2 size={12} className="text-emerald-500"/></div>
+                                <div className="bg-emerald-500/5 border border-emerald-500/20 p-3 rounded-xl flex items-center justify-between"><div className="flex items-center gap-2 truncate"><BookText size={16} className="text-emerald-400"/><span className="text-[11px] text-emerald-100 truncate">{project.original_file_name || 'novel.docx'}</span></div><CheckCircle2 size={12} className="text-emerald-500"/></div>
                             </div>
                         </div>
                     </div>
@@ -731,7 +731,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = ({ userTier }) => {
                     <header className="h-14 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-900/50 backdrop-blur z-10 shrink-0">
                         <div className="flex items-center gap-3">
                             <h1 className="font-semibold text-white truncate max-w-[200px]">{project.name}</h1>
-                            <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-xs border border-slate-700 hidden sm:inline-block">{project.type}</span>
+                            <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-xs border border-slate-700 hidden sm:inline-block">{project.novel_type}</span>
                         </div>
                         <div className="flex items-center gap-3">
                             {activeTab === 'CONFIG' ? (
