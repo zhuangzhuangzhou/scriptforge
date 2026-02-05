@@ -15,9 +15,11 @@ class AITask(Base):
     batch_id = Column(UUID(as_uuid=True), ForeignKey("batches.id"), index=True)
 
     task_type = Column(String(50), nullable=False)  # 'breakdown', 'script', 'consistency_check'
-    status = Column(String(50), nullable=False, default="pending", index=True)
+    status = Column(String(50), nullable=False, default="queued", index=True)
     progress = Column(Integer, default=0)  # 0-100
     current_step = Column(String(100))
+    retry_count = Column(Integer, default=0)
+    depends_on = Column(JSONB, default=list)
 
     config = Column(JSONB, nullable=False)
     result = Column(JSONB)

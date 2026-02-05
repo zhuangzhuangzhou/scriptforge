@@ -2,13 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from app.core.database import get_db
 from app.models.user import User
 from app.models.batch import Batch
 from app.models.project import Project
 from app.models.ai_task import AITask
 from app.models.plot_breakdown import PlotBreakdown
+from app.models.script import Script
 from app.api.v1.auth import get_current_user
 from app.core.quota import QuotaService
 
@@ -19,6 +20,69 @@ class ScriptGenerateRequest(BaseModel):
     """生成剧本请求"""
     batch_id: str
     model_config_id: Optional[str] = None
+    selected_skills: Optional[List[str]] = None
+    pipeline_id: Optional[str] = None
+
+
+class ScriptResponse(BaseModel):
+    id: str
+    project_id: str
+    batch_id: str
+    plot_breakdown_id: Optional[str] = None
+    episode_number: int
+    title: Optional[str] = None
+    content: dict
+    word_count: int
+    scene_count: int
+    created_at: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("", response_model=List[ScriptResponse])
+async def list_scripts(
+    project_id: Optional[str] = None,
+    batch_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取剧本列表"""
+    query = select(Script).join(Project).where(Project.user_id == current_user.id)
+
+    if project_id:
+        query = query.where(Script.project_id == project_id)
+    if batch_id:
+        query = query.where(Script.batch_id == batch_id)
+
+    query = query.order_by(Script.created_at.desc())
+    result = await db.execute(query)
+    scripts = result.scalars().all()
+    return scripts
+
+
+@router.get("/{script_id}", response_model=ScriptResponse)
+async def get_script(
+    script_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取单个剧本"""
+    result = await db.execute(
+        select(Script).join(Project).where(
+            Script.id == script_id,
+            Project.user_id == current_user.id
+        )
+    )
+    script = result.scalar_one_or_none()
+
+    if not script:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="剧本不存在"
+        )
+
+    return script
 
 
 @router.post("/generate")
@@ -70,12 +134,29 @@ async def generate_script(
     # 创建AI任务
     from app.tasks.script_tasks import run_script_task
 
+    dep_result = await db.execute(
+        select(AITask)
+        .where(
+            AITask.batch_id == batch.id,
+            AITask.task_type == "breakdown"
+        )
+        .order_by(AITask.created_at.desc())
+    )
+    dep_task = dep_result.scalar_one_or_none()
+    depends_on = [str(dep_task.id)] if dep_task else []
+
     task = AITask(
         project_id=batch.project_id,
         batch_id=batch.id,
         task_type="script",
-        status="pending",
-        config={"model_config_id": request.model_config_id, "breakdown_id": str(breakdown.id)}
+        status="queued",
+        depends_on=depends_on,
+        config={
+            "model_config_id": request.model_config_id,
+            "breakdown_id": str(breakdown.id),
+            "selected_skills": request.selected_skills or [],
+            "pipeline_id": request.pipeline_id
+        }
     )
     db.add(task)
     await db.commit()
@@ -91,7 +172,6 @@ async def generate_script(
     )
 
     task.celery_task_id = celery_task.id
-    task.status = "in_progress"
     await db.commit()
 
-    return {"task_id": str(task.id), "status": "in_progress"}
+    return {"task_id": str(task.id), "status": "queued"}

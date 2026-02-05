@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from uuid import UUID
@@ -10,6 +11,42 @@ from app.models.skill import Skill
 from app.api.v1.auth import get_current_user
 
 router = APIRouter()
+
+
+def _can_access_skill(skill: Skill, user: User) -> bool:
+    """检查用户是否有权限访问 Skill（用于代码版本管理）"""
+    if skill.is_builtin:
+        return True
+    if skill.visibility == "public":
+        return True
+    if skill.owner_id == user.id:
+        return True
+    if skill.visibility == "shared":
+        allowed_users = skill.allowed_users or []
+        return str(user.id) in allowed_users
+    return False
+
+
+async def _get_skill_or_404(
+    skill_id: str, current_user: User, db: AsyncSession
+) -> Skill:
+    """获取 Skill 并校验访问权限"""
+    result = await db.execute(select(Skill).where(Skill.id == skill_id))
+    skill = result.scalar_one_or_none()
+
+    if not skill:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Skill不存在"
+        )
+
+    if not _can_access_skill(skill, current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问此Skill"
+        )
+
+    return skill
 
 
 class SkillCodeCreateRequest(BaseModel):
@@ -36,6 +73,9 @@ async def get_skills_code(
 ):
     """获取用户的Skills代码列表"""
     if skill_id:
+        # 校验 Skill 权限
+        await _get_skill_or_404(skill_id, current_user, db)
+
         # 获取特定Skill的版本
         result = await db.execute(
             select(SkillVersion).where(
@@ -49,6 +89,7 @@ async def get_skills_code(
         active_result = await db.execute(
             select(SkillVersion).where(
                 SkillVersion.skill_id == skill_id,
+                SkillVersion.user_id == current_user.id,
                 SkillVersion.is_active == True
             ).order_by(SkillVersion.version_number.desc())
         )
@@ -77,10 +118,13 @@ async def create_skill_version(
     db: AsyncSession = Depends(get_db)
 ):
     """创建新版本的Skill代码"""
+    skill = await _get_skill_or_404(request.skill_id, current_user, db)
+
     # 获取上一个版本号
     last_version_result = await db.execute(
         select(SkillVersion).where(
-            SkillVersion.skill_id == request.skill_id
+            SkillVersion.skill_id == request.skill_id,
+            SkillVersion.user_id == current_user.id
         ).order_by(SkillVersion.version_number.desc())
     )
     last_version = last_version_result.scalar_one_or_none()
@@ -95,6 +139,9 @@ async def create_skill_version(
     skill_version = SkillVersion(
         skill_id=request.skill_id,
         user_id=current_user.id,
+        visibility=skill.visibility,
+        owner_id=skill.owner_id or current_user.id,
+        allowed_users=skill.allowed_users,
         version=version_str,
         version_number=version_number,
         code=request.code,
@@ -165,6 +212,9 @@ async def update_skill_version(
     new_version = SkillVersion(
         skill_id=current_version.skill_id,
         user_id=current_user.id,
+        visibility=current_version.visibility,
+        owner_id=current_version.owner_id or current_user.id,
+        allowed_users=current_version.allowed_users,
         version=f"v{current_version.version_number + 1}",
         version_number=current_version.version_number + 1,
         code=request.code,
@@ -192,9 +242,24 @@ async def get_skill_version_history(
     db: AsyncSession = Depends(get_db)
 ):
     """获取Skill版本历史"""
+    # 先定位目标版本，避免泄露其它Skill版本
+    target_result = await db.execute(
+        select(SkillVersion).where(
+            SkillVersion.id == version_id,
+            SkillVersion.user_id == current_user.id
+        )
+    )
+    target_version = target_result.scalar_one_or_none()
+
+    if not target_version:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Skill版本不存在"
+        )
+
     result = await db.execute(
         select(SkillVersion).where(
-            SkillVersion.skill_id == SkillVersion.skill_id,
+            SkillVersion.skill_id == target_version.skill_id,
             SkillVersion.user_id == current_user.id
         ).order_by(SkillVersion.version_number.desc())
     )
@@ -229,6 +294,7 @@ async def rollback_skill_version(
     active_result = await db.execute(
         select(SkillVersion).where(
             SkillVersion.skill_id == target_version.skill_id,
+            SkillVersion.user_id == current_user.id,
             SkillVersion.is_active == True
         )
     )
@@ -237,12 +303,25 @@ async def rollback_skill_version(
     if active_version:
         active_version.is_active = False
 
+    # 获取当前用户的最新版本号
+    last_version_result = await db.execute(
+        select(SkillVersion).where(
+            SkillVersion.skill_id == target_version.skill_id,
+            SkillVersion.user_id == current_user.id
+        ).order_by(SkillVersion.version_number.desc())
+    )
+    last_version = last_version_result.scalar_one_or_none()
+    next_version_number = (last_version.version_number + 1) if last_version else 1
+
     # 创建新版本，内容与目标版本相同
     rollback_version = SkillVersion(
         skill_id=target_version.skill_id,
         user_id=current_user.id,
-        version=f"v{active_version.version_number + 1 if active_version else 1}",
-        version_number=active_version.version_number + 1 if active_version else 1,
+        visibility=target_version.visibility,
+        owner_id=target_version.owner_id or current_user.id,
+        allowed_users=target_version.allowed_users,
+        version=f"v{next_version_number}",
+        version_number=next_version_number,
         code=target_version.code,
         description=f"回滚到 {target_version.version}",
         changelog=f"Rolled back to {target_version.version}",

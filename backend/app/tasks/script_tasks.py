@@ -1,10 +1,12 @@
 from app.core.celery_app import celery_app
 from app.core.database import AsyncSessionLocal
-from app.ai.adapters import OpenAIAdapter
-from app.ai.graph.script_workflow import create_script_workflow
-from app.core.config import settings
+from app.ai.adapters import get_adapter
+from app.ai.pipeline_executor import PipelineExecutor
 from app.core.progress import update_task_progress
 from app.core.credits import CreditsService, SCRIPT_BASE_CREDITS
+from app.models.ai_task import AITask
+from app.models.batch import Batch
+from sqlalchemy import select
 
 
 @celery_app.task(bind=True)
@@ -14,6 +16,7 @@ def run_script_task(self, task_id: str, batch_id: str, project_id: str, breakdow
 
     async def _run():
         async with AsyncSessionLocal() as db:
+            batch_record = None
             try:
                 # 任务开始：更新状态为 running
                 await update_task_progress(
@@ -23,11 +26,24 @@ def run_script_task(self, task_id: str, batch_id: str, project_id: str, breakdow
                     current_step="初始化任务"
                 )
 
-                # 创建模型适配器
-                model_adapter = OpenAIAdapter(
-                    api_key=settings.OPENAI_API_KEY,
-                    model_name=settings.OPENAI_MODEL
+                # 更新批次状态为 processing
+                batch_result = await db.execute(
+                    select(Batch).where(Batch.id == batch_id)
                 )
+                batch_record = batch_result.scalar_one_or_none()
+                if batch_record:
+                    batch_record.script_status = "processing"
+                    await db.commit()
+
+                # 读取任务配置（获取选择的 skills / pipeline）
+                task_result = await db.execute(
+                    select(AITask).where(AITask.id == task_id)
+                )
+                task_record = task_result.scalar_one_or_none()
+                task_config = task_record.config if task_record else {}
+
+                # 创建模型适配器（统一入口）
+                model_adapter = await get_adapter()
 
                 # 定义进度回调函数
                 async def progress_callback(step: str, progress: int):
@@ -37,27 +53,24 @@ def run_script_task(self, task_id: str, batch_id: str, project_id: str, breakdow
                         current_step=step
                     )
 
-                # 创建工作流
-                workflow = create_script_workflow(model_adapter, db)
-
-                # 执行工作流，传入进度回调
-                initial_state = {
-                    "batch_id": batch_id,
-                    "project_id": project_id,
-                    "breakdown_id": breakdown_id,
-                    "breakdown_data": {},
-                    "episodes": [],
-                    "scenes": [],
-                    "dialogues": [],
-                    "current_step": "",
-                    "progress": 0,
-                    "errors": [],
-                    "progress_callback": progress_callback,
-                }
-
                 # 各阶段进度更新
                 await progress_callback("加载拆解数据", 10)
-                result = await workflow.ainvoke(initial_state)
+
+                # 使用配置驱动的 Pipeline 执行
+                executor = PipelineExecutor(
+                    db=db,
+                    model_adapter=model_adapter,
+                    user_id=user_id
+                )
+
+                await executor.run_script(
+                    project_id=project_id,
+                    batch_id=batch_id,
+                    breakdown_id=breakdown_id,
+                    pipeline_id=task_config.get("pipeline_id"),
+                    selected_skills=task_config.get("selected_skills"),
+                    progress_callback=progress_callback
+                )
 
                 # 任务完成：更新状态
                 await update_task_progress(
@@ -66,6 +79,11 @@ def run_script_task(self, task_id: str, batch_id: str, project_id: str, breakdow
                     progress=100,
                     current_step="任务完成"
                 )
+
+                # 更新批次状态为 completed
+                if batch_record:
+                    batch_record.script_status = "completed"
+                    await db.commit()
 
                 # 任务成功完成后扣费
                 credits_service = CreditsService(db)
@@ -77,7 +95,7 @@ def run_script_task(self, task_id: str, batch_id: str, project_id: str, breakdow
                 )
                 await db.commit()
 
-                return result
+                return {"status": "completed"}
 
             except Exception as e:
                 # 任务失败：更新状态和错误信息
@@ -86,6 +104,9 @@ def run_script_task(self, task_id: str, batch_id: str, project_id: str, breakdow
                     status="failed",
                     error_message=str(e)
                 )
+                if batch_record:
+                    batch_record.script_status = "failed"
+                    await db.commit()
                 raise
 
     return asyncio.run(_run())

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any, Union
 import os
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
@@ -20,6 +20,28 @@ from app.core.quota import QuotaService
 
 router = APIRouter()
 
+# 默认章节识别正则
+DEFAULT_CHAPTER_PATTERN = r"第[一二三四五六七八九十百千\d]+章"
+
+
+def normalize_chapter_split_rule(rule: Optional[Union[str, Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
+    """将前端传入的章节拆分规则标准化为字典"""
+    if rule is None:
+        return None
+
+    if isinstance(rule, str):
+        if rule == "auto":
+            return {"type": "regex", "pattern": DEFAULT_CHAPTER_PATTERN}
+        if rule == "blank_line":
+            return {"type": "blank_line"}
+        # 兜底：把字符串当成自定义正则
+        return {"type": "regex", "pattern": rule}
+
+    if isinstance(rule, dict):
+        return rule
+
+    return None
+
 
 # Pydantic 模型
 class ProjectCreate(BaseModel):
@@ -27,6 +49,7 @@ class ProjectCreate(BaseModel):
     novel_type: Optional[str] = None
     description: Optional[str] = None
     batch_size: int = 5
+    chapter_split_rule: Optional[Union[str, Dict[str, Any]]] = None
 
 
 class ProjectUpdate(BaseModel):
@@ -34,6 +57,7 @@ class ProjectUpdate(BaseModel):
     novel_type: Optional[str] = None
     description: Optional[str] = None
     batch_size: Optional[int] = None
+    chapter_split_rule: Optional[Union[str, Dict[str, Any]]] = None
 
 
 class ProjectResponse(BaseModel):
@@ -48,6 +72,21 @@ class ProjectResponse(BaseModel):
     status: str
     created_at: str
     updated_at: str
+
+    class Config:
+        from_attributes = True
+
+
+class BatchResponse(BaseModel):
+    id: str
+    project_id: str
+    batch_number: int
+    start_chapter: int
+    end_chapter: int
+    total_chapters: int
+    total_words: int
+    breakdown_status: str
+    script_status: str
 
     class Config:
         from_attributes = True
@@ -75,6 +114,7 @@ async def create_project(
         novel_type=project_data.novel_type,
         description=project_data.description,
         batch_size=project_data.batch_size,
+        chapter_split_rule=normalize_chapter_split_rule(project_data.chapter_split_rule),
     )
 
     db.add(new_project)
@@ -118,6 +158,32 @@ async def get_project(
     return project
 
 
+@router.get("/{project_id}/batches", response_model=List[BatchResponse])
+async def get_project_batches(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取项目批次列表"""
+    # 验证项目归属
+    result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == current_user.id)
+    )
+    project = result.scalar_one_or_none()
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="项目不存在"
+        )
+
+    batches_result = await db.execute(
+        select(Batch).where(Batch.project_id == project_id).order_by(Batch.batch_number)
+    )
+    batches = batches_result.scalars().all()
+    return batches
+
+
 @router.put("/{project_id}", response_model=ProjectResponse)
 async def update_project(
     project_id: str,
@@ -146,6 +212,8 @@ async def update_project(
         project.description = project_data.description
     if project_data.batch_size is not None:
         project.batch_size = project_data.batch_size
+    if project_data.chapter_split_rule is not None:
+        project.chapter_split_rule = normalize_chapter_split_rule(project_data.chapter_split_rule)
 
     await db.commit()
     await db.refresh(project)

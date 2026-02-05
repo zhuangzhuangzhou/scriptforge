@@ -6,8 +6,10 @@ from typing import Optional, List
 from uuid import UUID
 from app.core.database import get_db
 from app.models.user import User
-from app.models.pipeline import Pipeline, PipelineStage, PipelineExecution
+from app.models.pipeline import Pipeline, PipelineStage, PipelineExecution, PipelineExecutionLog
+from app.models.project import Project
 from app.api.v1.auth import get_current_user
+from app.tasks.pipeline_tasks import run_pipeline_task
 
 router = APIRouter()
 
@@ -31,6 +33,7 @@ class PipelineExecuteRequest(BaseModel):
     """执行Pipeline请求"""
     project_id: str
     batch_id: Optional[str] = None
+    breakdown_id: Optional[str] = None
 
 
 @router.get("/pipelines")
@@ -93,8 +96,13 @@ async def create_pipeline(
                 pipeline_id=pipeline.id,
                 name=stage_data.get("name", f"stage_{i}"),
                 display_name=stage_data.get("display_name", f"Stage {i+1}"),
+                description=stage_data.get("description"),
                 skills=stage_data.get("skills", []),
-                order=i
+                skills_order=stage_data.get("skills_order"),
+                config=stage_data.get("config", {}),
+                input_mapping=stage_data.get("input_mapping"),
+                output_mapping=stage_data.get("output_mapping"),
+                order=stage_data.get("order", i)
             )
             db.add(stage)
 
@@ -214,6 +222,45 @@ async def execute_pipeline(
             detail="Pipeline不存在"
         )
 
+    if not pipeline.is_default and pipeline.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权执行此Pipeline"
+        )
+
+    if not pipeline.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline已禁用"
+        )
+
+    # 检查Pipeline阶段是否需要 batch_id / breakdown_id
+    stages_result = await db.execute(
+        select(PipelineStage).where(PipelineStage.pipeline_id == pipeline_id).order_by(PipelineStage.order)
+    )
+    stages = stages_result.scalars().all()
+
+    # 如果没有 PipelineStage，则回退使用 stages_config
+    stage_names = [s.name for s in stages]
+    if not stage_names:
+        stage_names = [s.get("name") for s in (pipeline.stages_config or []) if s.get("name")]
+
+    if "breakdown" in stage_names and not request.batch_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="执行 breakdown 阶段需要 batch_id"
+        )
+    if "script" in stage_names and not request.batch_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="执行 script 阶段需要 batch_id"
+        )
+    if "script" in stage_names and "breakdown" not in stage_names and not request.breakdown_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="执行 script 阶段需要 breakdown_id"
+        )
+
     # 创建执行记录
     execution = PipelineExecution(
         pipeline_id=pipeline.id,
@@ -225,8 +272,18 @@ async def execute_pipeline(
     await db.commit()
     await db.refresh(execution)
 
-    # TODO: 启动Celery任务执行Pipeline
-    # celery_task = run_pipeline_task.delay(str(execution.id))
+    # 启动Celery任务执行Pipeline
+    celery_task = run_pipeline_task.delay(
+        str(execution.id),
+        str(pipeline.id),
+        str(request.project_id),
+        str(request.batch_id) if request.batch_id else None,
+        str(request.breakdown_id) if request.breakdown_id else None,
+        str(current_user.id)
+    )
+
+    execution.celery_task_id = celery_task.id
+    await db.commit()
 
     return {
         "execution_id": str(execution.id),
@@ -251,3 +308,270 @@ async def get_pipeline_executions(
     executions = result.scalars().all()
 
     return {"executions": executions}
+
+
+@router.get("/pipelines/{pipeline_id}/executions/{execution_id}")
+async def get_pipeline_execution(
+    pipeline_id: str,
+    execution_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取单次Pipeline执行详情"""
+    pipeline_result = await db.execute(
+        select(Pipeline).where(Pipeline.id == pipeline_id)
+    )
+    pipeline = pipeline_result.scalar_one_or_none()
+
+    if not pipeline:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pipeline不存在"
+        )
+
+    if not pipeline.is_default and pipeline.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问此Pipeline"
+        )
+
+    result = await db.execute(
+        select(PipelineExecution).where(
+            PipelineExecution.pipeline_id == pipeline_id,
+            PipelineExecution.id == execution_id
+        )
+    )
+    execution = result.scalar_one_or_none()
+
+    if not execution:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="执行记录不存在"
+        )
+
+    return {
+        "id": str(execution.id),
+        "pipeline_id": str(execution.pipeline_id),
+        "project_id": str(execution.project_id) if execution.project_id else None,
+        "status": execution.status,
+        "progress": execution.progress,
+        "current_stage": execution.current_stage,
+        "current_step": execution.current_step,
+        "result": execution.result,
+        "error_message": execution.error_message,
+        "celery_task_id": execution.celery_task_id,
+        "started_at": execution.started_at.isoformat() if execution.started_at else None,
+        "completed_at": execution.completed_at.isoformat() if execution.completed_at else None,
+        "created_at": execution.created_at.isoformat() if execution.created_at else None
+    }
+
+
+@router.get("/pipelines/executions/{execution_id}")
+async def get_pipeline_execution_by_id(
+    execution_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """按 execution_id 获取执行详情（用户维度）"""
+    exec_result = await db.execute(
+        select(PipelineExecution).where(PipelineExecution.id == execution_id)
+    )
+    execution = exec_result.scalar_one_or_none()
+
+    if not execution:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="执行记录不存在"
+        )
+
+    pipeline_result = await db.execute(
+        select(Pipeline).where(Pipeline.id == execution.pipeline_id)
+    )
+    pipeline = pipeline_result.scalar_one_or_none()
+    if not pipeline:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pipeline不存在"
+        )
+
+    if pipeline.is_default:
+        if not execution.project_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="无权访问此执行记录"
+            )
+        project_result = await db.execute(
+            select(Project).where(Project.id == execution.project_id)
+        )
+        project = project_result.scalar_one_or_none()
+        if not project or project.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="无权访问此执行记录"
+            )
+    elif pipeline.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问此执行记录"
+        )
+
+    return {
+        "id": str(execution.id),
+        "pipeline_id": str(execution.pipeline_id),
+        "project_id": str(execution.project_id) if execution.project_id else None,
+        "status": execution.status,
+        "progress": execution.progress,
+        "current_stage": execution.current_stage,
+        "current_step": execution.current_step,
+        "result": execution.result,
+        "error_message": execution.error_message,
+        "celery_task_id": execution.celery_task_id,
+        "started_at": execution.started_at.isoformat() if execution.started_at else None,
+        "completed_at": execution.completed_at.isoformat() if execution.completed_at else None,
+        "created_at": execution.created_at.isoformat() if execution.created_at else None
+    }
+
+
+@router.get("/pipelines/executions/{execution_id}/logs")
+async def get_pipeline_execution_logs_by_id(
+    execution_id: str,
+    skip: int = 0,
+    limit: int = 100,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """按 execution_id 获取执行日志（用户维度）"""
+    exec_result = await db.execute(
+        select(PipelineExecution).where(PipelineExecution.id == execution_id)
+    )
+    execution = exec_result.scalar_one_or_none()
+
+    if not execution:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="执行记录不存在"
+        )
+
+    pipeline_result = await db.execute(
+        select(Pipeline).where(Pipeline.id == execution.pipeline_id)
+    )
+    pipeline = pipeline_result.scalar_one_or_none()
+    if not pipeline:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pipeline不存在"
+        )
+
+    if pipeline.is_default:
+        if not execution.project_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="无权访问此执行记录"
+            )
+        project_result = await db.execute(
+            select(Project).where(Project.id == execution.project_id)
+        )
+        project = project_result.scalar_one_or_none()
+        if not project or project.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="无权访问此执行记录"
+            )
+    elif pipeline.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问此执行记录"
+        )
+
+    result = await db.execute(
+        select(PipelineExecutionLog)
+        .where(PipelineExecutionLog.execution_id == execution_id)
+        .order_by(PipelineExecutionLog.created_at.asc())
+        .offset(skip)
+        .limit(limit)
+    )
+    logs = result.scalars().all()
+
+    return {
+        "logs": [
+            {
+                "id": str(log.id),
+                "execution_id": str(log.execution_id),
+                "stage": log.stage,
+                "event": log.event,
+                "message": log.message,
+                "detail": log.detail,
+                "created_at": log.created_at.isoformat() if log.created_at else None
+            }
+            for log in logs
+        ],
+        "skip": skip,
+        "limit": limit
+    }
+
+@router.get("/pipelines/{pipeline_id}/executions/{execution_id}/logs")
+async def get_pipeline_execution_logs(
+    pipeline_id: str,
+    execution_id: str,
+    skip: int = 0,
+    limit: int = 100,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取Pipeline执行日志"""
+    pipeline_result = await db.execute(
+        select(Pipeline).where(Pipeline.id == pipeline_id)
+    )
+    pipeline = pipeline_result.scalar_one_or_none()
+
+    if not pipeline:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pipeline不存在"
+        )
+
+    if not pipeline.is_default and pipeline.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问此Pipeline"
+        )
+
+    # 校验执行记录存在
+    exec_result = await db.execute(
+        select(PipelineExecution).where(
+            PipelineExecution.id == execution_id,
+            PipelineExecution.pipeline_id == pipeline_id
+        )
+    )
+    execution = exec_result.scalar_one_or_none()
+    if not execution:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="执行记录不存在"
+        )
+
+    result = await db.execute(
+        select(PipelineExecutionLog)
+        .where(PipelineExecutionLog.execution_id == execution_id)
+        .order_by(PipelineExecutionLog.created_at.asc())
+        .offset(skip)
+        .limit(limit)
+    )
+    logs = result.scalars().all()
+
+    return {
+        "logs": [
+            {
+                "id": str(log.id),
+                "execution_id": str(log.execution_id),
+                "stage": log.stage,
+                "event": log.event,
+                "message": log.message,
+                "detail": log.detail,
+                "created_at": log.created_at.isoformat() if log.created_at else None
+            }
+            for log in logs
+        ],
+        "skip": skip,
+        "limit": limit
+    }

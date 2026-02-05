@@ -8,6 +8,10 @@ import {
   PlusCircleOutlined,
   UserOutlined,
   LogoutOutlined,
+  FileSearchOutlined,
+  SettingOutlined,
+  TeamOutlined,
+  AppstoreOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -56,6 +60,42 @@ const MainLayout: React.FC = () => {
     items: userMenuItems,
   };
 
+  const menuItems = [
+    {
+      key: '/dashboard',
+      icon: <DashboardOutlined />,
+      label: '工作台',
+    },
+    {
+      key: '/projects/create',
+      icon: <PlusCircleOutlined />,
+      label: '新建项目',
+    },
+  ];
+
+  if (user?.role === 'admin') {
+    menuItems.push({
+      key: '/admin/dashboard',
+      icon: <SettingOutlined />,
+      label: '管理概览',
+    });
+    menuItems.push({
+      key: '/admin/users',
+      icon: <TeamOutlined />,
+      label: '用户管理',
+    });
+    menuItems.push({
+      key: '/admin/skills',
+      icon: <AppstoreOutlined />,
+      label: 'Skill管理',
+    });
+    menuItems.push({
+      key: '/admin/pipeline-executions',
+      icon: <FileSearchOutlined />,
+      label: 'Pipeline日志',
+    });
+  }
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Sider trigger={null} collapsible collapsed={collapsed} theme="light" style={{
@@ -80,18 +120,7 @@ const MainLayout: React.FC = () => {
           mode="inline"
           selectedKeys={[location.pathname]}
           onClick={({ key }) => handleMenuClick(key)}
-          items={[
-            {
-              key: '/dashboard',
-              icon: <DashboardOutlined />,
-              label: '工作台',
-            },
-            {
-              key: '/projects/create',
-              icon: <PlusCircleOutlined />,
-              label: '新建项目',
-            },
-          ]}
+          items={menuItems}
         />
       </Sider>
       <Layout>

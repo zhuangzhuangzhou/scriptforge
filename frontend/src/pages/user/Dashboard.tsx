@@ -13,6 +13,9 @@ interface Project {
   status: 'processing' | 'completed' | 'pending';
   progress: number;
   last_updated: string;
+  updated_at?: string;
+  processed_chapters?: number;
+  total_chapters?: number;
 }
 
 interface QuotaInfo {
@@ -48,8 +51,25 @@ const Dashboard: React.FC = () => {
       const quotaRes = await api.get('/user/quota');
       setQuota(quotaRes.data);
 
-      // TODO: 加载项目列表
-      setProjects([]);
+      // 加载项目列表
+      const projectsRes = await api.get('/projects');
+      const projectList = (projectsRes.data || []).map((p: any) => {
+        const total = p.total_chapters || 0;
+        const processed = p.processed_chapters || 0;
+        const progress = total > 0 ? Math.round((processed / total) * 100) : 0;
+        return {
+          id: p.id,
+          name: p.name,
+          novel_type: p.novel_type,
+          status: p.status || 'pending',
+          progress,
+          last_updated: p.updated_at ? new Date(p.updated_at).toLocaleDateString() : '',
+          updated_at: p.updated_at,
+          processed_chapters: processed,
+          total_chapters: total
+        };
+      });
+      setProjects(projectList);
     } catch (error) {
       console.error('加载数据失败:', error);
     } finally {

@@ -131,6 +131,19 @@ class QuotaService:
 
         return True
 
+    async def refund_episode_quota(self, user, count: int = 1) -> None:
+        """回滚剧集配额（失败回滚或撤销预占）"""
+        if count <= 0:
+            return
+
+        # 无限配额不需要回滚
+        config = get_tier_config(user.tier)
+        if config.monthly_episodes == -1:
+            return
+
+        # 确保不会减成负数
+        user.monthly_episodes_used = max(user.monthly_episodes_used - count, 0)
+
     async def _maybe_reset_monthly_quota(self, user):
         """检查并重置月度配额"""
         now = datetime.now(timezone.utc)

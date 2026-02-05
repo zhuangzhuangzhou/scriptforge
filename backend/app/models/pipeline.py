@@ -1,5 +1,5 @@
-from sqlalchemy import Column, String, Boolean, JSON, DateTime, ForeignKey, Text, Integer
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, Boolean, JSON, DateTime, ForeignKey, Text, Integer, TIMESTAMP
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from datetime import datetime
 import uuid
 from app.core.database import Base
@@ -86,3 +86,18 @@ class PipelineExecution(Base):
     started_at = Column(DateTime)
     completed_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PipelineExecutionLog(Base):
+    """Pipeline执行日志"""
+    __tablename__ = "pipeline_execution_logs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    execution_id = Column(UUID(as_uuid=True), ForeignKey("pipeline_executions.id", ondelete="CASCADE"), index=True, nullable=False)
+
+    stage = Column(String(100))          # breakdown/script/...
+    event = Column(String(100))          # stage_start/stage_completed/validator_result/error
+    message = Column(Text)
+    detail = Column(JSONB)
+
+    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)

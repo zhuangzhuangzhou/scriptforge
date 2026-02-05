@@ -30,12 +30,14 @@ async def websocket_breakdown_progress(websocket: WebSocket, task_id: str):
                     "status": task.status,
                     "progress": task.progress or 0,
                     "current_step": task.current_step or "",
-                    "error_message": task.error_message
+                    "error_message": task.error_message,
+                    "retry_count": task.retry_count,
+                    "depends_on": task.depends_on or []
                 }
                 await websocket.send_json(progress_data)
 
                 # 如果任务已完成或失败，断开连接
-                if task.status in ["completed", "failed"]:
+                if task.status in ["completed", "failed", "canceled"]:
                     break
 
                 # 等待1秒后再次查询
@@ -69,12 +71,14 @@ async def websocket_script_progress(websocket: WebSocket, task_id: str):
                     "status": task.status,
                     "progress": task.progress or 0,
                     "current_step": task.current_step or "",
-                    "error_message": task.error_message
+                    "error_message": task.error_message,
+                    "retry_count": task.retry_count,
+                    "depends_on": task.depends_on or []
                 }
                 await websocket.send_json(progress_data)
 
                 # 如果任务已完成或失败，断开连接
-                if task.status in ["completed", "failed"]:
+                if task.status in ["completed", "failed", "canceled"]:
                     break
 
                 # 等待1秒后再次查询

@@ -6,10 +6,13 @@ import {
   FileTextOutlined,
   VideoCameraOutlined,
   ExportOutlined,
+  DeploymentUnitOutlined,
   LeftOutlined
 } from '@ant-design/icons';
 import PlotBreakdown from './PlotBreakdown';
 import ScriptGeneration from './ScriptGeneration';
+import PipelineExecution from './PipelineExecution';
+import ExportManager from './ExportManager';
 
 const { Title } = Typography;
 
@@ -99,7 +102,8 @@ const ProjectDetail: React.FC = () => {
     { label: '项目概览', key: 'overview', icon: <ProjectOutlined />, children: renderOverview() },
     { label: '剧情拆解', key: 'breakdown', icon: <FileTextOutlined />, children: <PlotBreakdown /> },
     { label: '剧本生成', key: 'scripts', icon: <VideoCameraOutlined />, children: <ScriptGeneration /> },
-    { label: '导出管理', key: 'export', icon: <ExportOutlined />, children: <div>导出功能开发中...</div> },
+    { label: 'Pipeline', key: 'pipeline', icon: <DeploymentUnitOutlined />, children: <PipelineExecution /> },
+    { label: '导出管理', key: 'export', icon: <ExportOutlined />, children: <ExportManager /> },
   ];
 
   return (

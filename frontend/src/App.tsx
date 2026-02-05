@@ -12,6 +12,11 @@ import ScriptGeneration from './pages/user/ScriptGeneration'
 import SkillsManagement from './pages/user/SkillsManagement'
 import MainLayout from './components/MainLayout'
 import ProtectedRoute from './components/ProtectedRoute'
+import PipelineExecutions from './pages/admin/PipelineExecutions'
+import AdminRoute from './components/AdminRoute'
+import AdminDashboard from './pages/admin/AdminDashboard'
+import UsersAdmin from './pages/admin/UsersAdmin'
+import SkillsAdmin from './pages/admin/SkillsAdmin'
 
 function App() {
   return (
@@ -30,6 +35,12 @@ function App() {
                 <Route path="/projects/:projectId/breakdown" element={<PlotBreakdown />} />
                 <Route path="/projects/:projectId/scripts" element={<ScriptGeneration />} />
                 <Route path="/skills" element={<SkillsManagement />} />
+                <Route element={<AdminRoute />}>
+                  <Route path="/admin/dashboard" element={<AdminDashboard />} />
+                  <Route path="/admin/users" element={<UsersAdmin />} />
+                  <Route path="/admin/skills" element={<SkillsAdmin />} />
+                  <Route path="/admin/pipeline-executions" element={<PipelineExecutions />} />
+                </Route>
               </Route>
             </Route>
 

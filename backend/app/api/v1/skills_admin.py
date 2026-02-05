@@ -31,6 +31,7 @@ class SkillUpdateRequest(BaseModel):
     category: Optional[str] = None
     parameters: Optional[dict] = None
     is_active: Optional[bool] = None
+    visibility: Optional[str] = None
 
 
 @router.get("/skills")
@@ -90,6 +91,7 @@ async def create_skill(
         category=request.category,
         module_path=request.module_path,
         class_name=request.class_name,
+        owner_id=admin.id,
         parameters=request.parameters,
         version=request.version,
         author=request.author
@@ -129,6 +131,8 @@ async def update_skill(
         skill.parameters = request.parameters
     if request.is_active is not None:
         skill.is_active = request.is_active
+    if request.visibility is not None:
+        skill.visibility = request.visibility
 
     await db.commit()
     await db.refresh(skill)

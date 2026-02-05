@@ -6,6 +6,8 @@ from typing import Optional, List
 from app.core.database import get_db
 from app.models.user import User
 from app.api.v1.auth import get_current_user
+from app.models.pipeline import Pipeline, PipelineExecution, PipelineExecutionLog
+from app.models.project import Project
 
 router = APIRouter()
 
@@ -114,4 +116,147 @@ async def get_system_stats(
         "active_users": active_users,
         "total_projects": total_projects,
         "total_tasks": total_tasks
+    }
+
+
+@router.get("/pipelines/executions")
+async def get_pipeline_executions_admin(
+    skip: int = 0,
+    limit: int = 20,
+    status: Optional[str] = None,
+    pipeline_id: Optional[str] = None,
+    project_id: Optional[str] = None,
+    admin: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """管理员：获取Pipeline执行列表"""
+    query = (
+        select(PipelineExecution, Pipeline, Project)
+        .join(Pipeline, PipelineExecution.pipeline_id == Pipeline.id)
+        .outerjoin(Project, PipelineExecution.project_id == Project.id)
+    )
+
+    if status:
+        query = query.where(PipelineExecution.status == status)
+    if pipeline_id:
+        query = query.where(PipelineExecution.pipeline_id == pipeline_id)
+    if project_id:
+        query = query.where(PipelineExecution.project_id == project_id)
+
+    count_query = select(func.count(PipelineExecution.id))
+    if status:
+        count_query = count_query.where(PipelineExecution.status == status)
+    if pipeline_id:
+        count_query = count_query.where(PipelineExecution.pipeline_id == pipeline_id)
+    if project_id:
+        count_query = count_query.where(PipelineExecution.project_id == project_id)
+
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    result = await db.execute(
+        query.order_by(PipelineExecution.created_at.desc()).offset(skip).limit(limit)
+    )
+    rows = result.all()
+
+    executions = []
+    for execution, pipeline, project in rows:
+        executions.append({
+            "id": str(execution.id),
+            "pipeline_id": str(execution.pipeline_id),
+            "pipeline_name": pipeline.name if pipeline else None,
+            "project_id": str(execution.project_id) if execution.project_id else None,
+            "project_name": project.name if project else None,
+            "status": execution.status,
+            "progress": execution.progress,
+            "current_stage": execution.current_stage,
+            "current_step": execution.current_step,
+            "error_message": execution.error_message,
+            "created_at": execution.created_at.isoformat() if execution.created_at else None,
+            "completed_at": execution.completed_at.isoformat() if execution.completed_at else None
+        })
+
+    return {
+        "executions": executions,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+
+@router.get("/pipelines/executions/{execution_id}")
+async def get_pipeline_execution_admin(
+    execution_id: str,
+    admin: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """管理员：获取单次Pipeline执行详情"""
+    result = await db.execute(
+        select(PipelineExecution, Pipeline, Project)
+        .join(Pipeline, PipelineExecution.pipeline_id == Pipeline.id)
+        .outerjoin(Project, PipelineExecution.project_id == Project.id)
+        .where(PipelineExecution.id == execution_id)
+    )
+    row = result.first()
+
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="执行记录不存在"
+        )
+
+    execution, pipeline, project = row
+
+    return {
+        "id": str(execution.id),
+        "pipeline_id": str(execution.pipeline_id),
+        "pipeline_name": pipeline.name if pipeline else None,
+        "project_id": str(execution.project_id) if execution.project_id else None,
+        "project_name": project.name if project else None,
+        "status": execution.status,
+        "progress": execution.progress,
+        "current_stage": execution.current_stage,
+        "current_step": execution.current_step,
+        "result": execution.result,
+        "error_message": execution.error_message,
+        "celery_task_id": execution.celery_task_id,
+        "created_at": execution.created_at.isoformat() if execution.created_at else None,
+        "started_at": execution.started_at.isoformat() if execution.started_at else None,
+        "completed_at": execution.completed_at.isoformat() if execution.completed_at else None
+    }
+
+
+@router.get("/pipelines/executions/{execution_id}/logs")
+async def get_pipeline_execution_logs_admin(
+    execution_id: str,
+    skip: int = 0,
+    limit: int = 200,
+    admin: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """管理员：获取Pipeline执行日志"""
+    result = await db.execute(
+        select(PipelineExecutionLog)
+        .where(PipelineExecutionLog.execution_id == execution_id)
+        .order_by(PipelineExecutionLog.created_at.asc())
+        .offset(skip)
+        .limit(limit)
+    )
+    logs = result.scalars().all()
+
+    return {
+        "logs": [
+            {
+                "id": str(log.id),
+                "execution_id": str(log.execution_id),
+                "stage": log.stage,
+                "event": log.event,
+                "message": log.message,
+                "detail": log.detail,
+                "created_at": log.created_at.isoformat() if log.created_at else None
+            }
+            for log in logs
+        ],
+        "skip": skip,
+        "limit": limit
     }

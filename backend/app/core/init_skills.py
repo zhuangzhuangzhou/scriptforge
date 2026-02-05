@@ -3,6 +3,9 @@ from sqlalchemy import select
 from app.models.skill import Skill
 import uuid
 
+# 系统内置 Skill 归属的固定 owner_id（不需要真实用户）
+SYSTEM_OWNER_ID = uuid.UUID("00000000-0000-0000-0000-000000000000")
+
 
 async def init_builtin_skills(db: AsyncSession):
     """初始化内置Skills到数据库"""
@@ -15,6 +18,8 @@ async def init_builtin_skills(db: AsyncSession):
             "category": "breakdown",
             "module_path": "app.ai.skills.conflict_extraction_skill",
             "class_name": "ConflictExtractionSkill",
+            "owner_id": SYSTEM_OWNER_ID,
+            "visibility": "public",
             "is_builtin": True,
             "is_active": True
         },
@@ -25,6 +30,8 @@ async def init_builtin_skills(db: AsyncSession):
             "category": "breakdown",
             "module_path": "app.ai.skills.plot_hook_skill",
             "class_name": "PlotHookSkill",
+            "owner_id": SYSTEM_OWNER_ID,
+            "visibility": "public",
             "is_builtin": True,
             "is_active": True
         },
@@ -35,6 +42,8 @@ async def init_builtin_skills(db: AsyncSession):
             "category": "breakdown",
             "module_path": "app.ai.skills.character_analysis_skill",
             "class_name": "CharacterAnalysisSkill",
+            "owner_id": SYSTEM_OWNER_ID,
+            "visibility": "public",
             "is_builtin": True,
             "is_active": True
         },
@@ -45,6 +54,8 @@ async def init_builtin_skills(db: AsyncSession):
             "category": "breakdown",
             "module_path": "app.ai.skills.scene_identification_skill",
             "class_name": "SceneIdentificationSkill",
+            "owner_id": SYSTEM_OWNER_ID,
+            "visibility": "public",
             "is_builtin": True,
             "is_active": True
         },
@@ -55,6 +66,8 @@ async def init_builtin_skills(db: AsyncSession):
             "category": "breakdown",
             "module_path": "app.ai.skills.emotion_extraction_skill",
             "class_name": "EmotionExtractionSkill",
+            "owner_id": SYSTEM_OWNER_ID,
+            "visibility": "public",
             "is_builtin": True,
             "is_active": True
         },
@@ -65,6 +78,32 @@ async def init_builtin_skills(db: AsyncSession):
             "category": "script",
             "module_path": "app.ai.skills.episode_planning_skill",
             "class_name": "EpisodePlanningSkill",
+            "owner_id": SYSTEM_OWNER_ID,
+            "visibility": "public",
+            "is_builtin": True,
+            "is_active": True
+        },
+        {
+            "name": "scene_generation",
+            "display_name": "场景生成",
+            "description": "基于剧集规划和拆解结果生成场景",
+            "category": "script",
+            "module_path": "app.ai.skills.scene_generation_skill",
+            "class_name": "SceneGenerationSkill",
+            "owner_id": SYSTEM_OWNER_ID,
+            "visibility": "public",
+            "is_builtin": True,
+            "is_active": True
+        },
+        {
+            "name": "dialogue_writing",
+            "display_name": "对话生成",
+            "description": "基于场景与人物信息生成对话",
+            "category": "script",
+            "module_path": "app.ai.skills.dialogue_writing_skill",
+            "class_name": "DialogueWritingSkill",
+            "owner_id": SYSTEM_OWNER_ID,
+            "visibility": "public",
             "is_builtin": True,
             "is_active": True
         }

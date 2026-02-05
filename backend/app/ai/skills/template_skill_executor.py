@@ -20,9 +20,9 @@ class TemplateSkillExecutor:
     从数据库加载 Skill 定义，替换模板变量，调用 LLM 生成结果。
     """
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, model_adapter=None):
         self.db = db
-        self._model_adapter = None
+        self._model_adapter = model_adapter
 
     async def _get_model_adapter(self):
         """获取模型适配器（懒加载）"""
