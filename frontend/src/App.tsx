@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { ConfigProvider } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { AuthProvider } from './context/AuthContext';
@@ -28,7 +28,6 @@ const App: React.FC = () => {
   return (
     <ConfigProvider locale={zhCN}>
       <AuthProvider>
-        <BrowserRouter>
           <div className="min-h-screen w-full bg-slate-950 text-slate-200 selection:bg-cyan-500/30 overflow-hidden">
             <Routes>
               {/* Auth Routes */}
@@ -69,7 +68,6 @@ const App: React.FC = () => {
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
             </Routes>
           </div>
-        </BrowserRouter>
       </AuthProvider>
     </ConfigProvider>
   );
