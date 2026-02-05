@@ -1,44 +1,52 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { ConfigProvider } from 'antd'
-import zhCN from 'antd/locale/zh_CN'
-import { AuthProvider } from './context/AuthContext'
-import Login from './pages/auth/Login'
-import Register from './pages/auth/Register'
-import Dashboard from './pages/user/Dashboard'
-import CreateProject from './pages/user/CreateProject'
-import ProjectDetail from './pages/user/ProjectDetail'
-import PlotBreakdown from './pages/user/PlotBreakdown'
-import ScriptGeneration from './pages/user/ScriptGeneration'
-import SkillsManagement from './pages/user/SkillsManagement'
-import MainLayout from './components/MainLayout'
-import ProtectedRoute from './components/ProtectedRoute'
+import React, { useState } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { ConfigProvider } from 'antd';
+import zhCN from 'antd/locale/zh_CN';
+import { AuthProvider } from './context/AuthContext';
+import MainLayout from './components/MainLayout';
+import ProtectedRoute from './components/ProtectedRoute';
+import Login from './pages/auth/Login';
+import Register from './pages/auth/Register';
+import Dashboard from './pages/user/Dashboard';
+import Workspace from './pages/user/Workspace';
+import SkillsManagement from './pages/user/SkillsManagement';
+import { UserTier } from './types';
 
-function App() {
+const App: React.FC = () => {
+  const [activeProject, setActiveProject] = useState<any>(null);
+  const [userTier, setUserTier] = useState<UserTier>('FREE');
+
   return (
     <ConfigProvider locale={zhCN}>
       <AuthProvider>
         <BrowserRouter>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
+          <div className="min-h-screen w-full bg-slate-950 text-slate-200 selection:bg-cyan-500/30 overflow-hidden">
+            <Routes>
+              {/* Auth Routes */}
+              <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
 
-            <Route element={<MainLayout />}>
-              <Route element={<ProtectedRoute />}>
-                <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="/projects/create" element={<CreateProject />} />
-                <Route path="/projects/:projectId" element={<ProjectDetail />} />
-                <Route path="/projects/:projectId/breakdown" element={<PlotBreakdown />} />
-                <Route path="/projects/:projectId/scripts" element={<ScriptGeneration />} />
-                <Route path="/skills" element={<SkillsManagement />} />
+              {/* Protected Workspace Routes */}
+              <Route element={<MainLayout userTier={userTier} setUserTier={setUserTier} onLogout={() => window.location.href='/login'} />}>
+                <Route element={<ProtectedRoute />}>
+                  <Route path="/dashboard" element={
+                    <Dashboard userTier={userTier} onOpenProject={(p) => setActiveProject(p)} />
+                  } />
+                  <Route path="/workspace" element={
+                    activeProject ? <Workspace project={activeProject} userTier={userTier} /> : <Navigate to="/dashboard" />
+                  } />
+                  <Route path="/skills" element={<SkillsManagement />} />
+                </Route>
               </Route>
-            </Route>
 
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          </Routes>
+              {/* Default Redirect */}
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            </Routes>
+          </div>
         </BrowserRouter>
       </AuthProvider>
     </ConfigProvider>
-  )
-}
+  );
+};
 
-export default App
+export default App;

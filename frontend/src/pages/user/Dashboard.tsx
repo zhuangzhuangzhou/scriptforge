@@ -1,142 +1,216 @@
-import React, { useEffect, useState } from 'react';
-import { Card, Button, Empty, Row, Col, Statistic, Tag, Progress, Space, Typography } from 'antd';
-import { PlusOutlined, ProjectOutlined, ClockCircleOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import React, { useState, useEffect } from 'react';
+import { Plus, Search, MoreVertical, FileText, Clock, PlayCircle, CheckCircle2, Trash2, Sparkles, Loader2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
+import CreateProjectModal from '../../components/modals/CreateProjectModal';
+import { UserTier } from '../../types';
+import { projectApi, USE_MOCK } from '../../services/api';
+import { message } from 'antd';
 
-const { Title, Text } = Typography;
-
-interface Project {
-  id: string;
-  name: string;
-  novel_type: string;
-  status: 'processing' | 'completed' | 'pending';
-  progress: number;
-  last_updated: string;
+interface DashboardProps {
+  onOpenProject: (project: any) => void;
+  userTier: UserTier;
 }
 
-const Dashboard: React.FC = () => {
-  const navigate = useNavigate();
-  const [projects, setProjects] = useState<Project[]>([]);
+const Dashboard: React.FC<DashboardProps> = ({ onOpenProject, userTier }) => {
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+  const navigate = useNavigate();
 
-  // Mock data loading
-  useEffect(() => {
-    // TODO: Replace with actual API call
-    setTimeout(() => {
-      setProjects([
-        // Example data for visualization
-        // { id: '1', name: '星际穿越', novel_type: '科幻', status: 'processing', progress: 45, last_updated: '2024-02-03' },
-      ]);
+  // 获取真实项目列表
+  const fetchProjects = async () => {
+    try {
+      setLoading(true);
+      const res = await projectApi.getProjects();
+      setProjects(res.data);
+    } catch (err) {
+      message.error('获取项目列表失败');
+      console.error(err);
+    } finally {
       setLoading(false);
-    }, 500);
-  }, []);
-
-  const getStatusTag = (status: string) => {
-    switch (status) {
-      case 'completed': return <Tag color="success" icon={<CheckCircleOutlined />}>已完成</Tag>;
-      case 'processing': return <Tag color="processing" icon={<ClockCircleOutlined />}>处理中</Tag>;
-      default: return <Tag color="default">待开始</Tag>;
     }
   };
 
-  return (
-    <div style={{ minHeight: '100%' }}>
-      {/* Header Section */}
-      <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <Title level={2} style={{ marginBottom: 0 }}>工作台</Title>
-          <Text type="secondary">欢迎回来，这里是你创作剧本的指挥中心</Text>
+  useEffect(() => {
+    fetchProjects();
+  }, []);
+
+  const handleCreateProject = () => {
+    fetchProjects(); // 刷新列表
+    setIsModalOpen(false);
+  };
+
+  const handleOpen = (project: any) => {
+    onOpenProject(project);
+    navigate('/workspace');
+  };
+
+  const handleDelete = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (window.confirm('确定要永久删除该项目吗？此操作不可撤销。')) {
+      try {
+        await projectApi.deleteProject(id);
+        message.success('项目已删除');
+        setProjects(projects.filter(p => p.id !== id));
+      } catch (err) {
+        message.error('删除项目失败');
+      }
+    }
+    setActiveMenuId(null);
+  };
+
+  if (loading && !USE_MOCK) {
+    return (
+      <div className="h-full flex items-center justify-center bg-slate-950">
+        <div className="flex flex-col items-center gap-4">
+            <Loader2 size={40} className="animate-spin text-cyan-500" />
+            <p className="text-slate-500 font-mono text-xs tracking-widest">LOADING CORE DATA...</p>
         </div>
-        <Button
-          type="primary"
-          size="large"
-          icon={<PlusOutlined />}
-          onClick={() => navigate('/projects/create')}
-          style={{ borderRadius: 6 }}
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 md:p-10 max-w-7xl mx-auto h-full flex flex-col" onClick={() => setActiveMenuId(null)}>
+      {/* Header */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-6 shrink-0">
+        <div>
+          <h1 className="text-3xl font-black text-white mb-2 tracking-tight">项目管理 <span className="text-slate-600 font-mono text-sm ml-2 font-normal">/ Projects</span></h1>
+          <p className="text-slate-400 text-sm">管理您的小说改编项目，查看进度与历史版本。</p>
+        </div>
+        
+        <motion.button 
+          whileHover={{ scale: 1.02, translateY: -2 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={() => setIsModalOpen(true)}
+          className="relative group overflow-hidden px-8 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 text-white font-bold shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all"
         >
-          新建项目
-        </Button>
+          <div className="absolute inset-0 w-1/2 h-full bg-white/10 -skew-x-12 -translate-x-full group-hover:translate-x-[200%] transition-transform duration-700 ease-in-out" />
+          <div className="flex items-center gap-2 relative z-10">
+            <Plus size={20} strokeWidth={3} />
+            <span className="tracking-wide">新建改编项目</span>
+            <Sparkles size={16} className="text-cyan-200 animate-pulse" />
+          </div>
+        </motion.button>
       </div>
 
-      {/* Statistics Cards */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 32 }}>
-        <Col xs={24} sm={8}>
-          <Card bordered={false}>
-            <Statistic title="总项目数" value={projects.length} prefix={<ProjectOutlined />} />
-          </Card>
-        </Col>
-        <Col xs={24} sm={8}>
-          <Card bordered={false}>
-            <Statistic title="正在进行" value={projects.filter(p => p.status === 'processing').length} valueStyle={{ color: '#1677ff' }} />
-          </Card>
-        </Col>
-        <Col xs={24} sm={8}>
-          <Card bordered={false}>
-            <Statistic title="已完成剧本" value={projects.filter(p => p.status === 'completed').length} valueStyle={{ color: '#52c41a' }} />
-          </Card>
-        </Col>
-      </Row>
-
-      {/* Project Grid */}
-      <Title level={4} style={{ marginBottom: 16 }}>我的项目</Title>
-      
-      {loading ? (
-        <Card loading bordered={false} />
-      ) : projects.length > 0 ? (
-        <Row gutter={[16, 16]}>
-          {projects.map(project => (
-            <Col xs={24} sm={12} lg={8} key={project.id}>
-              <Card
-                hoverable
-                bordered={false}
-                onClick={() => navigate(`/projects/${project.id}`)}
-                actions={[
-                  <span key="edit">查看详情</span>,
-                  <span key="setting">设置</span>
-                ]}
-              >
-                <Card.Meta
-                  avatar={<div style={{ 
-                    width: 48, height: 48, 
-                    background: '#e6f7ff', 
-                    borderRadius: 8, 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'center',
-                    color: '#1677ff',
-                    fontSize: 24
-                  }}>{project.name[0]}</div>}
-                  title={
-                    <Space>
-                      {project.name}
-                      <Tag>{project.novel_type}</Tag>
-                    </Space>
-                  }
-                  description={
-                    <div style={{ marginTop: 12 }}>
-                      <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
-                        <Text type="secondary" style={{ fontSize: 12 }}>{getStatusTag(project.status)}</Text>
-                        <Text type="secondary" style={{ fontSize: 12 }}>{project.last_updated}</Text>
-                      </div>
-                      <Progress percent={project.progress} size="small" status={project.status === 'processing' ? 'active' : 'normal'} />
+      {/* Grid */}
+      <div className="flex-1 overflow-y-auto min-h-0 pr-2 custom-scrollbar">
+        {projects.length === 0 ? (
+            <div className="h-64 border-2 border-dashed border-slate-800 rounded-3xl flex flex-col items-center justify-center text-slate-600 gap-4">
+                <FileText size={48} opacity={0.2} />
+                <p className="text-sm">暂无项目，点击右上角开始创作</p>
+            </div>
+        ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-10">
+                {projects.map((project, index) => (
+                <motion.div
+                    key={project.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: index * 0.05 }}
+                    onClick={() => handleOpen(project)}
+                    className="group bg-slate-900/40 border border-slate-800 hover:border-cyan-500/40 rounded-2xl p-6 cursor-pointer hover:bg-slate-800/40 transition-all duration-300 relative overflow-hidden shadow-xl"
+                >
+                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                    
+                    <div className="flex justify-between items-start mb-6">
+                    <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-xl bg-slate-800 flex items-center justify-center text-cyan-500 group-hover:scale-110 transition-all">
+                            <FileText size={24} />
+                        </div>
+                        <div>
+                            <h3 className="font-bold text-white group-hover:text-cyan-400 transition-colors tracking-tight text-lg truncate max-w-[150px]">{project.name}</h3>
+                            <span className="text-[10px] uppercase font-black text-slate-500 border border-slate-800 rounded px-2 py-0.5 mt-1 inline-block">{project.novel_type || '未分类'}</span>
+                        </div>
                     </div>
-                  }
-                />
-              </Card>
-            </Col>
-          ))}
-        </Row>
-      ) : (
-        <Card bordered={false} style={{ textAlign: 'center', padding: '40px 0' }}>
-          <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={
-              <span>暂无项目，点击上方按钮开启你的创作之旅</span>
-            }
-          >
-            <Button type="primary" onClick={() => navigate('/projects/create')}>立即创建</Button>
-          </Empty>
-        </Card>
+                    
+                    <div className="relative">
+                        <button 
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveMenuId(activeMenuId === project.id ? null : project.id);
+                            }}
+                            className="text-slate-600 hover:text-white p-2 rounded-xl hover:bg-slate-800 transition-all"
+                        >
+                            <MoreVertical size={18} />
+                        </button>
+                        
+                        <AnimatePresence>
+                            {activeMenuId === project.id && (
+                                <motion.div
+                                    initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                                    exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                                    className="absolute right-0 mt-2 w-32 bg-slate-900 border border-slate-700 shadow-2xl rounded-xl z-50 overflow-hidden backdrop-blur-xl"
+                                >
+                                    <button 
+                                        onClick={(e) => handleDelete(e, project.id)}
+                                        className="w-full px-4 py-3 text-xs font-bold text-red-400 hover:bg-red-500/10 flex items-center gap-2 transition-colors"
+                                    >
+                                        <Trash2 size={14} /> 删除项目
+                                    </button>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+                    </div>
+                    </div>
+
+                    <div className="space-y-5">
+                        <div>
+                            <div className="flex justify-between text-[10px] font-bold text-slate-500 mb-2 uppercase tracking-widest">
+                                <span>Progress</span>
+                                <span className="text-cyan-500 font-mono">{project.processed_chapters}/{project.total_chapters} CH</span>
+                            </div>
+                            <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden shadow-inner border border-slate-800/50">
+                                <motion.div 
+                                    initial={{ width: 0 }}
+                                    animate={{ width: `${(project.processed_chapters / (project.total_chapters || 1)) * 100}%` }}
+                                    className="h-full bg-gradient-to-r from-blue-600 via-cyan-500 to-blue-400 rounded-full" 
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-5 border-t border-slate-800/50">
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase">
+                                <Clock size={12} />
+                                <span>{new Date(project.updated_at).toLocaleDateString()}</span>
+                            </div>
+                            <div className={`flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1 rounded-lg uppercase tracking-tighter border ${
+                                project.status === 'completed' ? 'bg-green-500/5 text-green-500 border-green-500/20' :
+                                project.status === 'processing' ? 'bg-blue-500/5 text-blue-400 border-blue-500/20' :
+                                'bg-slate-800 text-slate-500 border-slate-700'
+                            }`}>
+                                {project.status}
+                            </div>
+                        </div>
+                    </div>
+                </motion.div>
+                ))}
+            </div>
+        )}
+      </div>
+
+      <footer className="mt-auto pt-6 border-t border-slate-900 flex flex-col md:flex-row justify-between items-center gap-4 text-[10px] text-slate-500 uppercase font-bold tracking-widest shrink-0">
+        <div className="flex items-center gap-6">
+            <button className="hover:text-cyan-400 transition-colors">User Agreement</button>
+            <button className="hover:text-cyan-400 transition-colors">Privacy Policy</button>
+        </div>
+        <div className="flex items-center gap-4">
+            <span>© 2026 AI ScriptFlow Core</span>
+            <div className="w-1 h-1 rounded-full bg-slate-800" />
+            <span className="text-slate-400">Release v2.4.0-Final</span>
+        </div>
+      </footer>
+
+      {isModalOpen && (
+        <CreateProjectModal 
+            onClose={() => setIsModalOpen(false)} 
+            onSubmit={handleCreateProject}
+            userTier={userTier}
+        />
       )}
     </div>
   );

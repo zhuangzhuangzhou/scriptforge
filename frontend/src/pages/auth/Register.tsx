@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { message } from 'antd';
 import AnimatedBackground from '../../components/AnimatedBackground';
-import InputGroup from '../../components/InputGroup';
+import InputGroup from '../../components/ui/InputGroup';
 import './auth.css';
 
 interface RegisterForm {

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import api from '../services/api';
+import api, { USE_MOCK } from '../services/api';
+import { mockUser } from '../services/mockData';
 
 interface User {
   id: string;
@@ -9,6 +10,7 @@ interface User {
   role: string;
   balance: number;
   is_active: boolean;
+  tier?: string;
 }
 
 interface AuthContextType {
@@ -28,6 +30,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const initAuth = async () => {
+      if (USE_MOCK) {
+        setUser(mockUser as any);
+        setLoading(false);
+        return;
+      }
+
       const storedToken = localStorage.getItem('token');
       if (storedToken) {
         try {
@@ -44,6 +52,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = async (username: string, password: string) => {
+    if (USE_MOCK) {
+      // 模拟网络延迟
+      await new Promise(resolve => setTimeout(resolve, 800));
+      const mockToken = 'mock-jwt-token';
+      localStorage.setItem('token', mockToken);
+      setToken(mockToken);
+      setUser(mockUser as any);
+      return;
+    }
+
     const formData = new URLSearchParams();
     formData.append('username', username);
     formData.append('password', password);
