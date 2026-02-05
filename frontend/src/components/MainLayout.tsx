@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Film, Bell, LogOut, ChevronLeft, Settings, Database, Shield } from 'lucide-react';
+import { Film, Bell, LogOut, ChevronLeft, Settings, Database, Shield, Sparkles } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { message, Avatar } from 'antd';
+import { message, Avatar, Dropdown } from 'antd';
 import GlobalSettingsModal from './modals/GlobalSettingsModal';
 import RechargeModal from './modals/RechargeModal';
 import BillingModal from './modals/BillingModal';
@@ -54,90 +54,74 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
           </div>
         </div>
 
-        <div className="flex items-center gap-3 sm:gap-4">
+        <div className="flex items-center gap-2 sm:gap-3">
           {/* Admin Entry */}
           {user?.role === 'admin' && (
             <button
               onClick={() => navigate('/admin/dashboard')}
-              className="flex items-center gap-2 px-3 py-1.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg hover:bg-red-500/20 transition-all text-xs font-bold uppercase tracking-wider"
+              className="flex items-center gap-2 px-3 h-8 bg-red-500/10 text-red-400 border border-red-500/20 rounded-full hover:bg-red-500/20 transition-all text-[10px] font-bold uppercase tracking-wider mr-2"
             >
-              <Shield size={14} />
+              <Shield size={12} />
               Admin
             </button>
           )}
 
-          {/* 1. 功能操作组 */}
-          <div className="flex items-center gap-2 pr-4 border-r border-slate-800/40">
-            {/* Settings */}
-            <button
-              onClick={() => setIsSettingsOpen(true)}
-              className="text-slate-400 hover:text-white transition-all p-2 hover:bg-slate-800/40 rounded-full"
-              title="全局设置"
-            >
-              <Settings size={19} />
-            </button>
+          {/* Settings */}
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="h-10 px-3 bg-slate-900/50 rounded-full flex items-center justify-center cursor-pointer hover:border-cyan-500/50 hover:bg-slate-800/80 transition-all text-slate-400 hover:text-white"
+            title="全局设置"
+          >
+            <Settings size={19} />
+          </button>
 
-            {/* Notifications */}
-            <button className="relative text-slate-400 hover:text-white transition-all p-2 hover:bg-slate-800/40 rounded-full">
-              <Bell size={19} />
-              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.6)] ring-2 ring-slate-900" />
-            </button>
-          </div>
+          {/* Notifications */}
+          <button className="h-10 px-3 bg-slate-900/50 rounded-full flex items-center justify-center cursor-pointer hover:border-cyan-500/50 hover:bg-slate-800/80 transition-all text-slate-400 hover:text-white relative">
+            <Bell size={19} />
+            <span className="absolute top-2.5 right-3 w-2 h-2 rounded-full bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.6)] ring-1 ring-slate-900" />
+          </button>
 
-          {/* 2. 活力资产与极简身份 */}
-          <div className="flex items-center gap-8 pl-4">
-
-            {/* 1. 积分看板 */}
-            <div
-              onClick={() => setIsBillingOpen(true)}
-              className="flex items-center gap-3 px-4 py-1.5 bg-slate-900/40 border border-slate-800/60 hover:border-cyan-500/40 rounded-xl cursor-pointer group/asset transition-all hover:bg-slate-800/60"
-              title="账户资产"
-            >
-              <div className="flex flex-col items-end">
-                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-[0.15em] leading-none mb-1">Balance</span>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-lg font-bold text-white group-hover/asset:text-cyan-400 transition-colors">
-                    {user?.balance ?? 0}
-                  </span>
-                  <span className="text-[10px] font-bold text-cyan-500/60 uppercase">PTS</span>
-                </div>
-              </div>
-              <div className="w-8 h-8 rounded-lg bg-cyan-500/10 flex items-center justify-center border border-cyan-500/20 group-hover/asset:bg-cyan-500/20 transition-all">
-                <Database size={16} className="text-cyan-400" />
-              </div>
-            </div>
-
-            {/* 2. 用户资料 */}
-            <div className="flex items-center gap-4 px-2">
-              <div className="flex items-center">
-                <span className="text-[14px] font-semibold text-slate-200 hover:text-white transition-colors tracking-wide">
-                  {user?.full_name || user?.username}
-                </span>
-              </div>
-
-              <div
-                className="relative cursor-pointer group/avatar"
-                onClick={() => message.info('个人中心开发中')}
-              >
-                <div className="w-12 h-12 rounded-2xl border border-white/10 bg-slate-900 p-0.5 shadow-2xl group-hover/avatar:scale-105 group-hover/avatar:border-cyan-500/50 transition-all duration-300 ring-4 ring-transparent group-hover/avatar:ring-cyan-500/10">
-                  <img
-                    src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.username || 'Alex'}`}
-                    className="w-full h-full rounded-xl object-cover"
-                    alt="avatar"
-                  />
-                </div>
-              </div>
-
-              {/* 独立登出 */}
-              <button
-                onClick={onLogout}
-                className="p-2.5 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all"
-                title="退出登录"
-              >
-                <LogOut size={18} />
-              </button>
+          {/* Points */}
+          <div
+            onClick={() => setIsBillingOpen(true)}
+            className="h-10 px-4 bg-slate-900/50 rounded-full flex items-center gap-2 cursor-pointer hover:border-cyan-500/50 hover:bg-slate-800/80 transition-all"
+            title="账户资产"
+          >
+            <Sparkles size={16} className="text-cyan-400" />
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">积分:</span>
+              <span className="text-sm font-bold text-cyan-400">
+                {user?.balance ?? 0}
+              </span>
             </div>
           </div>
+
+          {/* User Profile */}
+          <Dropdown
+            menu={{
+              items: [
+                { key: 'edit', label: 'Edit Profile', onClick: () => message.info('Edit Profile feature coming soon') },
+                { key: 'password', label: 'Change Password', onClick: () => message.info('Change Password feature coming soon') },
+                { type: 'divider' },
+                { key: 'logout', label: 'Logout', icon: <LogOut size={14} />, onClick: onLogout, danger: true },
+              ]
+            }}
+            placement="bottomRight"
+            trigger={['click']}
+          >
+            <div className="h-10 pl-1 pr-4 bg-slate-900/50 rounded-full flex items-center gap-3 cursor-pointer hover:border-cyan-500/50 hover:bg-slate-800/80 transition-all group">
+              <div className="w-8 h-8 rounded-full border border-white/10 bg-slate-900 overflow-hidden shadow-inner group-hover:border-cyan-500/50 transition-colors">
+                <img
+                  src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.username || 'Alex'}`}
+                  className="w-full h-full object-cover"
+                  alt="avatar"
+                />
+              </div>
+              <span className="text-sm font-medium text-slate-300 group-hover:text-white transition-colors hidden md:block">
+                {user?.username}
+              </span>
+            </div>
+          </Dropdown>
         </div>
       </header>
 
