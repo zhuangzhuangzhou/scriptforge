@@ -1,5 +1,6 @@
 import json
 import logging
+import inspect
 from typing import Dict, Any, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.plot_breakdown import PlotBreakdown
@@ -13,6 +14,13 @@ class ConsistencyChecker:
 
     def __init__(self, model_adapter):
         self.model_adapter = model_adapter
+
+    async def _generate(self, prompt: str):
+        """兼容同步/异步的模型生成"""
+        result = self.model_adapter.generate(prompt)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
     async def check_logic_consistency(self, breakdown_data: Dict[str, Any]) -> Dict[str, Any]:
         """检查逻辑一致性"""
@@ -39,7 +47,7 @@ class ConsistencyChecker:
 """
 
         try:
-            response = await self.model_adapter.generate(prompt)
+            response = await self._generate(prompt)
             result = json.loads(response)
         except json.JSONDecodeError as e:
             logger.error(f"JSON decode error in check_logic_consistency: {e}")
@@ -73,7 +81,7 @@ class ConsistencyChecker:
 """
 
         try:
-            response = await self.model_adapter.generate(prompt)
+            response = await self._generate(prompt)
             result = json.loads(response)
         except json.JSONDecodeError as e:
             logger.error(f"JSON decode error in check_character_consistency: {e}")
@@ -110,7 +118,7 @@ class ConsistencyChecker:
 }}
 """
         try:
-            response = await self.model_adapter.generate(prompt)
+            response = await self._generate(prompt)
             result = json.loads(response)
         except json.JSONDecodeError as e:
             logger.error(f"JSON decode error in check_timeline_consistency: {e}")
@@ -143,7 +151,7 @@ class ConsistencyChecker:
 }}
 """
         try:
-            response = await self.model_adapter.generate(prompt)
+            response = await self._generate(prompt)
             result = json.loads(response)
         except json.JSONDecodeError as e:
             logger.error(f"JSON decode error in check_scene_continuity: {e}")
@@ -178,7 +186,7 @@ class ConsistencyChecker:
 }}
 """
         try:
-            response = await self.model_adapter.generate(prompt)
+            response = await self._generate(prompt)
             result = json.loads(response)
         except json.JSONDecodeError as e:
             logger.error(f"JSON decode error in check_dialogue_style: {e}")

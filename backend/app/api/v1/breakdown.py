@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from app.core.database import get_db
 from app.models.user import User
 from app.models.batch import Batch
@@ -19,6 +19,8 @@ class BreakdownStartRequest(BaseModel):
     """启动拆解请求"""
     batch_id: str
     model_config_id: Optional[str] = None
+    selected_skills: Optional[List[str]] = None
+    pipeline_id: Optional[str] = None
 
 
 @router.post("/start")
@@ -60,8 +62,13 @@ async def start_breakdown(
         project_id=batch.project_id,
         batch_id=batch.id,
         task_type="breakdown",
-        status="pending",
-        config={"model_config_id": request.model_config_id}
+        status="queued",
+        depends_on=[],
+        config={
+            "model_config_id": request.model_config_id,
+            "selected_skills": request.selected_skills or [],
+            "pipeline_id": request.pipeline_id
+        }
     )
     db.add(task)
     await db.commit()
@@ -77,10 +84,9 @@ async def start_breakdown(
 
     # 更新任务的celery_task_id
     task.celery_task_id = celery_task.id
-    task.status = "in_progress"
     await db.commit()
 
-    return {"task_id": str(task.id), "status": "in_progress"}
+    return {"task_id": str(task.id), "status": "queued"}
 
 
 @router.get("/tasks/{task_id}")
@@ -109,7 +115,9 @@ async def get_breakdown_task(
         "status": task.status,
         "progress": task.progress,
         "current_step": task.current_step,
-        "error_message": task.error_message
+        "error_message": task.error_message,
+        "retry_count": task.retry_count,
+        "depends_on": task.depends_on or []
     }
 
 
@@ -144,5 +152,7 @@ async def get_breakdown_results(
         "characters": breakdown.characters,
         "scenes": breakdown.scenes,
         "emotions": breakdown.emotions,
-        "consistency_status": breakdown.consistency_status
+        "consistency_status": breakdown.consistency_status,
+        "consistency_score": breakdown.consistency_score,
+        "consistency_results": breakdown.consistency_results
     }
