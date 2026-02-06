@@ -36,3 +36,18 @@ class Project(Base):
 
     created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
     updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProjectLog(Base):
+    """项目日志表"""
+
+    __tablename__ = "project_logs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    type = Column(String(50), nullable=False)  # 'info', 'success', 'warning', 'error', 'thinking'
+    message = Column(Text, nullable=False)
+    detail = Column(JSONB)
+
+    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)

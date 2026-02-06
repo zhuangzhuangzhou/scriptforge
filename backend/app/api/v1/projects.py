@@ -12,7 +12,7 @@ from app.core.database import get_db
 from app.core.storage import minio_access_key_client
 from app.core.config import settings
 from app.models.user import User
-from app.models.project import Project
+from app.models.project import Project, ProjectLog
 from app.models.chapter import Chapter
 from app.models.batch import Batch
 from app.models.split_rule import SplitRule
@@ -112,6 +112,31 @@ class BatchResponse(BaseModel):
         from_attributes = True
 
 
+class LogResponse(BaseModel):
+    id: str
+    type: str
+    message: str
+    detail: Optional[Dict[str, Any]] = None
+    created_at: str
+
+    @field_validator('id', mode='before')
+    @classmethod
+    def validate_id(cls, v):
+        if isinstance(v, UUID):
+            return str(v)
+        return v
+
+    @field_validator('created_at', mode='before')
+    @classmethod
+    def validate_datetime(cls, v):
+        if isinstance(v, datetime):
+            return v.isoformat()
+        return v
+
+    class Config:
+        from_attributes = True
+
+
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 async def create_project(
     project_data: ProjectCreate,
@@ -194,6 +219,32 @@ async def get_project_batches(
     )
     batches = batches_result.scalars().all()
     return batches
+
+
+@router.get("/{project_id}/logs", response_model=List[LogResponse])
+async def get_project_logs(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取项目日志列表"""
+    # 验证项目归属
+    result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == current_user.id)
+    )
+    project = result.scalar_one_or_none()
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="项目不存在"
+        )
+
+    logs_result = await db.execute(
+        select(ProjectLog).where(ProjectLog.project_id == project_id).order_by(ProjectLog.created_at.desc())
+    )
+    logs = logs_result.scalars().all()
+    return logs
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)
