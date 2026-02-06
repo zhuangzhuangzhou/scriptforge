@@ -139,6 +139,40 @@ export const projectApi = {
     }
     const response = await api.get(`/projects/${projectId}/batches`);
     return { data: response.data };
+  },
+
+  getChapters: async (projectId: string, page = 1, pageSize = 20, keyword?: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return { data: { items: [], total: 0 } };
+    }
+    const response = await api.get(`/projects/${projectId}/chapters`, {
+      params: { page, page_size: pageSize, keyword }
+    });
+    return { data: response.data };
+  },
+
+  deleteChapter: async (projectId: string, chapterId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return { data: { success: true } };
+    }
+    return api.delete(`/projects/${projectId}/chapters/${chapterId}`);
+  },
+
+  uploadChapter: async (projectId: string, file: File, prevChapterId?: string) => {
+    if (USE_MOCK) {
+      await delay(1000);
+      return { data: { success: true } };
+    }
+    const formData = new FormData();
+    formData.append('file', file);
+    if (prevChapterId) {
+      formData.append('prev_chapter_id', prevChapterId);
+    }
+    return api.post(`/projects/${projectId}/chapters/upload`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
   }
 };
 

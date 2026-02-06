@@ -145,6 +145,8 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const [splitting, setSplitting] = useState(false);
     const [starting, setStarting] = useState(false);
     const fileInputRef = React.useRef<HTMLInputElement>(null);
+    const chapterFileInputRef = React.useRef<HTMLInputElement>(null);
+    const [importPosition, setImportPosition] = useState<'after' | 'end'>('after');
 
     const [activeTab, setActiveTab] = useState<Tab>('CONFIG');
     const [showConsole, setShowConsole] = useState(false);
@@ -172,8 +174,16 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const selectedEpisode = mockEpisodes.find(ep => ep.id === selectedEpisodeId) || mockEpisodes[0];
 
     // Source Tab State
-    const [selectedChapterId, setSelectedChapterId] = useState<number>(1);
-    const selectedChapter = mockChapters.find(ch => ch.id === selectedChapterId) || mockChapters[0];
+    const [chapters, setChapters] = useState<any[]>([]);
+    const [selectedChapter, setSelectedChapter] = useState<any>(null);
+    const [loadingChapters, setLoadingChapters] = useState(false);
+    const [page, setPage] = useState(1);
+    const [hasMore, setHasMore] = useState(true);
+    const [totalChapters, setTotalChapters] = useState(0);
+    const [keyword, setKeyword] = useState('');
+    const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+    const [uploadChapterFile, setUploadChapterFile] = useState<File | null>(null);
+    const PAGE_SIZE = 20;
 
     const getStatusText = (status: string) => {
         const statusMap: Record<string, string> = {
@@ -240,6 +250,161 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             setSaving(false);
         }
     };
+
+    // 获取章节数据
+    const fetchChapters = async (pageNum = 1, append = false, currentKeyword = keyword) => {
+        if (!projectId) return;
+        setLoadingChapters(true);
+        try {
+            const res = await projectApi.getChapters(projectId, pageNum, PAGE_SIZE, currentKeyword);
+            if (res.data) {
+                const newItems = res.data.items || [];
+                const total = res.data.total || 0;
+
+                setTotalChapters(total);
+                if (append) {
+                    setChapters(prev => [...prev, ...newItems]);
+                } else {
+                    setChapters(newItems);
+                }
+
+                setHasMore((append ? chapters.length : 0) + newItems.length < total);
+
+                if (newItems.length > 0 && !selectedChapter && !append) {
+                    setSelectedChapter(newItems[0]);
+                }
+            }
+        } catch (err) {
+            console.error('获取章节失败:', err);
+        } finally {
+            setLoadingChapters(false);
+        }
+    };
+
+    // 搜索防抖
+    useEffect(() => {
+        if (activeTab !== 'SOURCE') return;
+        const timer = setTimeout(() => {
+            setPage(1);
+            fetchChapters(1, false, keyword);
+        }, 500);
+        return () => clearTimeout(timer);
+    }, [keyword, activeTab]);
+
+    const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+        const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+        if (scrollHeight - scrollTop <= clientHeight + 50 && !loadingChapters && hasMore) {
+            const nextPage = page + 1;
+            setPage(nextPage);
+            fetchChapters(nextPage, true);
+        }
+    };
+
+    const handleDeleteChapter = async (e: React.MouseEvent, chapterId: string) => {
+        e.stopPropagation();
+        if (!projectId) return;
+        Modal.confirm({
+            title: '确认删除',
+            content: '确定要删除这一章吗？此操作不可撤销。',
+            okText: '删除',
+            okType: 'danger',
+            cancelText: '取消',
+            className: 'dark-modal',
+            styles: {
+                mask: { backgroundColor: 'rgba(0, 0, 0, 0.8)' },
+                content: {
+                    backgroundColor: '#0f172a',
+                    border: '1px solid #334155',
+                    borderRadius: '16px',
+                    padding: '24px'
+                },
+                header: { backgroundColor: 'transparent', color: '#fff' },
+                body: { color: '#94a3b8' },
+                footer: { borderTop: '1px solid #1e293b' }
+            },
+            okButtonProps: {
+                style: { backgroundColor: '#dc2626', borderColor: '#dc2626' }
+            },
+            cancelButtonProps: {
+                style: { backgroundColor: '#1e293b', borderColor: '#334155', color: '#94a3b8' }
+            },
+            onOk: async () => {
+                try {
+                    await projectApi.deleteChapter(projectId, chapterId);
+                    message.success('章节已删除');
+                    setChapters(prev => prev.filter(c => String(c.id) !== chapterId));
+                    setTotalChapters(prev => prev - 1);
+                } catch (err) {
+                    message.error('删除失败');
+                }
+            }
+        });
+    };
+
+    const handleUploadChapter = async () => {
+        if (!projectId || !uploadChapterFile) {
+            message.warning('请选择文件');
+            return;
+        }
+        setUploading(true);
+        try {
+            const prevChapterId = importPosition === 'after' && selectedChapter ? String(selectedChapter.id) : undefined;
+            await projectApi.uploadChapter(projectId, uploadChapterFile, prevChapterId);
+            message.success('章节上传并插入成功');
+            setIsUploadModalOpen(false);
+            setUploadChapterFile(null);
+            setPage(1);
+            fetchChapters(1, false);
+        } catch (err) {
+            message.error('上传失败');
+        } finally {
+            setUploading(false);
+        }
+    };
+
+    const handleChapterFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (file) {
+            setUploadChapterFile(file);
+            setIsUploadModalOpen(true);
+        }
+        if (chapterFileInputRef.current) chapterFileInputRef.current.value = '';
+    };
+
+    const triggerChapterFileUpload = () => {
+        setIsUploadModalOpen(true);
+    };
+
+    const handleModalFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        // 验证文件大小 (1MB = 1024 * 1024 bytes)
+        if (file.size > 1024 * 1024) {
+            message.error('文件大小不能超过 1MB');
+            return;
+        }
+
+        setUploadChapterFile(file);
+    };
+
+    const handleDownloadChapter = () => {
+        if (!selectedChapter) return;
+        const blob = new Blob([selectedChapter.content], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${selectedChapter.title}.txt`;
+        link.click();
+        URL.revokeObjectURL(url);
+    };
+
+    // 监听 Tab 切换加载数据
+    useEffect(() => {
+        if (activeTab === 'SOURCE') {
+            fetchChapters();
+        }
+    }, [activeTab, projectId]);
 
     // 处理文件上传
     const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -617,44 +782,109 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                  return (
                     <div className="h-full flex gap-0 animate-in fade-in slide-in-from-bottom-4 duration-300 overflow-hidden bg-slate-950">
                         {/* LEFT COLUMN: Chapter List */}
-                        <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-2xl">
-                            <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/50 backdrop-blur">
-                                <h3 className="text-lg font-black text-white tracking-tight flex items-center gap-2">
-                                    章节目录
-                                    <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full border border-slate-700 font-mono">共 {mockChapters.length} 章</span>
-                                </h3>
-                                <div className="flex gap-2">
-                                    <Search size={16} className="text-slate-500 hover:text-white cursor-pointer transition-colors" />
+                        <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-2xl relative">
+                            <div className="p-5 border-b border-slate-800 flex flex-col gap-4 bg-slate-900/50 backdrop-blur">
+                                <div className="flex items-center justify-between">
+                                    <h3 className="text-lg font-black text-white tracking-tight flex items-center gap-2 truncate pr-2">
+                                        {project.name}
+                                        <span className="bg-slate-800 border border-slate-700 text-xs px-2 py-0.5 rounded-full text-slate-400 font-mono shrink-0">
+                                            {totalChapters} 章
+                                        </span>
+                                    </h3>
+                                </div>
+                                <div className="relative">
+                                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                                    <input
+                                        type="text"
+                                        placeholder="搜索章节名称..."
+                                        value={keyword}
+                                        onChange={(e) => setKeyword(e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-4 py-1.5 text-xs text-slate-300 focus:ring-1 focus:ring-cyan-500/50 outline-none transition-all"
+                                    />
+                                    {keyword && (
+                                        <X
+                                            size={14}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white cursor-pointer"
+                                            onClick={() => setKeyword('')}
+                                        />
+                                    )}
                                 </div>
                             </div>
-                            
-                            <div className="flex-1 overflow-y-auto divide-y divide-slate-800/30 no-scrollbar pb-16">
-                                {mockChapters.map(ch => (
-                                    <div 
-                                        key={ch.id} 
-                                        onClick={() => setSelectedChapterId(ch.id)}
-                                        className={`px-5 py-4 cursor-pointer transition-all flex flex-col gap-2 group ${
-                                            selectedChapterId === ch.id 
-                                            ? 'bg-cyan-500/10 border-l-4 border-l-cyan-500 shadow-inner' 
-                                            : 'hover:bg-slate-800/50 border-l-4 border-l-transparent'
-                                        }`}
-                                    >
-                                        <div className="flex items-center justify-between">
-                                            <div className={`text-[10px] font-black uppercase tracking-widest transition-colors ${selectedChapterId === ch.id ? 'text-cyan-400' : 'text-slate-500'}`}>
-                                                Chapter {String(ch.id).padStart(2, '0')}
-                                            </div>
-                                            <StatusTag status={ch.status as any === 'processed' ? 'processed' : 'unprocessed'} />
-                                        </div>
-                                        <div className={`text-sm truncate ${selectedChapterId === ch.id ? 'text-white font-bold' : 'text-slate-400'}`}>
-                                            {ch.title}
-                                        </div>
+
+                            <div
+                                className="flex-1 overflow-y-auto divide-y divide-slate-800/30 no-scrollbar pb-16"
+                                onScroll={handleScroll}
+                            >
+                                {loadingChapters && chapters.length === 0 ? (
+                                    <div className="flex flex-col items-center justify-center h-40 gap-3">
+                                        <Loader2 size={20} className="animate-spin text-cyan-500" />
+                                        <span className="text-[10px] text-slate-500 uppercase tracking-widest font-mono">Loading...</span>
                                     </div>
-                                ))}
+                                ) : chapters.length === 0 ? (
+                                    <div className="flex flex-col items-center justify-center h-40 text-slate-600 px-6 text-center">
+                                        <p className="text-xs">{keyword ? '未搜索到相关章节' : '暂无章节数据，请先在配置页执行“智能拆分”'}</p>
+                                    </div>
+                                ) : (
+                                    <>
+                                        {chapters.map(ch => (
+                                            <div
+                                                key={ch.id}
+                                                onClick={() => setSelectedChapter(ch)}
+                                                className={`px-5 py-3 cursor-pointer transition-all flex flex-col gap-1 group relative ${
+                                                    selectedChapter?.id === ch.id
+                                                    ? 'bg-cyan-500/10 border-l-4 border-l-cyan-500 shadow-inner'
+                                                    : 'hover:bg-slate-800/50 border-l-4 border-l-transparent'
+                                                }`}
+                                            >
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-2">
+                                                        {/* Glowing indicator light */}
+                                                        <div className={`w-2 h-2 rounded-full transition-all ${
+                                                            selectedChapter?.id === ch.id
+                                                            ? 'bg-cyan-500 shadow-[0_0_8px_2px_rgba(6,182,212,0.6)]'
+                                                            : 'bg-slate-600'
+                                                        }`} />
+                                                        <div className={`text-[10px] font-black uppercase tracking-widest transition-colors ${selectedChapter?.id === ch.id ? 'text-cyan-400' : 'text-slate-500'}`}>
+                                                            Chapter {String(ch.chapter_number).padStart(2, '0')}
+                                                        </div>
+                                                        <button
+                                                            onClick={(e) => handleDeleteChapter(e, String(ch.id))}
+                                                            className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-red-400 transition-all"
+                                                        >
+                                                            <Trash2 size={12} />
+                                                        </button>
+                                                    </div>
+                                                    <div className="mr-2.5">
+                                                        <StatusTag status={ch.status === 'processed' ? 'processed' : 'unprocessed'} />
+                                                    </div>
+                                                </div>
+                                                <div className={`text-xs truncate ${selectedChapter?.id === ch.id ? 'text-white font-bold' : 'text-slate-400'}`}>
+                                                    {ch.title}
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {loadingChapters && (
+                                            <div className="p-4 flex justify-center">
+                                                <Loader2 size={16} className="animate-spin text-cyan-500/50" />
+                                            </div>
+                                        )}
+                                    </>
+                                )}
                             </div>
 
-                            {/* FIXED FOOTER: Import Button (Reduced height) */}
-                            <div className="absolute bottom-0 left-0 w-80 p-2.5 bg-slate-900/80 border-t border-slate-800 backdrop-blur-md flex justify-center">
-                                <button className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800/40 hover:bg-slate-800 text-slate-500 hover:text-slate-300 rounded-lg text-[10px] transition-all border border-slate-800 hover:border-slate-700 active:scale-95 group shadow-sm">
+                            {/* FIXED FOOTER: Import Button */}
+                            <div className="absolute bottom-0 left-0 w-full p-2.5 bg-slate-900/80 border-t border-slate-800 backdrop-blur-md flex justify-center">
+                                <input
+                                    type="file"
+                                    ref={chapterFileInputRef}
+                                    onChange={handleChapterFileSelect}
+                                    className="hidden"
+                                    accept=".txt"
+                                />
+                                <button
+                                    onClick={triggerChapterFileUpload}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800/40 hover:bg-slate-800 text-slate-500 hover:text-slate-300 rounded-lg text-[10px] transition-all border border-slate-800 hover:border-slate-700 active:scale-95 group shadow-sm"
+                                >
                                     <Upload size={12} className="group-hover:-translate-y-0.5 transition-transform" />
                                     导入章节 (TXT)
                                 </button>
@@ -670,54 +900,55 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                         <BookOpen size={20} className="text-cyan-400" />
                                     </div>
                                     <div className="flex items-center gap-3 min-w-0">
-                                        <h2 className="text-sm font-bold text-white tracking-widest uppercase truncate max-w-[400px]">{selectedChapter.title}</h2>
-                                        <span className="text-[10px] text-slate-600 font-mono shrink-0 pt-0.5">STAT: 2,450 WORDS</span>
+                                        <h2 className="text-sm font-bold text-white tracking-widest uppercase truncate max-w-[400px]">
+                                            {selectedChapter ? selectedChapter.title : '请选择章节'}
+                                        </h2>
+                                        {selectedChapter && (
+                                            <span className="text-[10px] text-slate-600 font-mono shrink-0 pt-0.5 uppercase">
+                                                Stat: {selectedChapter.word_count || 0} Words
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-4">
-                                    <div className="flex items-center gap-2">
-                                        <StatusTag status={selectedChapter.status as any === 'processed' ? 'processed' : 'unprocessed'} />
-                                        
-                                        {selectedChapter.status === 'processed' && (
-                                            <>
+                                    {selectedChapter && (
+                                        <div className="flex items-center gap-2">
+                                            <StatusTag status={selectedChapter.status === 'processed' ? 'processed' : 'unprocessed'} />
+                                            {selectedChapter.status === 'processed' && (
                                                 <button className="flex items-center gap-1.5 px-3 py-2 text-slate-400 hover:text-indigo-400 text-xs font-bold transition-colors">
-                                                    <Eye size={14} /> 查看拆解结果
+                                                    <Eye size={14} /> 查看结果
                                                 </button>
-                                                <button className="flex items-center gap-1.5 px-3 py-2 text-slate-400 hover:text-white text-xs font-bold transition-colors">
-                                                    <RotateCcw size={14} /> 重新拆解
-                                                </button>
-                                            </>
-                                        )}
-                                        
-                                        {!selectedChapter.status || selectedChapter.status === 'unprocessed' && (
-                                            <button className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-lg shadow-lg shadow-cyan-900/20 transition-all active:scale-95">
-                                                <SplitSquareVertical size={14} /> 立即拆解章节
-                                            </button>
-                                        )}
-                                    </div>
-                                    
+                                            )}
+                                        </div>
+                                    )}
                                     <div className="w-px h-4 bg-slate-800"></div>
-                                    <button className="p-2 text-slate-500 hover:text-white transition-all" title="下载原文"><Download size={16}/></button>
+                                    <button
+                                        onClick={handleDownloadChapter}
+                                        disabled={!selectedChapter}
+                                        className="p-2 text-slate-500 hover:text-white transition-all disabled:opacity-30"
+                                        title="下载原文"
+                                    >
+                                        <Download size={16}/>
+                                    </button>
                                 </div>
                             </div>
-                            
+
                             {/* Content Display */}
-                            <div className="flex-1 overflow-y-auto p-0 md:p-10 bg-slate-950/40 font-sans custom-scrollbar">
-                                <div className="max-w-4xl mx-auto bg-slate-900 border border-slate-800 shadow-2xl min-h-full p-10 md:p-20 rounded-xl md:rounded-3xl relative">
-                                    <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-transparent via-cyan-500/30 to-transparent opacity-50" />
-                                    
-                                    <article className="prose prose-invert prose-slate max-w-none prose-p:text-slate-300 prose-p:leading-loose prose-p:text-lg prose-headings:text-white">
-                                        <h1 className="text-4xl font-black mb-16 text-center border-b border-slate-800/50 pb-10 tracking-tight">{selectedChapter.title}</h1>
-                                        <div className="whitespace-pre-line text-slate-300 drop-shadow-sm">
-                                            {selectedChapter.content}
+                            <div className="flex-1 overflow-y-auto p-0 md:p-8 font-mono text-sm leading-relaxed text-slate-300 bg-slate-950/40">
+                                <div className="max-w-3xl mx-auto bg-slate-900 border border-slate-800 shadow-2xl min-h-full px-5 py-8 md:py-12 rounded-xl md:rounded-2xl relative">
+                                    {selectedChapter ? (
+                                        <article className="prose prose-invert prose-slate max-w-none prose-p:text-slate-300 prose-p:leading-relaxed prose-headings:text-white">
+                                            <h1 className="text-2xl font-bold mb-8 text-center border-b border-slate-800/50 pb-6 tracking-tight">{selectedChapter.title}</h1>
+                                            <div className="whitespace-pre-line text-slate-300 selection:bg-cyan-500/30 text-sm leading-loose">
+                                                {selectedChapter.content || '章节内容为空'}
+                                            </div>
+                                        </article>
+                                    ) : (
+                                        <div className="flex flex-col items-center justify-center h-full text-slate-700 gap-4 mt-20 opacity-30">
+                                            <BookText size={64} />
+                                            <p className="text-sm tracking-widest uppercase font-black">Select a chapter to read</p>
                                         </div>
-                                    </article>
-                                    
-                                    <div className="mt-24 flex justify-center opacity-10">
-                                        <div className="flex gap-4">
-                                            {[1,2,3,4,5].map(i => <div key={i} className="w-2 h-2 rounded-full bg-slate-400" />)}
-                                        </div>
-                                    </div>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -1125,8 +1356,8 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             {/* Modal */}
             <AnimatePresence>
                 {selectedAgent && (
-                    <AgentConfigModal 
-                        agent={selectedAgent} 
+                    <AgentConfigModal
+                        agent={selectedAgent}
                         onClose={() => setSelectedAgent(null)}
                         onSave={(updated) => {
                             setAgents(agents.map(a => a.id === updated.id ? updated : a));
@@ -1135,6 +1366,127 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     />
                 )}
             </AnimatePresence>
+
+            {/* Chapter Import Modal */}
+            <Modal
+                open={isUploadModalOpen}
+                onCancel={() => {
+                    setIsUploadModalOpen(false);
+                    setUploadChapterFile(null);
+                }}
+                onOk={handleUploadChapter}
+                title={
+                    <div className="flex items-center gap-2 text-white">
+                        <Upload size={18} className="text-cyan-400" />
+                        <span>导入章节</span>
+                    </div>
+                }
+                okText={uploading ? '上传中...' : '确认导入'}
+                cancelText="取消"
+                confirmLoading={uploading}
+                centered
+                width={420}
+                closeIcon={<X size={18} className="text-slate-500 hover:text-white transition-colors" />}
+                className="dark-modal"
+                styles={{
+                    mask: { backgroundColor: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(4px)' },
+                    content: {
+                        backgroundColor: '#0f172a',
+                        border: '1px solid #334155',
+                        borderRadius: '16px',
+                        padding: '0',
+                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 40px rgba(6, 182, 212, 0.1)'
+                    },
+                    header: {
+                        backgroundColor: '#0f172a',
+                        borderBottom: '1px solid #1e293b',
+                        padding: '16px 24px',
+                        borderRadius: '16px 16px 0 0'
+                    },
+                    body: {
+                        backgroundColor: '#0f172a',
+                        padding: '20px 24px'
+                    },
+                    footer: {
+                        backgroundColor: '#0f172a',
+                        borderTop: '1px solid #1e293b',
+                        padding: '16px 24px',
+                        borderRadius: '0 0 16px 16px'
+                    }
+                }}
+                okButtonProps={{
+                    style: {
+                        backgroundColor: '#0891b2',
+                        borderColor: '#0891b2',
+                        fontWeight: 600,
+                        boxShadow: '0 0 20px rgba(8, 145, 178, 0.3)'
+                    },
+                    disabled: !uploadChapterFile
+                }}
+                cancelButtonProps={{
+                    style: {
+                        backgroundColor: '#1e293b',
+                        borderColor: '#334155',
+                        color: '#94a3b8',
+                        fontWeight: 500
+                    }
+                }}
+            >
+                <div className="space-y-5">
+                    {/* 提示信息 */}
+                    <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4">
+                        <p className="text-sm text-slate-300 leading-relaxed">
+                            导入的章节将自动追加到当前选择的章节
+                            {selectedChapter ? (
+                                <span className="inline-flex items-center mx-1.5 px-2.5 py-1 bg-cyan-500/10 text-cyan-400 rounded-lg border border-cyan-500/20 font-mono text-xs">
+                                    Chapter {String(selectedChapter.chapter_number).padStart(2, '0')} · {selectedChapter.title}
+                                </span>
+                            ) : (
+                                <span className="mx-1 text-amber-400">（请先选择章节）</span>
+                            )}
+                            后
+                        </p>
+                    </div>
+
+                    {/* 文件选择区域 */}
+                    <label className="block cursor-pointer">
+                        <div className={`flex flex-col items-center justify-center w-full h-36 border-2 border-dashed rounded-xl transition-all group ${
+                            uploadChapterFile
+                            ? 'border-cyan-500/50 bg-cyan-500/5'
+                            : 'border-slate-700 hover:border-cyan-500/50 bg-slate-800/30 hover:bg-slate-800/50'
+                        }`}>
+                            <input
+                                type="file"
+                                accept=".txt"
+                                onChange={handleModalFileSelect}
+                                className="hidden"
+                            />
+                            {uploadChapterFile ? (
+                                <div className="flex items-center gap-4 px-4">
+                                    <div className="w-12 h-12 rounded-xl bg-cyan-500/10 flex items-center justify-center border border-cyan-500/20">
+                                        <BookText size={24} className="text-cyan-400" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm text-white font-medium truncate">{uploadChapterFile.name}</p>
+                                        <p className="text-xs text-slate-500 mt-0.5">{(uploadChapterFile.size / 1024).toFixed(2)} KB</p>
+                                    </div>
+                                    <div className="text-[10px] text-cyan-400 bg-cyan-500/10 px-2 py-1 rounded-full border border-cyan-500/20">
+                                        已选择
+                                    </div>
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="w-14 h-14 rounded-full bg-slate-800 group-hover:bg-cyan-500/10 flex items-center justify-center transition-colors mb-3 border border-slate-700 group-hover:border-cyan-500/30">
+                                        <Upload size={24} className="text-slate-500 group-hover:text-cyan-400 transition-colors" />
+                                    </div>
+                                    <p className="text-sm text-slate-400 group-hover:text-slate-300 transition-colors font-medium">点击选择文件</p>
+                                    <p className="text-xs text-slate-600 mt-1.5">仅限 .txt 文件，最大 1MB</p>
+                                </>
+                            )}
+                        </div>
+                    </label>
+                </div>
+            </Modal>
         </div>
     );
 };

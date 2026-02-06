@@ -130,18 +130,39 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
 
           {/* User Profile */}
           <Dropdown
-            menu={{
-              items: [
-                { key: 'edit', label: '编辑资料', icon: <User size={14} />, onClick: () => message.info('编辑资料功能即将上线') },
-                { key: 'password', label: '修改密码', icon: <Lock size={14} />, onClick: () => message.info('修改密码功能即将上线') },
-                { type: 'divider' },
-                { key: 'logout', label: '退出登录', icon: <LogOut size={14} />, onClick: onLogout, danger: true },
-              ]
-            }}
+            dropdownRender={() => (
+              <div className="bg-slate-900/95 border border-slate-700/50 rounded-xl shadow-2xl backdrop-blur-xl p-1 w-48 mt-2 overflow-hidden animate-in fade-in zoom-in duration-200">
+                <button
+                  onClick={() => message.info('编辑资料功能即将上线')}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800/80 hover:text-white transition-colors rounded-lg text-left"
+                >
+                  <User size={14} className="text-slate-400" />
+                  <span>编辑资料</span>
+                </button>
+                <button
+                  onClick={() => message.info('修改密码功能即将上线')}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800/80 hover:text-white transition-colors rounded-lg text-left"
+                >
+                  <Lock size={14} className="text-slate-400" />
+                  <span>修改密码</span>
+                </button>
+                <div className="h-px bg-slate-800/60 my-1 mx-1" />
+                <button
+                  onClick={onLogout}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 transition-colors rounded-lg text-left"
+                >
+                  <LogOut size={14} />
+                  <span>退出登录</span>
+                </button>
+              </div>
+            )}
             placement="bottomRight"
             trigger={['click']}
           >
-            <div className="h-10 pl-1 pr-4 bg-slate-900/50 rounded-full flex items-center gap-3 cursor-pointer hover:border-cyan-500/50 hover:bg-slate-800/80 transition-all group">
+            <div className="h-10 pl-4 pr-1 bg-slate-900/50 rounded-full flex items-center gap-3 cursor-pointer hover:border-cyan-500/50 hover:bg-slate-800/80 transition-all group">
+              <span className="text-sm font-medium text-slate-300 group-hover:text-white transition-colors hidden md:block">
+                {user?.username}
+              </span>
               <div className="w-8 h-8 rounded-full border border-white/10 bg-slate-900 overflow-hidden shadow-inner group-hover:border-cyan-500/50 transition-colors">
                 <img
                   src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.username || 'Alex'}`}
@@ -149,9 +170,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
                   alt="avatar"
                 />
               </div>
-              <span className="text-sm font-medium text-slate-300 group-hover:text-white transition-colors hidden md:block">
-                {user?.username}
-              </span>
             </div>
           </Dropdown>
         </div>

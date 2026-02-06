@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_, func, delete, update, cast, String
 from pydantic import BaseModel, ConfigDict, field_validator
 from uuid import UUID
 
@@ -144,6 +144,29 @@ class LogResponse(BaseModel):
         from_attributes = True
 
 
+class ChapterResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    chapter_number: int
+    title: str
+    content: Optional[str] = None
+    word_count: int
+    status: Optional[str] = "unprocessed"
+
+    @field_validator('id', mode='before')
+    @classmethod
+    def validate_id(cls, v):
+        if isinstance(v, UUID):
+            return str(v)
+        return v
+
+
+class ChapterListResponse(BaseModel):
+    items: List[ChapterResponse]
+    total: int
+
+
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 async def create_project(
     project_data: ProjectCreate,
@@ -252,6 +275,164 @@ async def get_project_logs(
     )
     logs = logs_result.scalars().all()
     return logs
+
+
+@router.get("/{project_id}/chapters", response_model=ChapterListResponse)
+async def get_project_chapters(
+    project_id: str,
+    keyword: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取项目章节列表"""
+    # 验证项目归属
+    result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == current_user.id)
+    )
+    project = result.scalar_one_or_none()
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="项目不存在或无权访问"
+        )
+
+    # 构建基础查询
+    base_query = select(Chapter).where(Chapter.project_id == project_id)
+
+    # 关键字搜索
+    if keyword:
+        base_query = base_query.where(
+            or_(
+                Chapter.title.ilike(f"%{keyword}%"),
+                cast(Chapter.chapter_number, String).ilike(f"%{keyword}%")
+            )
+        )
+
+    # 计算总数
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    # 分页查询
+    chapters_result = await db.execute(
+        base_query.order_by(Chapter.chapter_number)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    items = chapters_result.scalars().all()
+
+    return {
+        "items": items,
+        "total": total
+    }
+
+
+@router.delete("/{project_id}/chapters/{chapter_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_chapter(
+    project_id: UUID,
+    chapter_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """删除指定章节"""
+    # 验证项目归属
+    result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == current_user.id)
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在或无权访问")
+
+    # 获取章节信息用于更新项目统计
+    chapter = await db.get(Chapter, chapter_id)
+    if not chapter or chapter.project_id != project_id:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    word_count = chapter.word_count
+
+    # 删除章节
+    await db.execute(delete(Chapter).where(Chapter.id == chapter_id))
+
+    # 更新项目统计
+    project.total_chapters -= 1
+    project.total_words -= word_count
+
+    await db.commit()
+    return None
+
+
+@router.post("/{project_id}/chapters/upload")
+async def upload_chapter(
+    project_id: UUID,
+    file: UploadFile = File(...),
+    prev_chapter_id: Optional[UUID] = Form(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """上传并插入章节"""
+    # 1. 验证项目
+    result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == current_user.id)
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在或无权访问")
+
+    # 2. 读取内容
+    try:
+        content = (await file.read()).decode("utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"文件读取失败: {str(e)}")
+
+    word_count = len(content)
+
+    # 3. 确定章节编号
+    if prev_chapter_id:
+        prev_chapter = await db.get(Chapter, prev_chapter_id)
+        if not prev_chapter or prev_chapter.project_id != project_id:
+            raise HTTPException(status_code=404, detail="前置章节不存在")
+
+        new_chapter_number = prev_chapter.chapter_number + 1
+
+        # 将后续章节编号后移
+        await db.execute(
+            update(Chapter)
+            .where(Chapter.project_id == project_id, Chapter.chapter_number >= new_chapter_number)
+            .values(chapter_number=Chapter.chapter_number + 1)
+        )
+    else:
+        # 追加到末尾
+        max_num_result = await db.execute(
+            select(func.max(Chapter.chapter_number)).where(Chapter.project_id == project_id)
+        )
+        max_num = max_num_result.scalar() or 0
+        new_chapter_number = max_num + 1
+
+    # 4. 创建新章节
+    new_chapter = Chapter(
+        project_id=project_id,
+        chapter_number=new_chapter_number,
+        title=file.filename.rsplit('.', 1)[0],
+        content=content,
+        word_count=word_count
+    )
+    db.add(new_chapter)
+
+    # 5. 更新项目统计
+    project.total_chapters += 1
+    project.total_words += word_count
+
+    await db.commit()
+    await db.refresh(new_chapter)
+
+    return {
+        "id": str(new_chapter.id),
+        "chapter_number": new_chapter.chapter_number,
+        "title": new_chapter.title
+    }
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)
@@ -397,7 +578,6 @@ async def split_chapters(
 
     # 4. 清理旧数据并保存新章节
     # 清理该项目的所有旧章节和旧批次，确保状态重置
-    from sqlalchemy import delete
     await db.execute(delete(Batch).where(Batch.project_id == project_id))
     await db.execute(delete(Chapter).where(Chapter.project_id == project_id))
 
@@ -466,7 +646,6 @@ async def start_project(
         raise HTTPException(status_code=400, detail="项目没有章节，请先拆分")
 
     # 2. 清理旧批次 (级联删除会处理关联)
-    from sqlalchemy import delete
     await db.execute(delete(Batch).where(Batch.project_id == project_id))
 
     # 3. 执行分批逻辑
@@ -497,7 +676,6 @@ async def start_project(
         # 注意：这里需要批量更新，但为了简单逻辑，先用循环（性能优化点）
         # 实际章节ID列表
         chapter_ids = [c['id'] for c in b_data['chapters']]
-        from sqlalchemy import update
         await db.execute(
             update(Chapter).where(Chapter.id.in_(chapter_ids)).values(batch_id=new_batch.id)
         )
