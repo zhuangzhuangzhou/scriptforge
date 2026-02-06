@@ -21,6 +21,7 @@ from app.utils.file_parser import get_parser
 from app.utils.chapter_splitter import ChapterSplitter
 from app.utils.batch_divider import BatchDivider
 from app.core.quota import QuotaService
+from app.tasks.batch_tasks import create_batches_task
 
 router = APIRouter()
 
@@ -232,13 +233,20 @@ async def get_project(
     return project
 
 
-@router.get("/{project_id}/batches", response_model=List[BatchResponse])
+class BatchListResponse(BaseModel):
+    items: List[BatchResponse]
+    total: int
+
+
+@router.get("/{project_id}/batches", response_model=BatchListResponse)
 async def get_project_batches(
     project_id: str,
+    page: int = 1,
+    page_size: int = 20,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取项目批次列表"""
+    """获取项目批次列表（支持分页）"""
     # 验证项目归属
     result = await db.execute(
         select(Project).where(Project.id == project_id, Project.user_id == current_user.id)
@@ -251,11 +259,26 @@ async def get_project_batches(
             detail="项目不存在"
         )
 
+    # 构建基础查询
+    base_query = select(Batch).where(Batch.project_id == project_id)
+
+    # 计算总数
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    # 分页查询
     batches_result = await db.execute(
-        select(Batch).where(Batch.project_id == project_id).order_by(Batch.batch_number)
+        base_query.order_by(Batch.batch_number)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     )
     batches = batches_result.scalars().all()
-    return batches
+
+    return {
+        "items": batches,
+        "total": total
+    }
 
 
 @router.get("/{project_id}/logs", response_model=List[LogResponse])
@@ -657,6 +680,9 @@ async def start_project(
 
     await db.commit()
     await db.refresh(project)
+
+    # 触发异步分批任务
+    create_batches_task.delay(str(project_id))
 
     return {"status": "parsing", "message": "项目已启动"}
 

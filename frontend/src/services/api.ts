@@ -132,12 +132,19 @@ export const projectApi = {
     return api.post(`/projects/${id}/start`);
   },
 
-  getBatches: async (projectId: string) => {
+  getBatches: async (projectId: string, page: number = 1, pageSize: number = 20) => {
     if (USE_MOCK) {
       await delay(300);
-      return { data: [] };
+      return {
+        data: {
+          items: [],
+          total: 0
+        }
+      };
     }
-    const response = await api.get(`/projects/${projectId}/batches`);
+    const response = await api.get(`/projects/${projectId}/batches`, {
+      params: { page, page_size: pageSize }
+    });
     return { data: response.data };
   },
 

@@ -190,111 +190,124 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const [breakdownQueue, setBreakdownQueue] = useState<string[]>([]);
     const [currentBreakdownIndex, setCurrentBreakdownIndex] = useState(0);
 
-    const getStatusText = (status: string) => {
-        const statusMap: Record<string, string> = {
-            'draft': '草稿',
-            'uploaded': '已上传',
-            'ready': '就绪',
-            'parsing': '解析中',
-            'scripting': '生成中',
-            'completed': '已完成',
-            'failed': '失败'
-        };
-        return statusMap[status] || status;
-    };
+    // PLOT Pagination State
+    const [batchPage, setBatchPage] = useState(1);
+    const [batchTotal, setBatchTotal] = useState(0);
+    const [batchHasMore, setBatchHasMore] = useState(true);
+    const [loadingBatches, setLoadingBatches] = useState(false);
 
-    // 获取项目数据
-    useEffect(() => {
-        const fetchProject = async () => {
-            if (!projectId) {
-                navigate('/dashboard');
-                return;
-            }
-            try {
-                setLoading(true);
-                const res = await projectApi.getProject(projectId);
-                if (res.data) {
-                    setProject(res.data);
-                    // 初始化表单数据
-                    setFormData({
-                        name: res.data.name || '',
-                        novel_type: res.data.novel_type || '悬疑/惊悚',
-                        description: res.data.description || '',
-                        batch_size: res.data.batch_size || 5,
-                        chapter_split_rule: res.data.chapter_split_rule || 'auto'
-                    });
-                } else {
-                    message.error('项目不存在');
-                    navigate('/dashboard');
-                }
-            } catch (err) {
-                console.error('获取项目失败:', err);
-                message.error('获取项目失败');
-                navigate('/dashboard');
-            } finally {
-                setLoading(false);
-            }
-        };
-        fetchProject();
-    }, [projectId, navigate]);
-
-    // 保存配置
-    const handleSaveConfig = async () => {
+    // 创建批次并获取列表
+    const createBatchesAndFetch = async () => {
         if (!projectId) return;
-        setSaving(true);
+        setIsCreatingBatches(true);
         try {
-            const res = await projectApi.updateProject(projectId, formData);
-            if (res.data) {
-                setProject(res.data);
-                message.success('配置已保存');
-            }
+            // 调用后端创建批次接口（幂等）
+            await projectApi.createBatches(projectId);
+            // 创建完成后获取列表
+            await fetchBatches(1, false);
         } catch (err) {
-            console.error('保存失败:', err);
-            message.error('保存失败，请重试');
+            console.error('创建批次失败:', err);
+            message.error('创建批次失败');
         } finally {
-            setSaving(false);
+            setIsCreatingBatches(false);
         }
     };
 
-    // 获取章节数据
-    const fetchChapters = async (pageNum = 1, append = false, currentKeyword = keyword) => {
+    // 获取批次列表
+    const fetchBatches = async (pageNum = 1, append = false) => {
+        if (!projectId) return;
+        setLoadingBatches(true);
+        try {
+            const res = await projectApi.getBatches(projectId, pageNum, 20);
+            const newItems = res.data.items || [];
+            const total = res.data.total || 0;
+
+            setBatchTotal(total);
+
+            if (append) {
+                setBatches(prev => [...prev, ...newItems]);
+            } else {
+                setBatches(newItems);
+                if (newItems.length > 0 && !selectedBatch && pageNum === 1) {
+                    setSelectedBatch(newItems[0]);
+                }
+            }
+
+            setBatchHasMore((pageNum * 20) < total);
+
+        } catch (err) {
+            console.error('获取批次失败:', err);
+            message.error('获取批次列表失败');
+        } finally {
+            setLoadingBatches(false);
+        }
+    };
+
+    // 获取项目详情
+    const fetchProject = async () => {
+        if (!projectId) return;
+        setLoading(true);
+        try {
+            const res = await projectApi.getProject(projectId);
+            setProject(res.data);
+            setFormData({
+                name: res.data.name || '',
+                novel_type: res.data.type || '悬疑/惊悚',
+                description: res.data.description || '',
+                batch_size: res.data.batch_size || 5,
+                chapter_split_rule: 'auto',
+                breakdown_model: 'DeepNarrative-Pro',
+                script_model: 'Gemini-1.5-Pro'
+            });
+            setTotalChapters(res.data.total_chapters || 0);
+        } catch (err) {
+            console.error('获取项目失败:', err);
+            message.error('加载项目失败');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // 获取章节列表
+    const fetchChapters = async (pageNum = 1, append = false) => {
         if (!projectId) return;
         setLoadingChapters(true);
         try {
-            const res = await projectApi.getChapters(projectId, pageNum, PAGE_SIZE, currentKeyword);
-            if (res.data) {
-                const newItems = res.data.items || [];
-                const total = res.data.total || 0;
+            const res = await projectApi.getChapters(projectId, pageNum, 20, keyword);
+            const newItems = res.data.items || [];
 
-                setTotalChapters(total);
-                if (append) {
-                    setChapters(prev => [...prev, ...newItems]);
-                } else {
-                    setChapters(newItems);
-                }
-
-                setHasMore((append ? chapters.length : 0) + newItems.length < total);
-
-                if (newItems.length > 0 && !selectedChapter && !append) {
-                    setSelectedChapter(newItems[0]);
-                }
+            if (append) {
+                setChapters(prev => [...prev, ...newItems]);
+            } else {
+                setChapters(newItems);
             }
+            setHasMore((pageNum * 20) < (res.data.total || 0));
+            setTotalChapters(res.data.total || 0);
         } catch (err) {
-            console.error('获取章节失败:', err);
+            message.error('获取章节列表失败');
         } finally {
             setLoadingChapters(false);
         }
     };
 
-    // 搜索防抖
-    useEffect(() => {
-        if (activeTab !== 'SOURCE') return;
-        const timer = setTimeout(() => {
-            setPage(1);
-            fetchChapters(1, false, keyword);
-        }, 500);
-        return () => clearTimeout(timer);
-    }, [keyword, activeTab]);
+    const handleSaveConfig = async () => {
+        if (!projectId) return;
+        setSaving(true);
+        try {
+            await projectApi.updateProject(projectId, {
+                name: formData.name,
+                novel_type: formData.novel_type,
+                description: formData.description,
+                batch_size: formData.batch_size
+            });
+            message.success('保存成功');
+            fetchProject();
+        } catch (err) {
+            message.error('保存失败');
+        } finally {
+            setSaving(false);
+        }
+    };
 
     const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
         const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
@@ -302,6 +315,55 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             const nextPage = page + 1;
             setPage(nextPage);
             fetchChapters(nextPage, true);
+        }
+    };
+
+    const getStatusText = (status: string) => {
+         const statusMap: Record<string, string> = {
+            'draft': '草稿',
+            'uploaded': '已上传',
+            'ready': '就绪',
+            'parsing': '拆解中',
+            'scripting': '生成中',
+            'completed': '完成'
+        };
+        return statusMap[status] || status;
+    };
+
+    // 初始化加载
+    useEffect(() => {
+        fetchProject();
+    }, [projectId]);
+
+    // 搜索监听
+    useEffect(() => {
+        if (activeTab === 'SOURCE') {
+            setPage(1);
+            fetchChapters(1, false);
+        }
+    }, [keyword]);
+
+    // 监听 Tab 切换加载数据
+    useEffect(() => {
+        if (activeTab === 'SOURCE') {
+            fetchChapters();
+        }
+        if (activeTab === 'PLOT') {
+            // 直接获取批次列表，分批已在启动时异步触发
+            setBatchPage(1);
+            setBatchHasMore(true);
+            setBatches([]);
+            fetchBatches(1, false);
+        }
+    }, [activeTab, projectId]);
+
+    // 滚动加载
+    const handleBatchScroll = (e: React.UIEvent<HTMLDivElement>) => {
+        const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+        if (scrollHeight - scrollTop <= clientHeight + 50 && !loadingBatches && batchHasMore) {
+            const nextPage = batchPage + 1;
+            setBatchPage(nextPage);
+            fetchBatches(nextPage, true);
         }
     };
 
@@ -415,44 +477,6 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         }
     }, [activeTab, projectId]);
 
-    // 创建批次并获取列表
-    const createBatchesAndFetch = async () => {
-        if (!projectId) return;
-        setIsCreatingBatches(true);
-        try {
-            // 调用幂等接口创建批次
-            await projectApi.createBatches(projectId);
-            // 获取批次列表
-            await fetchBatches();
-        } catch (err) {
-            console.error('Failed to create batches:', err);
-        } finally {
-            setIsCreatingBatches(false);
-        }
-    };
-
-    // 监听批次选择
-    useEffect(() => {
-        if (selectedBatch && selectedBatch.breakdown_status === 'completed') {
-            fetchBreakdownResults(selectedBatch.id);
-        } else {
-            setBreakdownResult(null);
-        }
-    }, [selectedBatch]);
-
-    // 获取批次列表
-    const fetchBatches = async () => {
-        if (!projectId) return;
-        try {
-            const res = await projectApi.getBatches(projectId);
-            setBatches(res.data || []);
-            if (res.data?.length > 0 && !selectedBatch) {
-                setSelectedBatch(res.data[0]);
-            }
-        } catch (err) {
-            console.error('Failed to fetch batches:', err);
-        }
-    };
 
     // 获取拆解结果
     const fetchBreakdownResults = async (batchId: string) => {
@@ -1296,20 +1320,21 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     <div className="h-full flex gap-0 animate-in fade-in slide-in-from-bottom-4 duration-300 overflow-hidden bg-slate-950">
                         {/* LEFT COLUMN: Batch List */}
                         <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-2xl">
-                            <div className="flex-1 overflow-y-auto divide-y divide-slate-800/30 no-scrollbar">
+                            <div className="flex-1 overflow-y-auto divide-y divide-slate-800/30 no-scrollbar" onScroll={handleBatchScroll}>
                                 {isCreatingBatches ? (
                                     <div className="flex flex-col items-center justify-center h-40 gap-3">
                                         <Loader2 size={20} className="animate-spin text-cyan-500" />
                                         <span className="text-[10px] text-slate-500 uppercase tracking-widest font-mono">创建批次中...</span>
                                     </div>
-                                ) : batches.length === 0 ? (
+                                ) : batches.length === 0 && !loadingBatches ? (
                                     <div className="flex flex-col items-center justify-center h-40 text-slate-600 px-6 text-center">
                                         <Layers size={32} className="mb-3 opacity-30" />
                                         <p className="text-xs">暂无批次数据</p>
                                         <p className="text-[10px] text-slate-700 mt-1">请先在配置页启动项目</p>
                                     </div>
                                 ) : (
-                                    batches.map(batch => (
+                                    <>
+                                    {batches.map(batch => (
                                         <div
                                             key={batch.id}
                                             onClick={() => setSelectedBatch(batch)}
@@ -1363,7 +1388,13 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                                 </div>
                                             )}
                                         </div>
-                                    ))
+                                    ))}
+                                    {loadingBatches && (
+                                        <div className="p-4 flex justify-center">
+                                            <Loader2 size={16} className="animate-spin text-cyan-500/50" />
+                                        </div>
+                                    )}
+                                    </>
                                 )}
                             </div>
                         </div>
