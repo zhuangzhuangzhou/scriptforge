@@ -6,14 +6,14 @@ import {
   Plus, Terminal, CheckCircle2, Eye, LayoutTemplate,
   BookText, Save, Sparkles, Loader2, ThumbsUp, FileCheck, Search, X, Trash2, BookOpen,
   Hash, Type, Sliders, Upload, Database, SplitSquareVertical,
-  CircleDashed, RotateCcw
+  CircleDashed, RotateCcw, PlayCircle, FastForward, Repeat, Zap
 } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
 import ConsoleLogger, { LogEntry } from '../../components/ConsoleLogger';
 import AICopilot from '../../components/AICopilot';
 import AgentConfigModal from '../../components/modals/AgentConfigModal';
-import { UserTier } from '../../types';
-import { projectApi } from '../../services/api';
+import { UserTier, Batch, PlotBreakdown } from '../../types';
+import { projectApi, breakdownApi } from '../../services/api';
 import { message, Modal } from 'antd';
 
 interface ProjectWorkspaceProps {
@@ -38,13 +38,6 @@ const mockChapters = Array.from({ length: 45 }, (_, i) => ({
     status: i < 15 ? 'processed' : 'unprocessed' 
 }));
 
-const mockPlots = [
-    { id: 1, batch: 1, title: '第一集：暗流涌动', summary: '主人公发现档案室的异常，初步接触核心谜题。', conflicts: ['档案缺失', '上级施压'], hooks: '发现神秘纸条', tension: 75 },
-    { id: 2, batch: 1, title: '第二集：初次交锋', summary: '反派登场，主人公在调查过程中遭遇第一次阻拦。', conflicts: ['车辆跟踪', '证人失踪'], hooks: '目击者死亡', tension: 85 },
-    { id: 3, batch: 1, title: '第三集：迷雾重重', summary: '线索指向了十年前的旧案，所有人都开始变得可疑。', conflicts: ['信任危机', '虚假线索'], hooks: '老照片', tension: 65 },
-    { id: 4, batch: 2, title: '第四集：绝地反击', summary: '主角团队陷入陷阱，必须在有限时间内找到出路。', conflicts: ['时间紧迫', '内部叛徒'], hooks: '定时炸弹', tension: 90 },
-    { id: 5, batch: 2, title: '第五集：黎明之前', summary: '最终决战前的宁静，真相即将大白。', conflicts: ['黎明前的黑暗', '最后的抉择'], hooks: '录音笔', tension: 80 },
-];
 
 const mockEpisodes = [
     {
@@ -184,6 +177,18 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
     const [uploadChapterFile, setUploadChapterFile] = useState<File | null>(null);
     const PAGE_SIZE = 20;
+
+    // PLOT Tab State
+    const [batches, setBatches] = useState<Batch[]>([]);
+    const [selectedBatch, setSelectedBatch] = useState<Batch | null>(null);
+    const [breakdownResult, setBreakdownResult] = useState<PlotBreakdown | null>(null);
+    const [breakdownLoading, setBreakdownLoading] = useState(false);
+    const [breakdownTaskId, setBreakdownTaskId] = useState<string | null>(null);
+    const [breakdownProgress, setBreakdownProgress] = useState(0);
+    const [isCreatingBatches, setIsCreatingBatches] = useState(false);
+    const [isAllBreakdownRunning, setIsAllBreakdownRunning] = useState(false);
+    const [breakdownQueue, setBreakdownQueue] = useState<string[]>([]);
+    const [currentBreakdownIndex, setCurrentBreakdownIndex] = useState(0);
 
     const getStatusText = (status: string) => {
         const statusMap: Record<string, string> = {
@@ -404,7 +409,274 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         if (activeTab === 'SOURCE') {
             fetchChapters();
         }
+        if (activeTab === 'PLOT') {
+            // 进入 PLOT 页面时，先创建批次（幂等），再获取批次列表
+            createBatchesAndFetch();
+        }
     }, [activeTab, projectId]);
+
+    // 创建批次并获取列表
+    const createBatchesAndFetch = async () => {
+        if (!projectId) return;
+        setIsCreatingBatches(true);
+        try {
+            // 调用幂等接口创建批次
+            await projectApi.createBatches(projectId);
+            // 获取批次列表
+            await fetchBatches();
+        } catch (err) {
+            console.error('Failed to create batches:', err);
+        } finally {
+            setIsCreatingBatches(false);
+        }
+    };
+
+    // 监听批次选择
+    useEffect(() => {
+        if (selectedBatch && selectedBatch.breakdown_status === 'completed') {
+            fetchBreakdownResults(selectedBatch.id);
+        } else {
+            setBreakdownResult(null);
+        }
+    }, [selectedBatch]);
+
+    // 获取批次列表
+    const fetchBatches = async () => {
+        if (!projectId) return;
+        try {
+            const res = await projectApi.getBatches(projectId);
+            setBatches(res.data || []);
+            if (res.data?.length > 0 && !selectedBatch) {
+                setSelectedBatch(res.data[0]);
+            }
+        } catch (err) {
+            console.error('Failed to fetch batches:', err);
+        }
+    };
+
+    // 获取拆解结果
+    const fetchBreakdownResults = async (batchId: string) => {
+        setBreakdownLoading(true);
+        try {
+            const res = await breakdownApi.getBreakdownResults(batchId);
+            setBreakdownResult(res.data);
+        } catch (err) {
+            setBreakdownResult(null);
+        } finally {
+            setBreakdownLoading(false);
+        }
+    };
+
+    // 启动拆解任务
+    const handleStartBreakdown = async (batchId: string) => {
+        try {
+            // 自动弹出 Console
+            setShowConsole(true);
+            setLogs(prev => [...prev, {
+                id: Date.now().toString(),
+                timestamp: new Date().toLocaleTimeString(),
+                type: 'info',
+                message: `开始拆解批次 ${selectedBatch?.batch_number}...`
+            }]);
+
+            const res = await breakdownApi.startBreakdown(batchId);
+            setBreakdownTaskId(res.data.task_id);
+            message.info('拆解任务已启动');
+            // 开始轮询
+            pollBreakdownStatus(res.data.task_id, batchId);
+        } catch (err: any) {
+            message.error(err.response?.data?.detail || '启动拆解失败');
+        }
+    };
+
+    // 循环拆解：依次拆解所有 pending 批次
+    const handleLoopBreakdown = async () => {
+        const pendingBatches = batches.filter(b => b.breakdown_status === 'pending');
+        if (pendingBatches.length === 0) {
+            message.info('没有待拆解的批次');
+            return;
+        }
+        setShowConsole(true);
+        setBreakdownQueue(pendingBatches.map(b => b.id));
+        setCurrentBreakdownIndex(0);
+        setIsAllBreakdownRunning(true);
+
+        // 启动第一个批次
+        await processBreakdownQueue(pendingBatches[0].id, pendingBatches.map(b => b.id), 0);
+    };
+
+    // 处理拆解队列
+    const processBreakdownQueue = async (batchId: string, queue: string[], index: number) => {
+        try {
+            setLogs(prev => [...prev, {
+                id: Date.now().toString(),
+                timestamp: new Date().toLocaleTimeString(),
+                type: 'info',
+                message: `开始拆解批次 ${index + 1}/${queue.length}...`
+            }]);
+
+            const res = await breakdownApi.startBreakdown(batchId);
+            setBreakdownTaskId(res.data.task_id);
+
+            // 轮询并在完成后处理下一个
+            pollBreakdownStatusWithCallback(res.data.task_id, batchId, () => {
+                const nextIndex = index + 1;
+                if (nextIndex < queue.length) {
+                    setCurrentBreakdownIndex(nextIndex);
+                    processBreakdownQueue(queue[nextIndex], queue, nextIndex);
+                } else {
+                    setIsAllBreakdownRunning(false);
+                    setBreakdownQueue([]);
+                    message.success('所有批次拆解完成');
+                }
+            });
+        } catch (err: any) {
+            setIsAllBreakdownRunning(false);
+            message.error(err.response?.data?.detail || '拆解失败');
+        }
+    };
+
+    // 全部拆解：一次性启动所有 pending 批次
+    const handleAllBreakdown = async () => {
+        if (!projectId) return;
+        const pendingBatches = batches.filter(b => b.breakdown_status === 'pending');
+        if (pendingBatches.length === 0) {
+            message.info('没有待拆解的批次');
+            return;
+        }
+        setShowConsole(true);
+        setIsAllBreakdownRunning(true);
+
+        try {
+            const res = await breakdownApi.startAllBreakdowns(projectId);
+            if (res.data.total > 0) {
+                message.info(`已启动 ${res.data.total} 个批次的拆解任务`);
+                // 开始轮询所有任务
+                pollMultipleBreakdownStatus(res.data.task_ids);
+            } else {
+                setIsAllBreakdownRunning(false);
+                message.info('没有待拆解的批次');
+            }
+        } catch (err: any) {
+            setIsAllBreakdownRunning(false);
+            message.error(err.response?.data?.detail || '批量拆解失败');
+        }
+    };
+
+    // 继续拆解：从第一个 pending 批次开始
+    const handleContinueBreakdown = async () => {
+        if (!projectId) return;
+        const firstPending = batches.find(b => b.breakdown_status === 'pending');
+        if (!firstPending) {
+            message.info('没有待拆解的批次');
+            return;
+        }
+        setSelectedBatch(firstPending);
+        await handleStartBreakdown(firstPending.id);
+    };
+
+    // 轮询多个任务状态
+    const pollMultipleBreakdownStatus = (taskIds: string[]) => {
+        let completedCount = 0;
+        const total = taskIds.length;
+
+        taskIds.forEach(taskId => {
+            const interval = setInterval(async () => {
+                try {
+                    const res = await breakdownApi.getTaskStatus(taskId);
+
+                    if (res.data.status === 'completed' || res.data.status === 'failed') {
+                        clearInterval(interval);
+                        completedCount++;
+
+                        if (res.data.status === 'completed') {
+                            setLogs(prev => [...prev, {
+                                id: Date.now().toString(),
+                                timestamp: new Date().toLocaleTimeString(),
+                                type: 'success',
+                                message: `任务 ${taskId.slice(0, 8)}... 完成`
+                            }]);
+                        }
+
+                        if (completedCount === total) {
+                            setIsAllBreakdownRunning(false);
+                            message.success('所有批次拆解完成');
+                            fetchBatches();
+                        }
+                    }
+                } catch (err) {
+                    clearInterval(interval);
+                }
+            }, 2000);
+        });
+    };
+
+    // 带回调的轮询
+    const pollBreakdownStatusWithCallback = (taskId: string, batchId: string, onComplete: () => void) => {
+        const interval = setInterval(async () => {
+            try {
+                const res = await breakdownApi.getTaskStatus(taskId);
+                setBreakdownProgress(res.data.progress || 0);
+
+                if (res.data.current_step) {
+                    setLogs(prev => [...prev, {
+                        id: Date.now().toString(),
+                        timestamp: new Date().toLocaleTimeString(),
+                        type: 'thinking',
+                        message: res.data.current_step
+                    }]);
+                }
+
+                if (res.data.status === 'completed') {
+                    clearInterval(interval);
+                    setBreakdownTaskId(null);
+                    fetchBatches();
+                    onComplete();
+                } else if (res.data.status === 'failed') {
+                    clearInterval(interval);
+                    setBreakdownTaskId(null);
+                    setIsAllBreakdownRunning(false);
+                    message.error(res.data.error_message || '拆解失败');
+                }
+            } catch (err) {
+                clearInterval(interval);
+            }
+        }, 2000);
+    };
+
+    // 轮询任务状态
+    const pollBreakdownStatus = (taskId: string, batchId: string) => {
+        const interval = setInterval(async () => {
+            try {
+                const res = await breakdownApi.getTaskStatus(taskId);
+                setBreakdownProgress(res.data.progress || 0);
+
+                // 推送日志
+                if (res.data.current_step) {
+                    setLogs(prev => [...prev, {
+                        id: Date.now().toString(),
+                        timestamp: new Date().toLocaleTimeString(),
+                        type: 'thinking',
+                        message: res.data.current_step
+                    }]);
+                }
+
+                if (res.data.status === 'completed') {
+                    clearInterval(interval);
+                    setBreakdownTaskId(null);
+                    message.success('拆解完成');
+                    fetchBreakdownResults(batchId);
+                    fetchBatches(); // 刷新批次状态
+                } else if (res.data.status === 'failed') {
+                    clearInterval(interval);
+                    setBreakdownTaskId(null);
+                    message.error(res.data.error_message || '拆解失败');
+                }
+            } catch (err) {
+                clearInterval(interval);
+            }
+        }, 2000);
+    };
 
     // 处理文件上传
     const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1021,43 +1293,205 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 );
             case 'PLOT':
                 return (
-                    <div className="h-full flex flex-col animate-in fade-in slide-in-from-bottom-4 duration-300">
-                        <div className="flex justify-between items-start mb-4">
-                            <SectionTitle title="分集大纲 (Episode Outline)" description="AI 生成的分集剧情结构。" />
-                            <button className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm font-medium shadow-lg shadow-cyan-500/20 transition-all hover:scale-[1.02]">
-                                <RefreshCw size={14} /> 重新生成大纲
-                            </button>
+                    <div className="h-full flex gap-0 animate-in fade-in slide-in-from-bottom-4 duration-300 overflow-hidden bg-slate-950">
+                        {/* LEFT COLUMN: Batch List */}
+                        <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-2xl">
+                            <div className="flex-1 overflow-y-auto divide-y divide-slate-800/30 no-scrollbar">
+                                {isCreatingBatches ? (
+                                    <div className="flex flex-col items-center justify-center h-40 gap-3">
+                                        <Loader2 size={20} className="animate-spin text-cyan-500" />
+                                        <span className="text-[10px] text-slate-500 uppercase tracking-widest font-mono">创建批次中...</span>
+                                    </div>
+                                ) : batches.length === 0 ? (
+                                    <div className="flex flex-col items-center justify-center h-40 text-slate-600 px-6 text-center">
+                                        <Layers size={32} className="mb-3 opacity-30" />
+                                        <p className="text-xs">暂无批次数据</p>
+                                        <p className="text-[10px] text-slate-700 mt-1">请先在配置页启动项目</p>
+                                    </div>
+                                ) : (
+                                    batches.map(batch => (
+                                        <div
+                                            key={batch.id}
+                                            onClick={() => setSelectedBatch(batch)}
+                                            className={`px-5 py-4 cursor-pointer transition-all group relative ${
+                                                selectedBatch?.id === batch.id
+                                                ? 'bg-cyan-500/10 border-l-4 border-l-cyan-500 shadow-inner'
+                                                : 'hover:bg-slate-800/50 border-l-4 border-l-transparent'
+                                            }`}
+                                        >
+                                            <div className="flex items-center justify-between mb-2">
+                                                <div className="flex items-center gap-2">
+                                                    <div className={`w-2 h-2 rounded-full transition-all ${
+                                                        selectedBatch?.id === batch.id
+                                                        ? 'bg-cyan-500 shadow-[0_0_8px_2px_rgba(6,182,212,0.6)]'
+                                                        : 'bg-slate-600'
+                                                    }`} />
+                                                    <span className={`text-sm font-bold ${selectedBatch?.id === batch.id ? 'text-cyan-400' : 'text-white'}`}>
+                                                        批次 {batch.batch_number}
+                                                    </span>
+                                                </div>
+                                                <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold border transition-colors ${
+                                                    batch.breakdown_status === 'completed'
+                                                    ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
+                                                    : batch.breakdown_status === 'processing'
+                                                    ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20 animate-pulse'
+                                                    : batch.breakdown_status === 'failed'
+                                                    ? 'bg-red-500/10 text-red-400 border-red-500/20'
+                                                    : 'bg-slate-800 text-slate-500 border-slate-700'
+                                                }`}>
+                                                    {batch.breakdown_status === 'completed' && <CheckCircle2 size={10} />}
+                                                    {batch.breakdown_status === 'processing' && <Loader2 size={10} className="animate-spin" />}
+                                                    {batch.breakdown_status === 'failed' && <X size={10} />}
+                                                    {batch.breakdown_status === 'pending' && <CircleDashed size={10} />}
+                                                    {batch.breakdown_status === 'completed' ? '已拆解' :
+                                                     batch.breakdown_status === 'processing' ? '拆解中' :
+                                                     batch.breakdown_status === 'failed' ? '失败' : '未拆解'}
+                                                </div>
+                                            </div>
+                                            <div className="text-xs text-slate-400">
+                                                第 {batch.start_chapter} - {batch.end_chapter} 章
+                                                <span className="text-slate-600 ml-2">({batch.total_chapters} 章)</span>
+                                            </div>
+                                            {batch.breakdown_status === 'processing' && breakdownTaskId && selectedBatch?.id === batch.id && (
+                                                <div className="mt-2">
+                                                    <div className="w-full bg-slate-800 h-1 rounded-full overflow-hidden">
+                                                        <div
+                                                            className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-300"
+                                                            style={{width: `${breakdownProgress}%`}}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))
+                                )}
+                            </div>
                         </div>
-                        
-                        <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
-                            {mockPlots.map((plot) => (
-                                <div key={plot.id} className="bg-slate-900/50 border border-slate-800 rounded-xl p-5 hover:border-cyan-500/30 transition-all relative group shadow-xl">
-                                     <div className="absolute top-4 right-4 text-slate-600 font-mono text-xs">ep.{String(plot.id).padStart(2,'0')}</div>
-                                     <h3 className="text-lg font-bold text-white mb-2">{plot.title}</h3>
-                                     <p className="text-sm text-slate-300 leading-relaxed mb-4">{plot.summary}</p>
-                                     
-                                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                                         <div className="bg-slate-900 p-3 rounded-lg border border-slate-800/50 shadow-inner">
-                                             <div className="text-xs text-slate-500 mb-1 flex items-center gap-1"><Swords size={12}/> 核心冲突</div>
-                                             <div className="flex flex-wrap gap-1">
-                                                 {plot.conflicts.map((c, idx) => (
-                                                     <span key={idx} className="px-1.5 py-0.5 bg-red-500/10 text-red-400 text-[10px] rounded border border-red-500/20">{c}</span>
-                                                 ))}
-                                             </div>
-                                         </div>
-                                         <div className="bg-slate-900 p-3 rounded-lg border border-slate-800/50 shadow-inner">
-                                             <div className="text-xs text-slate-500 mb-1 flex items-center gap-1"><Lightbulb size={12}/> 钩子 (Hook)</div>
-                                             <div className="text-xs text-amber-400 font-medium">{plot.hooks}</div>
-                                         </div>
-                                         <div className="bg-slate-900 p-3 rounded-lg border border-slate-800/50 shadow-inner">
-                                             <div className="text-xs text-slate-500 mb-1 flex items-center gap-1"><Activity size={12}/> 紧张度</div>
-                                             <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden mt-1.5">
-                                                 <div className="h-full bg-gradient-to-r from-green-500 to-red-500" style={{width: `${plot.tension}%`}} />
-                                             </div>
-                                         </div>
-                                     </div>
-                                </div>
-                            ))}
+
+                        {/* RIGHT COLUMN: Breakdown Details */}
+                        <div className="flex-1 flex flex-col bg-slate-900/50 relative overflow-hidden">
+                            {/* Content */}
+                            <div className="flex-1 overflow-y-auto p-0">
+                                {!selectedBatch ? (
+                                    <div className="flex flex-col items-center justify-center h-full text-slate-700 gap-4 opacity-30">
+                                        <Layers size={64} />
+                                        <p className="text-sm tracking-widest uppercase font-black">Select a batch</p>
+                                    </div>
+                                ) : selectedBatch.breakdown_status === 'pending' ? (
+                                    <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
+                                        <div className="w-20 h-20 rounded-2xl bg-slate-800/50 flex items-center justify-center border border-slate-700">
+                                            <Play size={32} className="text-slate-500" />
+                                        </div>
+                                        <p className="text-sm font-bold">点击"开始拆解"启动 AI 分析</p>
+                                        <p className="text-xs text-slate-700">将分析第 {selectedBatch.start_chapter}-{selectedBatch.end_chapter} 章的剧情结构</p>
+                                    </div>
+                                ) : selectedBatch.breakdown_status === 'processing' ? (
+                                    <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
+                                        <div className="w-20 h-20 rounded-2xl bg-cyan-500/10 flex items-center justify-center border border-cyan-500/20 animate-pulse">
+                                            <Loader2 size={32} className="text-cyan-400 animate-spin" />
+                                        </div>
+                                        <p className="text-sm font-bold text-cyan-400">AI 正在分析剧情...</p>
+                                        <div className="w-64">
+                                            <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                                                <div
+                                                    className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-300"
+                                                    style={{width: `${breakdownProgress}%`}}
+                                                />
+                                            </div>
+                                            <p className="text-xs text-slate-600 text-center mt-2">{breakdownProgress}%</p>
+                                        </div>
+                                    </div>
+                                ) : selectedBatch.breakdown_status === 'completed' && breakdownResult ? (
+                                    <div className="space-y-6 max-w-4xl mx-auto p-8">
+                                        {/* Consistency Score */}
+                                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
+                                            <div className="flex items-center justify-between mb-4">
+                                                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                                    <Activity size={16} className="text-emerald-400" />
+                                                    一致性评分
+                                                </h3>
+                                                <div className="text-2xl font-black text-emerald-400">
+                                                    {breakdownResult.consistency_score || 0}
+                                                    <span className="text-sm text-slate-500 ml-1">/ 100</span>
+                                                </div>
+                                            </div>
+                                            <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                                                <div
+                                                    className="h-full bg-gradient-to-r from-emerald-500 to-cyan-500"
+                                                    style={{width: `${breakdownResult.consistency_score || 0}%`}}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Conflicts */}
+                                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
+                                            <h3 className="text-sm font-bold text-white flex items-center gap-2 mb-4">
+                                                <Swords size={16} className="text-red-400" />
+                                                核心冲突
+                                                <span className="bg-red-500/10 text-red-400 text-[10px] px-2 py-0.5 rounded-full border border-red-500/20">
+                                                    {breakdownResult.conflicts?.length || 0}
+                                                </span>
+                                            </h3>
+                                            <div className="space-y-3">
+                                                {breakdownResult.conflicts?.map((conflict, idx) => (
+                                                    <div key={idx} className="bg-slate-950 border border-slate-800 rounded-lg p-4">
+                                                        <div className="flex items-center justify-between mb-2">
+                                                            <span className="text-sm font-bold text-white">{conflict.title}</span>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-[10px] text-slate-500">紧张度</span>
+                                                                <div className="w-16 bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                                                                    <div
+                                                                        className="h-full bg-gradient-to-r from-yellow-500 to-red-500"
+                                                                        style={{width: `${conflict.tension}%`}}
+                                                                    />
+                                                                </div>
+                                                                <span className="text-[10px] text-red-400 font-mono">{conflict.tension}</span>
+                                                            </div>
+                                                        </div>
+                                                        {conflict.description && (
+                                                            <p className="text-xs text-slate-400">{conflict.description}</p>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {/* Plot Hooks */}
+                                        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
+                                            <h3 className="text-sm font-bold text-white flex items-center gap-2 mb-4">
+                                                <Lightbulb size={16} className="text-amber-400" />
+                                                剧情钩子
+                                                <span className="bg-amber-500/10 text-amber-400 text-[10px] px-2 py-0.5 rounded-full border border-amber-500/20">
+                                                    {breakdownResult.plot_hooks?.length || 0}
+                                                </span>
+                                            </h3>
+                                            <div className="flex flex-wrap gap-2">
+                                                {breakdownResult.plot_hooks?.map((hook, idx) => (
+                                                    <div key={idx} className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                                                        <span className="text-xs text-amber-400">{hook.hook}</span>
+                                                        {hook.episode && (
+                                                            <span className="text-[10px] text-amber-600 ml-2">EP.{hook.episode}</span>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : breakdownLoading ? (
+                                    <div className="flex flex-col items-center justify-center h-full">
+                                        <Loader2 size={32} className="animate-spin text-cyan-500" />
+                                        <p className="text-xs text-slate-500 mt-3">加载拆解结果...</p>
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
+                                        <div className="w-20 h-20 rounded-2xl bg-red-500/10 flex items-center justify-center border border-red-500/20">
+                                            <X size={32} className="text-red-400" />
+                                        </div>
+                                        <p className="text-sm font-bold text-red-400">拆解失败</p>
+                                        <p className="text-xs text-slate-700">请点击"重新拆解"重试</p>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
                 );
@@ -1293,6 +1727,51 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                         <div className="flex items-center gap-3">
                             <h1 className="font-semibold text-white truncate max-w-[200px]">{project.name}</h1>
                             <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-xs border border-slate-700 hidden sm:inline-block">{project.novel_type}</span>
+
+                            {/* PLOT Tab: 进度条展示在 Header 左侧 */}
+                            {activeTab === 'PLOT' && batches.length > 0 && (
+                                <div className="ml-6 hidden md:flex items-center gap-3 animate-in fade-in slide-in-from-left-4 duration-500">
+                                    {/* 简约图标替代胶囊 */}
+                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-500 ${
+                                        isAllBreakdownRunning
+                                        ? 'bg-cyan-500/10 text-cyan-400 shadow-[0_0_15px_-3px_rgba(6,182,212,0.4)]'
+                                        : 'bg-slate-800/80 text-slate-500 border border-slate-700/50'
+                                    }`}>
+                                        {isAllBreakdownRunning ? (
+                                            <Loader2 size={16} className="animate-spin" />
+                                        ) : (
+                                            <Zap size={16} className={batches.some(b => b.breakdown_status === 'completed') ? 'text-amber-400 fill-amber-400/20' : ''} />
+                                        )}
+                                    </div>
+
+                                    {/* 能量条进度 */}
+                                    <div className="flex flex-col gap-1.5 w-40 group">
+                                        <div className="flex justify-between items-end px-0.5">
+                                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest group-hover:text-slate-400 transition-colors">
+                                                {isAllBreakdownRunning ? 'Processing' : 'Breakdown Status'}
+                                            </span>
+                                            <span className={`text-[10px] font-mono font-bold ${isAllBreakdownRunning ? 'text-cyan-400' : 'text-emerald-500'}`}>
+                                                {Math.round((batches.filter(b => b.breakdown_status === 'completed').length / batches.length) * 100)}%
+                                            </span>
+                                        </div>
+                                        <div className="h-1.5 w-full bg-slate-800/80 rounded-full overflow-hidden border border-slate-700/30 p-[1px]">
+                                            <div
+                                                className={`h-full rounded-full transition-all duration-700 ease-out relative overflow-hidden ${
+                                                    isAllBreakdownRunning
+                                                    ? 'bg-gradient-to-r from-cyan-500 to-blue-500'
+                                                    : 'bg-gradient-to-r from-emerald-600 to-teal-400'
+                                                }`}
+                                                style={{width: `${(batches.filter(b => b.breakdown_status === 'completed').length / batches.length) * 100}%`}}
+                                            >
+                                                {/* 流光特效 */}
+                                                {isAllBreakdownRunning && (
+                                                    <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-transparent via-white/50 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]" />
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                         <div className="flex items-center gap-3">
                             {activeTab === 'CONFIG' ? (
@@ -1318,6 +1797,63 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                         {starting ? '启动中...' : (project.status === 'parsing' ? '正在运行' : '项目启动')}
                                     </button>
                                 </>
+                            ) : activeTab === 'PLOT' ? (
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={handleLoopBreakdown}
+                                        disabled={!!breakdownTaskId || isAllBreakdownRunning || batches.filter(b => b.breakdown_status === 'pending').length === 0}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                        title="依次拆解所有待处理批次"
+                                    >
+                                        <Repeat size={14} />
+                                        循环
+                                    </button>
+                                    <button
+                                        onClick={handleAllBreakdown}
+                                        disabled={!!breakdownTaskId || isAllBreakdownRunning || batches.filter(b => b.breakdown_status === 'pending').length === 0}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                        title="一次性启动所有待处理批次"
+                                    >
+                                        <FastForward size={14} />
+                                        全部
+                                    </button>
+                                    <button
+                                        onClick={handleContinueBreakdown}
+                                        disabled={!!breakdownTaskId || isAllBreakdownRunning || batches.filter(b => b.breakdown_status === 'pending').length === 0}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                        title="从第一个待处理批次开始"
+                                    >
+                                        <PlayCircle size={14} />
+                                        继续
+                                    </button>
+
+                                    <div className="w-px h-4 bg-slate-700 mx-1"></div>
+
+                                    {selectedBatch && selectedBatch.breakdown_status === 'pending' ? (
+                                        <button
+                                            onClick={() => handleStartBreakdown(selectedBatch.id)}
+                                            disabled={!!breakdownTaskId || isAllBreakdownRunning}
+                                            className="flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-emerald-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            <Play size={14} />
+                                            开始拆解
+                                        </button>
+                                    ) : selectedBatch && (selectedBatch.breakdown_status === 'failed' || selectedBatch.breakdown_status === 'completed') ? (
+                                        <button
+                                            onClick={() => handleStartBreakdown(selectedBatch.id)}
+                                            disabled={!!breakdownTaskId || isAllBreakdownRunning}
+                                            className="flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 text-white rounded-lg text-xs font-bold shadow-lg transition-all hover:scale-[1.02] disabled:opacity-50"
+                                        >
+                                            <RotateCcw size={14} />
+                                            重新拆解
+                                        </button>
+                                    ) : (
+                                        <button disabled className="flex items-center gap-2 px-4 py-1.5 bg-slate-800 text-slate-500 rounded-lg text-xs font-bold border border-slate-700 opacity-50 cursor-not-allowed">
+                                            <Play size={14} />
+                                            开始拆解
+                                        </button>
+                                    )}
+                                </div>
                             ) : (
                                 <>
                                     <button className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-white transition-colors">
@@ -1334,7 +1870,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 )}
 
                 {/* Content Body */}
-                <div className={`flex-1 overflow-hidden relative ${(activeTab === 'SCRIPT' || activeTab === 'SOURCE') ? 'p-0' : 'p-6 md:p-8'}`}>
+                <div className={`flex-1 overflow-hidden relative ${(activeTab === 'SCRIPT' || activeTab === 'SOURCE' || activeTab === 'PLOT') ? 'p-0' : 'p-6 md:p-8'}`}>
                      {renderContent()}
                 </div>
 

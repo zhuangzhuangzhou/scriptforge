@@ -141,6 +141,15 @@ export const projectApi = {
     return { data: response.data };
   },
 
+  // 创建批次（幂等，进入 PLOT 页面时调用）
+  createBatches: async (projectId: string) => {
+    if (USE_MOCK) {
+      await delay(500);
+      return { data: { message: '批次已存在', created: false } };
+    }
+    return api.post(`/projects/${projectId}/create-batches`);
+  },
+
   getChapters: async (projectId: string, page = 1, pageSize = 20, keyword?: string) => {
     if (USE_MOCK) {
       await delay(300);
@@ -193,6 +202,76 @@ export const userApi = {
       return { data: mockUser };
     }
     return api.get('/user/profile');
+  }
+};
+
+// 剧情拆解 API
+export const breakdownApi = {
+  // 启动单个批次拆解
+  startBreakdown: async (batchId: string, options?: {
+    modelConfigId?: string;
+    selectedSkills?: string[];
+    pipelineId?: string;
+  }) => {
+    if (USE_MOCK) {
+      await delay(500);
+      return { data: { task_id: 'mock-task-1', status: 'queued' } };
+    }
+    return api.post('/breakdown/start', {
+      batch_id: batchId,
+      model_config_id: options?.modelConfigId,
+      selected_skills: options?.selectedSkills,
+      pipeline_id: options?.pipelineId
+    });
+  },
+
+  // 批量启动所有 pending 批次拆解
+  startAllBreakdowns: async (projectId: string) => {
+    if (USE_MOCK) {
+      await delay(500);
+      return { data: { task_ids: [], total: 0 } };
+    }
+    return api.post('/breakdown/start-all', null, { params: { project_id: projectId } });
+  },
+
+  // 继续拆解：从第一个 pending 批次开始
+  startContinue: async (projectId: string) => {
+    if (USE_MOCK) {
+      await delay(500);
+      return { data: { task_id: 'mock-task-1', batch_id: 'mock-batch-1', status: 'queued' } };
+    }
+    return api.post('/breakdown/start-continue', null, { params: { project_id: projectId } });
+  },
+
+  // 获取任务状态
+  getTaskStatus: async (taskId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return { data: { task_id: taskId, status: 'completed', progress: 100 } };
+    }
+    return api.get(`/breakdown/tasks/${taskId}`);
+  },
+
+  // 获取拆解结果
+  getBreakdownResults: async (batchId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return {
+        data: {
+          batch_id: batchId,
+          conflicts: [
+            { title: '档案缺失', tension: 75 },
+            { title: '上级施压', tension: 60 }
+          ],
+          plot_hooks: [{ hook: '发现神秘纸条' }],
+          characters: [],
+          scenes: [],
+          emotions: [],
+          consistency_score: 85
+        }
+      };
+    }
+    return api.get(`/breakdown/results/${batchId}`);
   }
 };
 

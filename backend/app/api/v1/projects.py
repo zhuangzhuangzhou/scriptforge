@@ -115,6 +115,13 @@ class BatchResponse(BaseModel):
     breakdown_status: str
     script_status: str
 
+    @field_validator('id', 'project_id', mode='before')
+    @classmethod
+    def validate_id(cls, v):
+        if isinstance(v, UUID):
+            return str(v)
+        return v
+
     class Config:
         from_attributes = True
 
@@ -619,8 +626,8 @@ async def start_project(
 ):
     """
     启动项目（开始剧情分析）
-    状态流转: ready -> parsing
-    逻辑：自动将章节按 batch_size 分批
+    状态流转: ready -> parsing（仅允许一次）
+    注意：分批逻辑移至 create-batches 接口
     """
     result = await db.execute(
         select(Project).where(
@@ -631,12 +638,56 @@ async def start_project(
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
 
+    # 只允许 ready 状态启动，已启动的项目不能再次启动
     if project.status != 'ready':
-        # 如果已经是 parsing，也允许重新分批（幂等性）
-        if project.status != 'parsing':
+        if project.status in ['parsing', 'scripting', 'completed']:
+            raise HTTPException(status_code=400, detail="项目已启动")
+        else:
             raise HTTPException(status_code=400, detail="项目尚未就绪（请先拆分章节）")
 
-    # 1. 获取所有章节
+    # 验证有章节数据
+    chapters_count = await db.execute(
+        select(func.count()).select_from(Chapter).where(Chapter.project_id == project_id)
+    )
+    if chapters_count.scalar() == 0:
+        raise HTTPException(status_code=400, detail="项目没有章节，请先拆分")
+
+    # 仅更新状态，不进行分批（分批在进入 PLOT 页面时触发）
+    project.status = 'parsing'
+
+    await db.commit()
+    await db.refresh(project)
+
+    return {"status": "parsing", "message": "项目已启动"}
+
+
+@router.post("/{project_id}/create-batches")
+async def create_batches(
+    project_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    按需创建批次（幂等接口，进入 PLOT 页面时调用）
+    如果批次已存在则跳过创建
+    """
+    result = await db.execute(
+        select(Project).where(
+            and_(Project.id == project_id, Project.user_id == current_user.id)
+        )
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    # 检查是否已有批次
+    existing = await db.execute(
+        select(func.count()).select_from(Batch).where(Batch.project_id == project_id)
+    )
+    if existing.scalar() > 0:
+        return {"message": "批次已存在", "created": False}
+
+    # 获取所有章节
     chapters_result = await db.execute(
         select(Chapter).where(Chapter.project_id == project_id).order_by(Chapter.chapter_number)
     )
@@ -645,11 +696,7 @@ async def start_project(
     if not chapters:
         raise HTTPException(status_code=400, detail="项目没有章节，请先拆分")
 
-    # 2. 清理旧批次 (级联删除会处理关联)
-    await db.execute(delete(Batch).where(Batch.project_id == project_id))
-
-    # 3. 执行分批逻辑
-    # 将 ORM 对象转为字典供 Divider 使用
+    # 执行分批逻辑
     chapters_data = [
         {"chapter_number": c.chapter_number, "word_count": c.word_count, "id": c.id}
         for c in chapters
@@ -658,8 +705,7 @@ async def start_project(
     divider = BatchDivider(batch_size=project.batch_size)
     batches_data = divider.divide(chapters_data)
 
-    # 4. 创建新批次并关联章节
-    new_batches = []
+    # 创建新批次并关联章节
     for b_data in batches_data:
         new_batch = Batch(
             project_id=project_id,
@@ -670,21 +716,15 @@ async def start_project(
             total_words=b_data['total_words']
         )
         db.add(new_batch)
-        await db.flush() # 获取 batch id
+        await db.flush()
 
         # 更新章节的 batch_id
-        # 注意：这里需要批量更新，但为了简单逻辑，先用循环（性能优化点）
-        # 实际章节ID列表
         chapter_ids = [c['id'] for c in b_data['chapters']]
         await db.execute(
             update(Chapter).where(Chapter.id.in_(chapter_ids)).values(batch_id=new_batch.id)
         )
 
-    # 5. 更新状态
-    project.status = 'parsing'
-
     await db.commit()
-    await db.refresh(project)
 
-    return project
+    return {"message": "分批完成", "batch_count": len(batches_data), "created": True}
 

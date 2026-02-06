@@ -121,6 +121,154 @@ async def get_breakdown_task(
     }
 
 
+@router.post("/start-all")
+async def start_all_breakdowns(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """批量启动所有未拆解批次"""
+    # 验证项目归属
+    project_result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.user_id == current_user.id
+        )
+    )
+    project = project_result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="项目不存在"
+        )
+
+    # 获取所有 pending 状态的批次
+    pending_batches = await db.execute(
+        select(Batch).where(
+            Batch.project_id == project_id,
+            Batch.breakdown_status == 'pending'
+        ).order_by(Batch.batch_number)
+    )
+    batches = pending_batches.scalars().all()
+
+    if not batches:
+        return {"task_ids": [], "total": 0, "message": "没有待拆解的批次"}
+
+    # 检查剧集配额
+    quota_service = QuotaService(db)
+    quota = await quota_service.check_episode_quota(current_user)
+    if not quota["allowed"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"剧集配额已用尽，本月已使用 {quota['used']}/{quota['limit']} 集"
+        )
+
+    task_ids = []
+    for batch in batches:
+        # 消耗剧集配额
+        await quota_service.consume_episode_quota(current_user)
+
+        # 创建AI任务
+        task = AITask(
+            project_id=batch.project_id,
+            batch_id=batch.id,
+            task_type="breakdown",
+            status="queued",
+            depends_on=[],
+            config={}
+        )
+        db.add(task)
+        await db.commit()
+        await db.refresh(task)
+
+        # 启动Celery异步任务
+        celery_task = run_breakdown_task.delay(
+            str(task.id),
+            str(batch.id),
+            str(batch.project_id),
+            str(current_user.id)
+        )
+
+        task.celery_task_id = celery_task.id
+        await db.commit()
+
+        task_ids.append(str(task.id))
+
+    return {"task_ids": task_ids, "total": len(task_ids)}
+
+
+@router.post("/start-continue")
+async def start_continue_breakdown(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """继续拆解：从第一个 pending 批次开始"""
+    # 验证项目归属
+    project_result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.user_id == current_user.id
+        )
+    )
+    project = project_result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="项目不存在"
+        )
+
+    # 获取第一个 pending 状态的批次
+    pending_batch = await db.execute(
+        select(Batch).where(
+            Batch.project_id == project_id,
+            Batch.breakdown_status == 'pending'
+        ).order_by(Batch.batch_number).limit(1)
+    )
+    batch = pending_batch.scalar_one_or_none()
+
+    if not batch:
+        return {"task_id": None, "batch_id": None, "message": "没有待拆解的批次"}
+
+    # 检查剧集配额
+    quota_service = QuotaService(db)
+    quota = await quota_service.check_episode_quota(current_user)
+    if not quota["allowed"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"剧集配额已用尽，本月已使用 {quota['used']}/{quota['limit']} 集"
+        )
+
+    # 消耗剧集配额
+    await quota_service.consume_episode_quota(current_user)
+
+    # 创建AI任务
+    task = AITask(
+        project_id=batch.project_id,
+        batch_id=batch.id,
+        task_type="breakdown",
+        status="queued",
+        depends_on=[],
+        config={}
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    # 启动Celery异步任务
+    celery_task = run_breakdown_task.delay(
+        str(task.id),
+        str(batch.id),
+        str(batch.project_id),
+        str(current_user.id)
+    )
+
+    task.celery_task_id = celery_task.id
+    await db.commit()
+
+    return {"task_id": str(task.id), "batch_id": str(batch.id), "status": "queued"}
+
+
 @router.get("/results/{batch_id}")
 async def get_breakdown_results(
     batch_id: str,
