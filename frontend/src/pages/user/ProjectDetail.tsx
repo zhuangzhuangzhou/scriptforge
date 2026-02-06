@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, Statistic, Row, Col, Button, Spin, Tabs, Descriptions, Tag, Typography } from 'antd';
+import { Card, Statistic, Row, Col, Button, Spin, Tabs, Descriptions, Tag, Typography, Table } from 'antd';
 import {
   ProjectOutlined,
   FileTextOutlined,
   VideoCameraOutlined,
   ExportOutlined,
-  LeftOutlined
+  LeftOutlined,
+  HistoryOutlined
 } from '@ant-design/icons';
+import { projectApi, logsApi } from '../../services/api';
 import PlotBreakdown from './PlotBreakdown';
 import ScriptGeneration from './ScriptGeneration';
 
@@ -24,37 +26,67 @@ interface Project {
   status: string;
 }
 
+interface Batch {
+  id: string;
+  batch_number: number;
+  start_chapter: number;
+  end_chapter: number;
+  total_chapters: number;
+  breakdown_status: string;
+  script_status: string;
+}
+
 const ProjectDetail: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [project, setProject] = useState<Project | null>(null);
+  const [batches, setBatches] = useState<Batch[]>([]);
   const [activeTab, setActiveTab] = useState('overview');
 
   useEffect(() => {
-    loadProject();
+    loadProjectData();
   }, [projectId]);
 
-  const loadProject = async () => {
+  const loadProjectData = async () => {
+    if (!projectId) return;
+    setLoading(true);
     try {
-      // Mock data for UI testing if API fails
-      // setProject({ id: '1', name: 'Mock Project', novel_type: 'Sci-Fi', description: 'Test', total_chapters: 100, total_words: 50000, processed_chapters: 20, status: 'Processing' });
-      // return; 
+      const [projectRes, batchesRes] = await Promise.all([
+        projectApi.getProject(projectId),
+        projectApi.getBatches(projectId)
+      ]);
 
-      const response = await fetch(`/api/v1/projects/${projectId}`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      if (!response.ok) throw new Error('加载项目失败');
-      const data = await response.json();
-      setProject(data);
+      setProject(projectRes.data);
+      setBatches(batchesRes.data || []);
     } catch (error) {
-      console.error(error);
+      console.error('加载项目数据失败:', error);
     } finally {
       setLoading(false);
     }
   };
+
+  const batchColumns = [
+    { title: '批次', dataIndex: 'batch_number', key: 'batch_number', render: (val: number) => `第 ${val} 批` },
+    { title: '章节范围', key: 'range', render: (_: any, record: Batch) => `${record.start_chapter} - ${record.end_chapter}` },
+    { title: '章节数', dataIndex: 'total_chapters', key: 'total_chapters' },
+    {
+      title: '拆解状态',
+      dataIndex: 'breakdown_status',
+      key: 'breakdown_status',
+      render: (status: string) => (
+        <Tag color={status === 'completed' ? 'green' : 'processing'}>{status}</Tag>
+      )
+    },
+    {
+      title: '剧本状态',
+      dataIndex: 'script_status',
+      key: 'script_status',
+      render: (status: string) => (
+        <Tag color={status === 'completed' ? 'green' : 'processing'}>{status}</Tag>
+      )
+    },
+  ];
 
   const renderOverview = () => (
     <>
@@ -67,12 +99,11 @@ const ProjectDetail: React.FC = () => {
               <Descriptions.Item label="状态"><Tag color="processing">{project?.status}</Tag></Descriptions.Item>
               <Descriptions.Item label="总字数">{project?.total_words?.toLocaleString()}</Descriptions.Item>
               <Descriptions.Item label="章节数">{project?.total_chapters}</Descriptions.Item>
-              <Descriptions.Item label="创建时间">2024-02-03</Descriptions.Item>
-              <Descriptions.Item label="描述" span={3}>{project?.description || '无'}</Descriptions.Item>
+              <Descriptions.Item label="描述" span={2}>{project?.description || '无'}</Descriptions.Item>
             </Descriptions>
           </Card>
         </Col>
-        
+
         <Col span={24}>
           <Card title="处理进度" bordered={false}>
             <Row gutter={16} style={{ textAlign: 'center' }}>
@@ -80,12 +111,24 @@ const ProjectDetail: React.FC = () => {
                 <Statistic title="已拆解章节" value={project?.processed_chapters} suffix={`/ ${project?.total_chapters}`} />
               </Col>
               <Col span={8}>
-                <Statistic title="已生成剧本" value={0} suffix="集" />
+                <Statistic title="已生成剧本" value={batches.filter(b => b.script_status === 'completed').length} suffix={`/ ${batches.length} 批`} />
               </Col>
               <Col span={8}>
-                <Statistic title="总耗时" value="2h 15m" />
+                <Statistic title="批次总数" value={batches.length} />
               </Col>
             </Row>
+          </Card>
+        </Col>
+
+        <Col span={24}>
+          <Card title="批次列表" bordered={false}>
+            <Table
+              dataSource={batches}
+              columns={batchColumns}
+              rowKey="id"
+              pagination={false}
+              size="middle"
+            />
           </Card>
         </Col>
       </Row>

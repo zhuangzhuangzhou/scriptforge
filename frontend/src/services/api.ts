@@ -107,6 +107,14 @@ export const projectApi = {
     return api.post(`/projects/${id}/upload`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     });
+  },
+
+  getBatches: async (projectId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return { data: [] }; // 暂时返回空，或后续完善 mockData
+    }
+    return api.get(`/projects/${projectId}/batches`);
   }
 };
 
