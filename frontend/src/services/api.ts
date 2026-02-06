@@ -2,7 +2,12 @@ import axios from 'axios';
 import { mockProjects, mockLogs, mockUser } from './mockData';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
-const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true';
+// 增强判断：打印日志并支持字符串或布尔值
+const rawMockEnv = import.meta.env.VITE_USE_MOCK;
+const USE_MOCK = rawMockEnv === 'true' || rawMockEnv === true;
+
+console.log('[API Config] Base URL:', API_BASE_URL);
+console.log('[API Config] Mock Mode:', USE_MOCK, `(Raw: ${rawMockEnv})`);
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -50,7 +55,9 @@ export const projectApi = {
       const project = mockProjects.find(p => p.id === id);
       return { data: project || null };
     }
-    return api.get(`/projects/${id}`);
+    const response = await api.get(`/projects/${id}`);
+    console.log('[API DEBUG] getProject response:', response.data); // 打印完整响应
+    return { data: response.data };
   },
   
   createProject: async (data: { name: string; novel_type?: string; description?: string; batch_size?: number }) => {
@@ -60,11 +67,11 @@ export const projectApi = {
         id: String(mockProjects.length + 1),
         ...data,
         type: data.novel_type || '未知',
-        updatedAt: '刚刚',
-        status: '配置中',
+        updated_at: '刚刚',
+        status: 'draft',
         progress: 0,
-        totalChapters: data.batch_size || 10,
-        processedChapters: 0
+        total_chapters: data.batch_size || 10,
+        processed_chapters: 0
       };
       mockProjects.push(newProject);
       return { data: newProject };
@@ -109,12 +116,29 @@ export const projectApi = {
     });
   },
 
+  splitChapters: async (id: string) => {
+    if (USE_MOCK) {
+      await delay(1000);
+      return { data: { message: '拆分成功', total_chapters: 45 } };
+    }
+    return api.post(`/projects/${id}/split`);
+  },
+
+  startProject: async (id: string) => {
+    if (USE_MOCK) {
+      await delay(500);
+      return { data: { status: 'parsing' } };
+    }
+    return api.post(`/projects/${id}/start`);
+  },
+
   getBatches: async (projectId: string) => {
     if (USE_MOCK) {
       await delay(300);
-      return { data: [] }; // 暂时返回空，或后续完善 mockData
+      return { data: [] };
     }
-    return api.get(`/projects/${projectId}/batches`);
+    const response = await api.get(`/projects/${projectId}/batches`);
+    return { data: response.data };
   }
 };
 

@@ -32,6 +32,12 @@ class Project(Base):
     processed_chapters = Column(Integer, default=0)
 
     # 状态
+    # draft: 草稿 (初始)
+    # uploaded: 已上传 (文件已存储)
+    # ready: 已就绪 (章节已拆分)
+    # parsing: 拆解中 (剧情分析进行中)
+    # scripting: 剧本生成中
+    # completed: 已完成
     status = Column(String(50), nullable=False, default="draft", index=True)
 
     created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)

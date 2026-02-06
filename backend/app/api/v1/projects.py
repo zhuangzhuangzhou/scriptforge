@@ -78,8 +78,15 @@ class ProjectResponse(BaseModel):
     total_words: int = 0
     processed_chapters: int = 0
     status: str
+    chapter_split_rule: Optional[Union[str, Dict[str, Any]]] = None
     created_at: str
     updated_at: str
+
+    # 文件信息
+    original_file_name: Optional[str] = None
+    original_file_size: Optional[int] = None
+    original_file_type: Optional[str] = None
+    original_file_path: Optional[str] = None
 
     @field_validator('id', mode='before')
     @classmethod
@@ -337,7 +344,169 @@ async def upload_novel_file(
 
     project.original_file_path = object_name
     project.original_file_name = file.filename
+    project.original_file_size = len(file_content)
     project.status = 'uploaded'
     await db.commit()
 
     return {"message": "上传成功", "project_id": str(project_id)}
+
+
+@router.post("/{project_id}/split")
+async def split_chapters(
+    project_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    拆分小说章节
+    状态流转: uploaded -> ready
+    """
+    # 1. 获取项目
+    result = await db.execute(
+        select(Project).where(
+            and_(Project.id == project_id, Project.user_id == current_user.id)
+        )
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    # 允许 ready 状态重试拆分
+    if project.status not in ['uploaded', 'ready']:
+        raise HTTPException(status_code=400, detail="项目状态不正确，请先上传文件")
+
+    if not project.original_file_path:
+        raise HTTPException(status_code=400, detail="源文件不存在")
+
+    # 2. 从 MinIO 读取文件
+    try:
+        response = minio_access_key_client.get_object(project.original_file_path)
+        content = response.read().decode('utf-8')
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读取文件失败: {str(e)}")
+
+    # 3. 执行拆分
+    try:
+        splitter = ChapterSplitter(project.chapter_split_rule)
+        chapters_data = splitter.split(content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"拆分失败: {str(e)}")
+
+    if not chapters_data:
+        raise HTTPException(status_code=400, detail="未识别到章节，请检查拆分规则")
+
+    # 4. 清理旧数据并保存新章节
+    # 清理该项目的所有旧章节和旧批次，确保状态重置
+    from sqlalchemy import delete
+    await db.execute(delete(Batch).where(Batch.project_id == project_id))
+    await db.execute(delete(Chapter).where(Chapter.project_id == project_id))
+
+    # 批量插入新章节
+    new_chapters = []
+    total_words = 0
+    for ch in chapters_data:
+        new_chapters.append(Chapter(
+            project_id=project_id,
+            chapter_number=ch['chapter_number'],
+            title=ch['title'],
+            content=ch['content'],
+            word_count=ch['word_count']
+        ))
+        total_words += ch['word_count']
+
+    db.add_all(new_chapters)
+
+    # 5. 更新项目状态和统计
+    project.status = 'ready'
+    project.total_chapters = len(new_chapters)
+    project.total_words = total_words
+    project.processed_chapters = 0  # 重置处理进度
+
+    await db.commit()
+
+    return {
+        "message": f"成功拆分为 {len(new_chapters)} 章",
+        "total_chapters": len(new_chapters),
+        "total_words": total_words
+    }
+
+
+@router.post("/{project_id}/start")
+async def start_project(
+    project_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    启动项目（开始剧情分析）
+    状态流转: ready -> parsing
+    逻辑：自动将章节按 batch_size 分批
+    """
+    result = await db.execute(
+        select(Project).where(
+            and_(Project.id == project_id, Project.user_id == current_user.id)
+        )
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    if project.status != 'ready':
+        # 如果已经是 parsing，也允许重新分批（幂等性）
+        if project.status != 'parsing':
+            raise HTTPException(status_code=400, detail="项目尚未就绪（请先拆分章节）")
+
+    # 1. 获取所有章节
+    chapters_result = await db.execute(
+        select(Chapter).where(Chapter.project_id == project_id).order_by(Chapter.chapter_number)
+    )
+    chapters = chapters_result.scalars().all()
+
+    if not chapters:
+        raise HTTPException(status_code=400, detail="项目没有章节，请先拆分")
+
+    # 2. 清理旧批次 (级联删除会处理关联)
+    from sqlalchemy import delete
+    await db.execute(delete(Batch).where(Batch.project_id == project_id))
+
+    # 3. 执行分批逻辑
+    # 将 ORM 对象转为字典供 Divider 使用
+    chapters_data = [
+        {"chapter_number": c.chapter_number, "word_count": c.word_count, "id": c.id}
+        for c in chapters
+    ]
+
+    divider = BatchDivider(batch_size=project.batch_size)
+    batches_data = divider.divide(chapters_data)
+
+    # 4. 创建新批次并关联章节
+    new_batches = []
+    for b_data in batches_data:
+        new_batch = Batch(
+            project_id=project_id,
+            batch_number=b_data['batch_number'],
+            start_chapter=b_data['start_chapter'],
+            end_chapter=b_data['end_chapter'],
+            total_chapters=b_data['total_chapters'],
+            total_words=b_data['total_words']
+        )
+        db.add(new_batch)
+        await db.flush() # 获取 batch id
+
+        # 更新章节的 batch_id
+        # 注意：这里需要批量更新，但为了简单逻辑，先用循环（性能优化点）
+        # 实际章节ID列表
+        chapter_ids = [c['id'] for c in b_data['chapters']]
+        from sqlalchemy import update
+        await db.execute(
+            update(Chapter).where(Chapter.id.in_(chapter_ids)).values(batch_id=new_batch.id)
+        )
+
+    # 5. 更新状态
+    project.status = 'parsing'
+
+    await db.commit()
+    await db.refresh(project)
+
+    return project
+

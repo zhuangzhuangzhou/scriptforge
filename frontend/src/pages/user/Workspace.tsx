@@ -2,19 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Settings, FileEdit, Play, Download, RefreshCw,
-  BrainCircuit, Layers, Activity, Zap, Lightbulb, Swords, Users, Cpu,
-  Plus, Terminal, CheckCircle2, MessageSquare, Eye, LayoutTemplate, FileType,
-  BookText, Save, Sparkles, Loader2, ThumbsUp, FileCheck, Search, X, Trash2, Copy, BookOpen,
-  Hash, Type, Sliders, Upload, BarChart3, Database, Edit3, Filter, FileText, SplitSquareVertical,
+  BrainCircuit, Layers, Activity, Lightbulb, Swords, Users, Cpu,
+  Plus, Terminal, CheckCircle2, Eye, LayoutTemplate,
+  BookText, Save, Sparkles, Loader2, ThumbsUp, FileCheck, Search, X, Trash2, BookOpen,
+  Hash, Type, Sliders, Upload, Database, SplitSquareVertical,
   CircleDashed, RotateCcw
 } from 'lucide-react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence } from 'framer-motion';
 import ConsoleLogger, { LogEntry } from '../../components/ConsoleLogger';
 import AICopilot from '../../components/AICopilot';
 import AgentConfigModal from '../../components/modals/AgentConfigModal';
 import { UserTier } from '../../types';
 import { projectApi } from '../../services/api';
-import { message } from 'antd';
+import { message, Modal } from 'antd';
 
 interface ProjectWorkspaceProps {
   userTier: UserTier;
@@ -102,7 +102,7 @@ const initialSkills = [
 
 // --- Subcomponents ---
 
-const SidebarItem = ({ icon: Icon, label, active, onClick }: any) => (
+const SidebarItem = ({ icon: Icon, label, active, onClick }: { icon: any, label: string, active: boolean, onClick: () => void }) => (
   <button
     onClick={onClick}
     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 border ${
@@ -123,7 +123,7 @@ const SectionTitle = ({ title, description }: { title: string, description: stri
     </div>
 );
 
-const StatCard = ({ icon: Icon, label, value, colorClass }: any) => (
+const StatCard = ({ icon: Icon, label, value, colorClass }: { icon: any, label: string, value: string | number, colorClass: string }) => (
     <div className="bg-slate-900/40 border border-slate-800 p-4 rounded-2xl flex items-center gap-4 group hover:border-slate-700 transition-all shadow-lg">
         <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${colorClass} shadow-inner`}>
             <Icon size={20} />
@@ -135,16 +135,33 @@ const StatCard = ({ icon: Icon, label, value, colorClass }: any) => (
     </div>
 );
 
-const Workspace: React.FC<ProjectWorkspaceProps> = ({ userTier }) => {
+const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const { projectId } = useParams<{ projectId: string }>();
     const navigate = useNavigate();
     const [project, setProject] = useState<any>(null);
     const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [uploading, setUploading] = useState(false);
+    const [splitting, setSplitting] = useState(false);
+    const [starting, setStarting] = useState(false);
+    const fileInputRef = React.useRef<HTMLInputElement>(null);
+
     const [activeTab, setActiveTab] = useState<Tab>('CONFIG');
-    const [showConsole, setShowConsole] = useState(true);
+    const [showConsole, setShowConsole] = useState(false);
     const [showCopilot, setShowCopilot] = useState(false);
-    const [isProcessing, setIsProcessing] = useState(false);
     const [logs, setLogs] = useState<LogEntry[]>(mockLogs);
+    const [isProcessing, setIsProcessing] = useState(false);
+
+    // Form Data
+    const [formData, setFormData] = useState({
+        name: '',
+        novel_type: '悬疑/惊悚',
+        description: '',
+        batch_size: 5,
+        chapter_split_rule: 'auto',
+        breakdown_model: 'DeepNarrative-Pro',
+        script_model: 'Gemini-1.5-Pro'
+    });
 
     // Config State
     const [agents, setAgents] = useState(initialAgents);
@@ -158,6 +175,19 @@ const Workspace: React.FC<ProjectWorkspaceProps> = ({ userTier }) => {
     const [selectedChapterId, setSelectedChapterId] = useState<number>(1);
     const selectedChapter = mockChapters.find(ch => ch.id === selectedChapterId) || mockChapters[0];
 
+    const getStatusText = (status: string) => {
+        const statusMap: Record<string, string> = {
+            'draft': '草稿',
+            'uploaded': '已上传',
+            'ready': '就绪',
+            'parsing': '解析中',
+            'scripting': '生成中',
+            'completed': '已完成',
+            'failed': '失败'
+        };
+        return statusMap[status] || status;
+    };
+
     // 获取项目数据
     useEffect(() => {
         const fetchProject = async () => {
@@ -170,6 +200,14 @@ const Workspace: React.FC<ProjectWorkspaceProps> = ({ userTier }) => {
                 const res = await projectApi.getProject(projectId);
                 if (res.data) {
                     setProject(res.data);
+                    // 初始化表单数据
+                    setFormData({
+                        name: res.data.name || '',
+                        novel_type: res.data.novel_type || '悬疑/惊悚',
+                        description: res.data.description || '',
+                        batch_size: res.data.batch_size || 5,
+                        chapter_split_rule: res.data.chapter_split_rule || 'auto'
+                    });
                 } else {
                     message.error('项目不存在');
                     navigate('/dashboard');
@@ -184,6 +222,122 @@ const Workspace: React.FC<ProjectWorkspaceProps> = ({ userTier }) => {
         };
         fetchProject();
     }, [projectId, navigate]);
+
+    // 保存配置
+    const handleSaveConfig = async () => {
+        if (!projectId) return;
+        setSaving(true);
+        try {
+            const res = await projectApi.updateProject(projectId, formData);
+            if (res.data) {
+                setProject(res.data);
+                message.success('配置已保存');
+            }
+        } catch (err) {
+            console.error('保存失败:', err);
+            message.error('保存失败，请重试');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    // 处理文件上传
+    const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file || !projectId) return;
+
+        // 自动提取文件名（去掉扩展名）
+        const fileNameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
+
+        Modal.confirm({
+            title: '上传确认',
+            content: `是否将项目名称更新为 "${fileNameWithoutExt}" 并上传文件？`,
+            okText: '确定',
+            cancelText: '仅上传',
+            onOk: async () => {
+                await performUpload(file, fileNameWithoutExt);
+            },
+            onCancel: async () => {
+                await performUpload(file);
+            }
+        });
+    };
+
+    const performUpload = async (file: File, newName?: string) => {
+        setUploading(true);
+        try {
+            if (newName) {
+                await projectApi.updateProject(projectId!, { name: newName });
+                setFormData(prev => ({ ...prev, name: newName }));
+            }
+
+            await projectApi.uploadFile(projectId!, file);
+            message.success('文件上传成功');
+
+            const res = await projectApi.getProject(projectId!);
+            if (res.data) {
+                setProject(res.data);
+            }
+        } catch (error) {
+            console.error('上传文件失败:', error);
+            message.error('上传文件失败，请重试');
+        } finally {
+            setUploading(false);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+        }
+    };
+
+    // 触发文件选择
+    const triggerFileUpload = () => {
+        fileInputRef.current?.click();
+    };
+
+    // 智能拆分章节
+    const handleSplit = async () => {
+        if (!projectId) return;
+        setSplitting(true);
+        setIsProcessing(true);
+        setShowConsole(true); // 开启控制台查看日志
+        try {
+            const res = await projectApi.splitChapters(projectId);
+            if (res.data) {
+                message.success(`拆分成功！共识别 ${res.data.total_chapters} 章`);
+                // 刷新项目数据
+                const p = await projectApi.getProject(projectId);
+                if (p.data) setProject(p.data);
+            }
+        } catch (error) {
+            console.error('拆分失败:', error);
+            message.error('拆分失败，请检查文件格式或拆分规则');
+        } finally {
+            setSplitting(false);
+            setIsProcessing(false);
+        }
+    };
+
+    // 启动项目
+    const handleStart = async () => {
+        if (!projectId) return;
+        setStarting(true);
+        setIsProcessing(true);
+        try {
+            await projectApi.startProject(projectId);
+            message.success('项目已启动，开始剧情分析...');
+            // 刷新项目数据
+            const p = await projectApi.getProject(projectId);
+            if (p.data) {
+                setProject(p.data);
+                // 自动跳转到 PLOT 标签页
+                setActiveTab('PLOT');
+            }
+        } catch (error) {
+            console.error('启动失败:', error);
+            message.error('启动失败，请重试');
+        } finally {
+            setStarting(false);
+            setIsProcessing(false);
+        }
+    };
 
     // 显示加载状态
     if (loading) {
@@ -224,62 +378,238 @@ const Workspace: React.FC<ProjectWorkspaceProps> = ({ userTier }) => {
         switch(activeTab) {
             case 'CONFIG':
                 return (
-                    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
-                        {/* 统计卡片 */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                            <StatCard icon={Hash} label="总章节数" value="45 章" colorClass="bg-blue-500/10 text-blue-400" />
-                            <StatCard icon={Type} label="预估字数" value="35.2 万字" colorClass="bg-purple-500/10 text-purple-400" />
-                            <StatCard icon={CheckCircle2} label="已拆解章节" value="15 / 45" colorClass="bg-emerald-500/10 text-emerald-400" />
-                            <StatCard icon={Activity} label="当前状态" value="进行中" colorClass="bg-cyan-500/10 text-cyan-400" />
+                    <div className="flex flex-col lg:flex-row gap-6 h-full animate-in fade-in slide-in-from-bottom-4 duration-300">
+                        {/* 左侧内容 - 68% */}
+                        <div className="flex-1 lg:flex-[0.68] space-y-6 overflow-y-auto pr-2 custom-scrollbar">
+                            {/* 统计卡片 */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                <StatCard
+                                    icon={Hash}
+                                    label="总章节数"
+                                    value={`${project.total_chapters || 0} 章`}
+                                    colorClass="bg-blue-500/10 text-blue-400"
+                                />
+                                <StatCard
+                                    icon={Type}
+                                    label="预估字数"
+                                    value={`${project.total_words ? (project.total_words / 10000).toFixed(1) : '0'} 万字`}
+                                    colorClass="bg-purple-500/10 text-purple-400"
+                                />
+                                <StatCard
+                                    icon={CheckCircle2}
+                                    label="已拆解章节"
+                                    value={`${project.processed_chapters || 0} / ${project.total_chapters || 0}`}
+                                    colorClass="bg-emerald-500/10 text-emerald-400"
+                                />
+                                <StatCard
+                                    icon={Activity}
+                                    label="当前状态"
+                                    value={getStatusText(project.status)}
+                                    colorClass="bg-cyan-500/10 text-cyan-400"
+                                />
+                            </div>
+
+                            {/* 基础信息 */}
+                            <div className="bg-slate-900/50 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-semibold text-slate-400 flex items-center gap-2"><BookOpen size={14}/> 小说名称</label>
+                                        <input
+                                            type="text"
+                                            value={formData.name}
+                                            onChange={(e) => setFormData({...formData, name: e.target.value})}
+                                            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:ring-1 focus:ring-cyan-500 outline-none transition-all"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-xs font-semibold text-slate-400 flex items-center gap-2"><LayoutTemplate size={14}/> 小说类型</label>
+                                        <select
+                                            value={formData.novel_type}
+                                            onChange={(e) => setFormData({...formData, novel_type: e.target.value})}
+                                            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:ring-1 focus:ring-cyan-500 outline-none"
+                                        >
+                                            <option value="悬疑惊悚">悬疑惊悚</option>
+                                            <option value="都市言情">都市言情</option>
+                                            <option value="玄幻奇幻">玄幻奇幻</option>
+                                            <option value="武侠仙侠">武侠仙侠</option>
+                                            <option value="科幻末世">科幻末世</option>
+                                            <option value="历史军事">历史军事</option>
+                                            <option value="游戏竞技">游戏竞技</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-xs font-semibold text-slate-400 flex items-center gap-2"><FileEdit size={14}/> 小说简介</label>
+                                    <textarea
+                                        rows={5}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-xl p-4 text-sm text-slate-300 focus:ring-1 focus:ring-cyan-500 outline-none resize-none leading-relaxed"
+                                        value={formData.description}
+                                        onChange={(e) => setFormData({...formData, description: e.target.value})}
+                                        placeholder="请输入小说简介..."
+                                    />
+                                </div>
+                            </div>
+
+                            {/* 配置卡片 (移除源文件卡片，改为3列) */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div className="bg-slate-900/50 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-4">
+                                    <h3 className="text-xs font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3 uppercase tracking-wider"><Sliders size={14} className="text-cyan-400"/> 核心逻辑</h3>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] text-slate-400 uppercase font-bold">拆剧批次</label>
+                                        <input
+                                            type="number"
+                                            value={formData.batch_size}
+                                            onChange={(e) => setFormData({...formData, batch_size: parseInt(e.target.value) || 5})}
+                                            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:ring-1 focus:ring-cyan-500 outline-none"
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] text-slate-400 uppercase font-bold">章节拆分规则</label>
+                                        <select
+                                            value={typeof formData.chapter_split_rule === 'string' ? formData.chapter_split_rule : 'custom'}
+                                            onChange={(e) => setFormData({...formData, chapter_split_rule: e.target.value})}
+                                            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-cyan-500 outline-none"
+                                        >
+                                            <option value="auto">智能识别 (第X章)</option>
+                                            <option value="blank_line">空行拆分</option>
+                                            <option value="custom">自定义正则</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div className="bg-slate-900/50 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-4">
+                                    <h3 className="text-xs font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3 uppercase tracking-wider"><BrainCircuit size={14} className="text-purple-400"/> 剧情拆解模型</h3>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] text-slate-400 uppercase font-bold">Breakdown Model</label>
+                                        <select className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-cyan-500 outline-none"><option>DeepNarrative-Pro</option><option>GPT-4o</option></select>
+                                    </div>
+                                </div>
+                                <div className="bg-slate-900/50 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-4">
+                                    <h3 className="text-xs font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3 uppercase tracking-wider"><Cpu size={14} className="text-indigo-400"/> 剧集生成模型</h3>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] text-slate-400 uppercase font-bold">Script Model</label>
+                                        <select className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-cyan-500 outline-none"><option>Gemini-1.5-Pro</option><option>GPT-4o</option></select>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
-                        {/* 基础信息 */}
-                        <div className="bg-slate-900/50 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-6">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div className="space-y-2">
-                                    <label className="text-xs font-semibold text-slate-400 flex items-center gap-2"><BookOpen size={14}/> 小说名称</label>
-                                    <input type="text" defaultValue={project.name} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:ring-1 focus:ring-cyan-500 outline-none transition-all" />
-                                </div>
-                                <div className="space-y-2">
-                                    <label className="text-xs font-semibold text-slate-400 flex items-center gap-2"><LayoutTemplate size={14}/> 小说类型</label>
-                                    <select defaultValue={project.novel_type} className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:ring-1 focus:ring-cyan-500 outline-none">
-                                        <option>悬疑/惊悚</option><option>科幻/奇幻</option><option>古装/历史</option><option>都市/情感</option><option>喜剧</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-xs font-semibold text-slate-400 flex items-center gap-2"><FileEdit size={14}/> 小说简介</label>
-                                <textarea rows={5} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-4 text-sm text-slate-300 focus:ring-1 focus:ring-cyan-500 outline-none resize-none leading-relaxed" defaultValue="这是一个关于勇气与背叛的故事..." />
-                            </div>
-                        </div>
+                        {/* 右侧内容 - 32% - 小说源文件管理 */}
+                        <div className="flex-1 lg:flex-[0.32] bg-slate-900/50 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col gap-6 h-fit lg:h-auto relative overflow-hidden">
+                            {/* 隐藏的文件输入框 */}
+                            <input
+                                type="file"
+                                ref={fileInputRef}
+                                onChange={handleFileUpload}
+                                className="hidden"
+                                accept=".txt,.docx,.pdf,.md"
+                            />
 
-                        {/* 配置卡片 */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                            <div className="bg-slate-900/50 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-4">
-                                <h3 className="text-xs font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3 uppercase tracking-wider"><Sliders size={14} className="text-cyan-400"/> 核心逻辑</h3>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] text-slate-400 uppercase font-bold">拆剧批次</label>
-                                    <input type="number" defaultValue={6} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:ring-1 focus:ring-cyan-500 outline-none" />
+                            {/* 标题 */}
+                            <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3 uppercase tracking-wider mb-2">
+                                <Database size={16} className="text-emerald-400"/> 小说源文件
+                            </h3>
+
+                            {/* 内容区域：根据是否有文件显示不同状态 */}
+                            {!project.original_file_name ? (
+                                /* 未上传状态 */
+                                <div
+                                    onClick={triggerFileUpload}
+                                    className="flex-1 min-h-[300px] border-2 border-dashed border-slate-700 hover:border-emerald-500/50 rounded-xl flex flex-col items-center justify-center gap-4 cursor-pointer group transition-all bg-slate-950/30 hover:bg-slate-900/50"
+                                >
+                                    {uploading ? (
+                                        <div className="flex flex-col items-center gap-3">
+                                            <Loader2 size={32} className="animate-spin text-emerald-500" />
+                                            <p className="text-xs text-emerald-500 font-bold animate-pulse">正在上传文件...</p>
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div className="w-16 h-16 rounded-full bg-slate-800 group-hover:bg-emerald-500/10 flex items-center justify-center transition-colors">
+                                                <Upload size={24} className="text-slate-400 group-hover:text-emerald-400 transition-colors" />
+                                            </div>
+                                            <div className="text-center">
+                                                <p className="text-sm font-bold text-slate-300 group-hover:text-white transition-colors">点击上传小说文件</p>
+                                                <p className="text-xs text-slate-500 mt-1">支持 .txt, .docx, .pdf 格式</p>
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
-                            </div>
-                            <div className="bg-slate-900/50 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-4">
-                                <h3 className="text-xs font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3 uppercase tracking-wider"><BrainCircuit size={14} className="text-purple-400"/> 剧情拆解模型</h3>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] text-slate-400 uppercase font-bold">Breakdown Model</label>
-                                    <select className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-cyan-500 outline-none"><option>DeepNarrative-Pro</option><option>GPT-4o</option></select>
-                                </div>
-                            </div>
-                            <div className="bg-slate-900/50 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-4">
-                                <h3 className="text-xs font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3 uppercase tracking-wider"><Cpu size={14} className="text-indigo-400"/> 剧集生成模型</h3>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] text-slate-400 uppercase font-bold">Script Model</label>
-                                    <select className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-cyan-500 outline-none"><option>Gemini-1.5-Pro</option><option>GPT-4o</option></select>
-                                </div>
-                            </div>
-                            <div className="bg-slate-900/50 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-4">
-                                <h3 className="text-xs font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3 uppercase tracking-wider"><Database size={14} className="text-emerald-400"/> 小说源文件</h3>
-                                <div className="bg-emerald-500/5 border border-emerald-500/20 p-3 rounded-xl flex items-center justify-between"><div className="flex items-center gap-2 truncate"><BookText size={16} className="text-emerald-400"/><span className="text-[11px] text-emerald-100 truncate">{project.original_file_name || 'novel.docx'}</span></div><CheckCircle2 size={12} className="text-emerald-500"/></div>
-                            </div>
+                            ) : (
+                                /* 已上传状态 */
+                                <>
+                                    <div className="bg-slate-950 border border-slate-800 rounded-xl p-6 flex flex-col items-center gap-4 group hover:border-emerald-500/30 transition-all">
+                                        <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 shadow-lg group-hover:scale-110 transition-transform">
+                                            <BookText size={32} className="text-emerald-400" />
+                                        </div>
+                                        <div className="text-center w-full">
+                                            <p className="text-sm font-bold text-white truncate px-2" title={project.original_file_name}>{project.original_file_name}</p>
+                                            <p className="text-xs text-slate-500 mt-1 font-mono">
+                                                {project.original_file_size ? (project.original_file_size / 1024 / 1024).toFixed(2) : '0.00'} MB
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-2 text-[10px] bg-emerald-500/10 text-emerald-400 px-2 py-1 rounded-full border border-emerald-500/20">
+                                            <CheckCircle2 size={12} /> 文件校验通过
+                                        </div>
+                                    </div>
+
+                                    <div className="flex flex-col gap-3 mt-auto">
+                                        {/* 根据状态显示主操作按钮 */}
+                                        {project.status === 'uploaded' && (
+                                            <button
+                                                onClick={handleSplit}
+                                                disabled={splitting}
+                                                className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl font-bold shadow-lg shadow-emerald-900/20 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                {splitting ? <Loader2 size={18} className="animate-spin" /> : <SplitSquareVertical size={18} />}
+                                                {splitting ? '正在拆分...' : '开始智能拆分'}
+                                            </button>
+                                        )}
+
+                                        {project.status === 'ready' && (
+                                            <div className="w-full py-3 bg-blue-500/10 border border-blue-500/30 text-blue-400 rounded-xl font-bold flex flex-col items-center justify-center gap-1 text-xs">
+                                                <span className="flex items-center gap-2"><CheckCircle2 size={14}/> 章节拆分完成</span>
+                                                <span className="opacity-70">请点击顶部 "项目启动" 进入下一步</span>
+                                            </div>
+                                        )}
+
+                                        {(project.status === 'parsing' || project.status === 'scripting' || project.status === 'completed') && (
+                                            <div className="w-full py-3 bg-slate-800 text-slate-500 rounded-xl font-bold flex items-center justify-center gap-2 text-xs cursor-not-allowed">
+                                                <CheckCircle2 size={14}/> 源文件已锁定
+                                            </div>
+                                        )}
+
+                                        {/* 辅助操作按钮 (仅在 uploaded 或 ready 状态下允许修改) */}
+                                        {(project.status === 'uploaded' || project.status === 'ready') && (
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <button
+                                                    onClick={triggerFileUpload}
+                                                    disabled={uploading || splitting}
+                                                    className="py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                                >
+                                                    {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                                                    重新上传
+                                                </button>
+                                                {project.status === 'ready' ? (
+                                                    <button
+                                                        onClick={handleSplit}
+                                                        disabled={splitting}
+                                                        className="py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                                    >
+                                                        <RefreshCw size={14} /> 重新拆分
+                                                    </button>
+                                                ) : (
+                                                    <button className="py-2.5 bg-slate-800 hover:bg-red-900/20 text-slate-300 hover:text-red-400 border border-slate-700 hover:border-red-500/30 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2">
+                                                        <Trash2 size={14} /> 删除文件
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="bg-slate-800/30 rounded-xl p-4 text-[10px] text-slate-500 leading-relaxed border border-slate-800/50">
+                                        <p className="flex gap-2"><Lightbulb size={12} className="text-amber-400 shrink-0"/> <span>重新上传将覆盖现有文件，并建议重新执行拆分流程。</span></p>
+                                    </div>
+                                </>
+                            )}
                         </div>
                     </div>
                 );
@@ -469,7 +799,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = ({ userTier }) => {
                         </div>
                         
                         <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
-                            {mockPlots.map((plot, i) => (
+                            {mockPlots.map((plot) => (
                                 <div key={plot.id} className="bg-slate-900/50 border border-slate-800 rounded-xl p-5 hover:border-cyan-500/30 transition-all relative group shadow-xl">
                                      <div className="absolute top-4 right-4 text-slate-600 font-mono text-xs">ep.{String(plot.id).padStart(2,'0')}</div>
                                      <h3 className="text-lg font-bold text-white mb-2">{plot.title}</h3>
@@ -736,11 +1066,25 @@ const Workspace: React.FC<ProjectWorkspaceProps> = ({ userTier }) => {
                         <div className="flex items-center gap-3">
                             {activeTab === 'CONFIG' ? (
                                 <>
-                                    <button className="flex items-center gap-2 px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium rounded-lg border border-slate-700 transition-all">
-                                        <Save size={14} /> 保存设置
+                                    <button
+                                        onClick={handleSaveConfig}
+                                        disabled={saving}
+                                        className="flex items-center gap-2 px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium rounded-lg border border-slate-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                                        {saving ? '保存中...' : '保存设置'}
                                     </button>
-                                    <button className="flex items-center gap-2 px-6 py-1.5 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white text-xs font-bold rounded-lg shadow-lg shadow-cyan-500/20 transition-all hover:scale-105">
-                                        <Play size={14} fill="currentColor" /> 项目启动
+                                    <button
+                                        onClick={handleStart}
+                                        disabled={project.status !== 'ready' || starting}
+                                        className={`flex items-center gap-2 px-6 py-1.5 text-xs font-bold rounded-lg shadow-lg transition-all ${
+                                            project.status === 'ready'
+                                            ? 'bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white shadow-cyan-500/20 hover:scale-105 cursor-pointer'
+                                            : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                                        }`}
+                                    >
+                                        {starting ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}
+                                        {starting ? '启动中...' : (project.status === 'parsing' ? '正在运行' : '项目启动')}
                                     </button>
                                 </>
                             ) : (

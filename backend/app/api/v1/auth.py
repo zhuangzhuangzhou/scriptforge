@@ -35,15 +35,16 @@ class Token(BaseModel):
 
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: str
     email: str
     username: str
     full_name: Optional[str] = None
     role: str
+    tier: str  # 用户等级: free, creator, studio, enterprise
     balance: float
     is_active: bool
-    
+
     @field_validator('id', mode='before')
     @classmethod
     def validate_id(cls, v):

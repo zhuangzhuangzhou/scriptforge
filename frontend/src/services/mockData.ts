@@ -1,7 +1,7 @@
 export const mockProjects = [
-  { id: '1', name: "沉默的真相·改编", type: "悬疑/惊悚", updatedAt: "2小时前", status: "进行中", progress: 65, totalChapters: 24, processedChapters: 15 },
-  { id: '2', name: "星际穿越·前传", type: "科幻", updatedAt: "1天前", status: "已完成", progress: 100, totalChapters: 10, processedChapters: 10 },
-  { id: '3', name: "大明王朝1566", type: "古装/历史", updatedAt: "3天前", status: "配置中", progress: 0, totalChapters: 50, processedChapters: 0 },
+  { id: '1', name: "沉默的真相·改编", novel_type: "悬疑/惊悚", updated_at: "2小时前", status: "processing", progress: 65, total_chapters: 24, processed_chapters: 15, batch_size: 5, description: "改编自长夜难明" },
+  { id: '2', name: "星际穿越·前传", novel_type: "科幻", updated_at: "1天前", status: "completed", progress: 100, total_chapters: 10, processed_chapters: 10, batch_size: 5, description: "星际穿越前传故事" },
+  { id: '3', name: "大明王朝1566", novel_type: "古装/历史", updated_at: "3天前", status: "draft", progress: 0, total_chapters: 50, processed_chapters: 0, batch_size: 5, description: "嘉靖末年，国库空虚..." },
 ];
 
 export const mockLogs = [

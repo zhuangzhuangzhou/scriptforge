@@ -51,6 +51,13 @@ class MinIOClient:
         except S3Error as e:
             raise Exception(f"文件上传失败: {e}")
 
+    def get_object(self, object_name: str):
+        """获取文件对象"""
+        try:
+            return self.client.get_object(self._bucket_name, object_name)
+        except S3Error as e:
+            raise Exception(f"获取文件失败: {e}")
+
 
 @contextmanager
 def get_minio_access_key_client():

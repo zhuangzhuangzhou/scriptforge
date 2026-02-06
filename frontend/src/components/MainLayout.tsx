@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { Film, Bell, LogOut, ChevronLeft, Settings, Shield, Sparkles } from 'lucide-react';
+import { Film, Bell, LogOut, ChevronLeft, Settings, Shield, Gem, User, Lock } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { message, Dropdown } from 'antd';
 import GlobalSettingsModal from './modals/GlobalSettingsModal';
 import RechargeModal from './modals/RechargeModal';
 import BillingModal from './modals/BillingModal';
+import TierComparisonModal from './modals/TierComparisonModal';
 import { UserTier } from '../types';
 import { useAuth } from '../context/AuthContext';
 
@@ -19,7 +20,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isRechargeOpen, setIsRechargeOpen] = useState(false);
   const [isBillingOpen, setIsBillingOpen] = useState(false);
-  
+  const [isTierComparisonOpen, setIsTierComparisonOpen] = useState(false);
+
   const { user } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -28,6 +30,25 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
   const handleRechargeSuccess = (newTier: UserTier) => {
     setUserTier(newTier);
     message.success('充值/升级成功');
+  };
+
+  const handleUpgrade = () => {
+    setIsTierComparisonOpen(false);
+    setIsRechargeOpen(true);
+  };
+
+  const tierNames: Record<UserTier, string> = {
+    'FREE': '免费版',
+    'CREATOR': '创作者版',
+    'STUDIO': '工作室版',
+    'ENTERPRISE': '企业版'
+  };
+
+  const tierColors: Record<UserTier, string> = {
+    'FREE': 'from-slate-500 to-slate-700',
+    'CREATOR': 'from-blue-500 to-cyan-500',
+    'STUDIO': 'from-purple-500 to-pink-500',
+    'ENTERPRISE': 'from-amber-500 to-orange-500'
   };
 
   return (
@@ -52,6 +73,17 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
               AI ScriptFlow
             </span>
           </div>
+
+          {/* Tier Version Badge - Small Capsule Style */}
+          <button
+            onClick={() => setIsTierComparisonOpen(true)}
+            className="hidden md:flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-800/80 border border-slate-700 hover:border-cyan-500/50 transition-all group cursor-pointer"
+          >
+            <div className={`w-1.5 h-1.5 rounded-full bg-gradient-to-r ${tierColors[userTier]}`} />
+            <span className="text-[10px] font-bold text-slate-400 group-hover:text-cyan-400 transition-colors uppercase tracking-wider">
+              {tierNames[userTier]}
+            </span>
+          </button>
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3">
@@ -84,14 +116,14 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
           {/* Points */}
           <div
             onClick={() => setIsBillingOpen(true)}
-            className="h-10 px-4 bg-slate-900/50 rounded-full flex items-center gap-2 cursor-pointer hover:border-cyan-500/50 hover:bg-slate-800/80 transition-all"
+            className="h-9 px-3 bg-slate-900/50 rounded-full flex items-center gap-2.5 cursor-pointer hover:border-purple-500/30 hover:bg-slate-800/80 transition-all group border border-transparent"
             title="账户资产"
           >
-            <Sparkles size={16} className="text-cyan-400" />
-            <div className="flex items-center gap-1">
-              <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">积分:</span>
-              <span className="text-sm font-bold text-cyan-400">
-                {user?.balance ?? 0}
+            <Gem size={15} className="text-fuchsia-400 group-hover:scale-110 transition-transform duration-300" />
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">积分</span>
+              <span className="text-sm font-semibold bg-gradient-to-r from-pink-400 to-purple-500 bg-clip-text text-transparent">
+                {(user?.balance ?? 0).toLocaleString()}
               </span>
             </div>
           </div>
@@ -100,10 +132,10 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
           <Dropdown
             menu={{
               items: [
-                { key: 'edit', label: 'Edit Profile', onClick: () => message.info('Edit Profile feature coming soon') },
-                { key: 'password', label: 'Change Password', onClick: () => message.info('Change Password feature coming soon') },
+                { key: 'edit', label: '编辑资料', icon: <User size={14} />, onClick: () => message.info('编辑资料功能即将上线') },
+                { key: 'password', label: '修改密码', icon: <Lock size={14} />, onClick: () => message.info('修改密码功能即将上线') },
                 { type: 'divider' },
-                { key: 'logout', label: 'Logout', icon: <LogOut size={14} />, onClick: onLogout, danger: true },
+                { key: 'logout', label: '退出登录', icon: <LogOut size={14} />, onClick: onLogout, danger: true },
               ]
             }}
             placement="bottomRight"
@@ -144,6 +176,16 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
       {/* Billing Modal */}
       {isBillingOpen && (
         <BillingModal onClose={() => setIsBillingOpen(false)} />
+      )}
+
+      {/* Tier Comparison Modal */}
+      {isTierComparisonOpen && (
+        <TierComparisonModal
+          isOpen={isTierComparisonOpen}
+          onClose={() => setIsTierComparisonOpen(false)}
+          currentTier={userTier}
+          onUpgrade={handleUpgrade}
+        />
       )}
     </div>
   );

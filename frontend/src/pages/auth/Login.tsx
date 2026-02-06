@@ -31,9 +31,23 @@ const Login: React.FC = () => {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // 前端校验
+    const trimmedUsername = username.trim();
+    const trimmedPassword = password.trim();
+
+    if (!trimmedUsername) {
+      message.warning('请输入账号');
+      return;
+    }
+    if (!trimmedPassword) {
+      message.warning('请输入密码');
+      return;
+    }
+
     setIsLoading(true);
     try {
-      await login(username, password);
+      await login(trimmedUsername, trimmedPassword);
       message.success('登录成功');
       navigate('/dashboard');
     } catch (error: any) {
