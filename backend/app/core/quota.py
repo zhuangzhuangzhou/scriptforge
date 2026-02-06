@@ -62,8 +62,15 @@ TIER_CONFIGS = {
 
 
 def get_tier_config(tier: str) -> TierConfig:
-    """获取等级配置"""
-    return TIER_CONFIGS.get(tier, TIER_CONFIGS["free"])
+    """获取等级配置（大小写不敏感）"""
+    if not tier:
+        return TIER_CONFIGS["free"]
+    # 统一转为小写进行匹配
+    normalized_tier = tier.lower()
+    config = TIER_CONFIGS.get(normalized_tier)
+    if config is None:
+        return TIER_CONFIGS["free"]
+    return config
 
 
 class QuotaService:
