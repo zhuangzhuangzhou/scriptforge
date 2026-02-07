@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Card, Table, Button, Space, Modal, Tag, message } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons';
+import { Layout, Button, Space, Modal, Tag, message } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import SkillsEditor from '../../components/SkillsEditor';
+import { GlassCard } from '../../components/ui/GlassCard';
+import { GlassTable } from '../../components/ui/GlassTable';
 
 const { Content } = Layout;
 
@@ -149,50 +151,61 @@ const SkillsManagement: React.FC = () => {
   }
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <Layout className="bg-transparent min-h-screen">
       <Content style={{ padding: '24px' }}>
-        <Card
-          title="Skills管理"
-          extra={
-            <Button type="primary" icon={<PlusOutlined />}>
+        <GlassCard>
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-xl font-semibold text-white m-0">Skills管理</h2>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              className="bg-blue-600 border-none hover:bg-blue-500"
+            >
               创建自定义Skill
             </Button>
-          }
-        >
-          <Table
+          </div>
+          <GlassTable
             dataSource={skills}
             columns={columns}
             rowKey="id"
             loading={loading}
+            pagination={{ pageSize: 10 }}
           />
-        </Card>
+        </GlassCard>
 
         {/* Skill开发指南 */}
-        <Card title="Skill开发指南" className="mt-4">
-          <div className="prose max-w-none">
-            <h4>什么是Skill？</h4>
-            <p>
-              Skill是剧本生成流水线中的基本处理单元。每个Skill负责一个特定的任务，
-              如提取冲突点、识别剧情钩子、编写对话等。
-            </p>
+        <GlassCard className="mt-6">
+          <h2 className="text-xl font-semibold text-white mb-6">Skill开发指南</h2>
+          <div className="text-slate-300 space-y-6">
+            <div>
+              <h4 className="text-lg font-medium text-blue-400 mb-2">什么是Skill？</h4>
+              <p>
+                Skill是剧本生成流水线中的基本处理单元。每个Skill负责一个特定的任务，
+                如提取冲突点、识别剧情钩子、编写对话等。
+              </p>
+            </div>
 
-            <h4>内置Skills</h4>
-            <ul>
-              <li><strong>冲突点提取</strong> - 从章节中提取冲突点</li>
-              <li><strong>剧情钩子识别</strong> - 识别吸引观众的悬念和转折</li>
-              <li><strong>人物分析</strong> - 分析人物关系和性格</li>
-              <li><strong>场景识别</strong> - 识别场景信息</li>
-              <li><strong>情绪提取</strong> - 提取情绪变化点</li>
-              <li><strong>剧集规划</strong> - 规划剧集结构</li>
-            </ul>
+            <div>
+              <h4 className="text-lg font-medium text-blue-400 mb-2">内置Skills</h4>
+              <ul className="list-disc list-inside space-y-1 ml-4">
+                <li><strong className="text-white">冲突点提取</strong> - 从章节中提取冲突点</li>
+                <li><strong className="text-white">剧情钩子识别</strong> - 识别吸引观众的悬念和转折</li>
+                <li><strong className="text-white">人物分析</strong> - 分析人物关系和性格</li>
+                <li><strong className="text-white">场景识别</strong> - 识别场景信息</li>
+                <li><strong className="text-white">情绪提取</strong> - 提取情绪变化点</li>
+                <li><strong className="text-white">剧集规划</strong> - 规划剧集结构</li>
+              </ul>
+            </div>
 
-            <h4>自定义Skills</h4>
-            <p>
-              您可以创建自定义Skills来扩展系统功能。自定义Skills可以复制内置Skills
-              进行修改，或者从零开始编写。
-            </p>
+            <div>
+              <h4 className="text-lg font-medium text-blue-400 mb-2">自定义Skills</h4>
+              <p>
+                您可以创建自定义Skills来扩展系统功能。自定义Skills可以复制内置Skills
+                进行修改，或者从零开始编写。
+              </p>
+            </div>
           </div>
-        </Card>
+        </GlassCard>
       </Content>
     </Layout>
   );

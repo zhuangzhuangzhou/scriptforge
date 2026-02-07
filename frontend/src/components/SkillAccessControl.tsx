@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Table, Button, Space, Tag, Tabs, message } from 'antd';
+import { Button, Space, Tag, Tabs, message } from 'antd';
 import { EyeOutlined, LockOutlined, TeamOutlined, GlobalOutlined } from '@ant-design/icons';
+import { GlassCard } from './ui/GlassCard';
+import { GlassTable } from './ui/GlassTable';
 
 interface Skill {
   id: string;
