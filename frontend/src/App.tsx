@@ -5,11 +5,15 @@ import zhCN from 'antd/locale/zh_CN';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import MainLayout from './components/MainLayout';
 import ProtectedRoute from './components/ProtectedRoute';
+import AdminRoute from './components/AdminRoute';
 import Login from './pages/auth/Login';
 import Register from './pages/auth/Register';
 import Dashboard from './pages/user/Dashboard';
 import Workspace from './pages/user/Workspace';
 import SkillsManagement from './pages/user/SkillsManagement';
+import AIConfiguration from './pages/admin/AIConfiguration';
+import AdminDashboard from './pages/admin/Dashboard';
+import UserManagement from './pages/admin/UserManagement';
 import { UserTier } from './types';
 
 // 加载状态组件
@@ -59,6 +63,13 @@ const AppContent: React.FC = () => {
           <Route path="/dashboard" element={<Dashboard userTier={userTier} />} />
           <Route path="/workspace/:projectId" element={<Workspace userTier={userTier} />} />
           <Route path="/skills" element={<SkillsManagement />} />
+
+          {/* Admin Routes */}
+          <Route element={<AdminRoute />}>
+            <Route path="/admin/dashboard" element={<AdminDashboard />} />
+            <Route path="/admin/users" element={<UserManagement />} />
+            <Route path="/admin/configurations" element={<AIConfiguration />} />
+          </Route>
         </Route>
       </Route>
 

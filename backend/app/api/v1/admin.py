@@ -27,23 +27,40 @@ class UserUpdateRequest(BaseModel):
     is_active: Optional[bool] = None
     role: Optional[str] = None
     balance: Optional[float] = None
+    tier: Optional[str] = None
 
 
 @router.get("/users")
 async def get_users(
     skip: int = 0,
     limit: int = 20,
+    keyword: Optional[str] = None,
     admin: User = Depends(check_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """获取用户列表"""
+    query = select(User)
+
+    if keyword:
+        query = query.where(
+            (User.username.ilike(f"%{keyword}%")) |
+            (User.email.ilike(f"%{keyword}%"))
+        )
+
     result = await db.execute(
-        select(User).offset(skip).limit(limit)
+        query.offset(skip).limit(limit)
     )
     users = result.scalars().all()
 
     # 获取总数
-    count_result = await db.execute(select(func.count(User.id)))
+    count_query = select(func.count(User.id))
+    if keyword:
+        count_query = count_query.where(
+            (User.username.ilike(f"%{keyword}%")) |
+            (User.email.ilike(f"%{keyword}%"))
+        )
+
+    count_result = await db.execute(count_query)
     total = count_result.scalar()
 
     return {
@@ -77,6 +94,8 @@ async def update_user(
         user.role = request.role
     if request.balance is not None:
         user.balance = request.balance
+    if request.tier is not None:
+        user.tier = request.tier
 
     await db.commit()
     await db.refresh(user)

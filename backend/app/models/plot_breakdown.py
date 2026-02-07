@@ -26,5 +26,10 @@ class PlotBreakdown(Base):
     consistency_score = Column(Integer)
     consistency_results = Column(JSONB)
 
+    # OWR 质检相关
+    qa_status = Column(String(50), default="pending", index=True)
+    qa_report = Column(JSONB)
+    used_adapt_method_id = Column(String(100))
+
     created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
     updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)

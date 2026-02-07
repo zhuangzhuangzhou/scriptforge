@@ -64,6 +64,9 @@ export interface PlotBreakdown {
   consistency_status?: string;
   consistency_score?: number;
   consistency_results?: Record<string, unknown>;
+  qa_status?: string;
+  qa_report?: any;
+  used_adapt_method_id?: string;
 }
 
 // AI 任务状态
@@ -74,4 +77,17 @@ export interface AITaskStatus {
   current_step?: string;
   error_message?: string;
   retry_count?: number;
+}
+
+// 技能类型
+export interface Skill {
+  id: string;
+  name: string;
+  display_name: string;
+  description?: string;
+  category: 'breakdown' | 'script' | 'analysis';
+  is_active: boolean;
+  is_builtin: boolean;
+  is_template_based: boolean;
+  owner_id?: string;
 }

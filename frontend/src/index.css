@@ -4,16 +4,28 @@
 
 :root {
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  --color-slate-950: #020617;
+  --color-slate-900: #0f172a;
+  --color-slate-800: #1e293b;
+  --color-slate-700: #334155;
+  --color-cyan-400: #22d3ee;
+  --color-cyan-500: #06b6d4;
 }
 
 body {
   margin: 0;
   padding: 0;
-  background-color: #020617; /* matches bg-slate-950 */
+  background-color: var(--color-slate-950);
   color: white;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Custom Animations */
+code, pre, .font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Custom Animations from Spec */
 @keyframes gradient {
   0% { background-position: 0% 50%; }
   50% { background-position: 100% 50%; }
@@ -25,12 +37,193 @@ body {
   animation: gradient 3s linear infinite;
 }
 
-/* Autofill styling for dark theme */
+/*
+ * Autofill styling for dark theme
+ * Matches bg-slate-950 (#020617)
+ */
 input:-webkit-autofill,
-input:-webkit-autofill:hover, 
-input:-webkit-autofill:focus, 
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
 input:-webkit-autofill:active {
-    -webkit-box-shadow: 0 0 0 30px #0f172a inset !important;
+    -webkit-box-shadow: 0 0 0 30px #020617 inset !important;
     -webkit-text-fill-color: #e2e8f0 !important;
     transition: background-color 5000s ease-in-out 0s;
+}
+
+/* Global Selection Color (Cyan-400 equivalent with opacity) */
+::selection {
+  background-color: rgba(34, 211, 238, 0.3);
+  color: #fff;
+}
+
+/* =========================================
+   Ant Design Dark Theme Overrides
+   Style: Futuristic High-Tech / Cyberpunk
+   ========================================= */
+
+/* Table Overrides */
+.ant-table-dark .ant-table {
+  background: transparent !important;
+  color: #e2e8f0;
+}
+
+.ant-table-dark .ant-table-thead > tr > th {
+  background: #0f172a !important; /* slate-900 */
+  color: #94a3b8 !important; /* slate-400 */
+  border-bottom: 1px solid #1e293b !important; /* slate-800 */
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+}
+
+.ant-table-dark .ant-table-tbody > tr > td {
+  border-bottom: 1px solid #1e293b !important; /* slate-800 */
+  transition: background 0.3s;
+}
+
+.ant-table-dark .ant-table-tbody > tr:hover > td {
+  background: rgba(30, 41, 59, 0.5) !important; /* slate-800 with opacity */
+}
+
+/* Pagination */
+.ant-table-dark .ant-pagination-item {
+  background: transparent !important;
+  border-color: #334155 !important; /* slate-700 */
+}
+
+.ant-table-dark .ant-pagination-item a {
+  color: #94a3b8 !important; /* slate-400 */
+}
+
+.ant-table-dark .ant-pagination-item-active {
+  border-color: #22d3ee !important; /* cyan-400 */
+  background: rgba(34, 211, 238, 0.1) !important;
+}
+
+.ant-table-dark .ant-pagination-item-active a {
+  color: #22d3ee !important; /* cyan-400 */
+}
+
+.ant-table-dark .ant-pagination-prev .ant-pagination-item-link,
+.ant-table-dark .ant-pagination-next .ant-pagination-item-link {
+  color: #94a3b8 !important;
+  background: transparent !important;
+  border-color: #334155 !important;
+}
+
+.ant-table-dark .ant-pagination-disabled .ant-pagination-item-link {
+  color: #475569 !important; /* slate-600 */
+  border-color: #1e293b !important;
+}
+
+/* Modal Dark Theme Overrides */
+/* Glassmorphism: backdrop-blur-xl bg-slate-900/60 border border-slate-800/60 */
+.dark-modal .ant-modal-content {
+  background-color: rgba(15, 23, 42, 0.95) !important; /* slate-900 high opacity */
+  border: 1px solid rgba(30, 41, 59, 0.8); /* slate-800 */
+  color: #e2e8f0;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(16px);
+}
+
+.dark-modal .ant-modal-header {
+  background-color: transparent !important;
+  border-bottom: 1px solid #1e293b; /* slate-800 */
+  margin-bottom: 1.5rem;
+}
+
+.dark-modal .ant-modal-title {
+  color: #f8fafc !important; /* slate-50 */
+  font-weight: 600;
+}
+
+.dark-modal .ant-modal-close {
+  color: #94a3b8 !important; /* slate-400 */
+}
+
+.dark-modal .ant-modal-close:hover {
+  color: #fff !important;
+  background-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Form Elements in Dark Modals */
+.dark-modal .ant-form-item-label > label {
+  color: #cbd5e1 !important; /* slate-300 */
+}
+
+.dark-modal .ant-input,
+.dark-modal .ant-input-number,
+.dark-modal .ant-input-textarea,
+.dark-modal .ant-select-selector {
+  background-color: #020617 !important; /* slate-950 */
+  border-color: #334155 !important; /* slate-700 */
+  color: #e2e8f0 !important;
+  transition: all 0.3s;
+}
+
+.dark-modal .ant-input::placeholder,
+.dark-modal .ant-input-number::placeholder {
+  color: #475569;
+}
+
+.dark-modal .ant-input:hover,
+.dark-modal .ant-input:focus,
+.dark-modal .ant-input-number:hover,
+.dark-modal .ant-input-number:focus,
+.dark-modal .ant-select-selector:hover,
+.dark-modal .ant-select-focused .ant-select-selector {
+  border-color: #22d3ee !important; /* cyan-400 */
+  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.1) !important;
+}
+
+.dark-modal .ant-select-arrow {
+  color: #94a3b8 !important;
+}
+
+/* Dropdowns */
+.ant-select-dropdown {
+  background-color: #0f172a !important; /* slate-900 */
+  border: 1px solid #334155;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+  padding: 4px;
+}
+
+.ant-select-item {
+  color: #e2e8f0 !important;
+  border-radius: 4px;
+}
+
+.ant-select-item-option-selected {
+  background-color: rgba(34, 211, 238, 0.15) !important;
+  color: #22d3ee !important;
+  font-weight: 500;
+}
+
+.ant-select-item-option-active {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Empty State */
+.ant-empty-description {
+  color: #64748b !important; /* slate-500 */
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155; /* slate-700 */
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569; /* slate-600 */
 }

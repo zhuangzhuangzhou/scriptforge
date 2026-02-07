@@ -1,0 +1,9 @@
+{"path": ".trellis/spec/frontend/index.md", "reason": "UI Spec"}
+{"path": ".trellis/spec/backend/index.md", "reason": "API Spec"}
+{"path": "frontend/src/pages/admin/UserManagement.tsx", "reason": "UI Optimization"}
+{"path": "frontend/src/pages/admin/AIConfiguration.tsx", "reason": "UI Optimization"}
+{"path": "backend/app/api/v1/admin.py", "reason": "API Integration"}
+{"path": "backend/app/api/v1/configurations.py", "reason": "API Integration"}
+{"path": "backend/app/api/v1/admin.py", "reason": "Fix get_users to accept 'keyword' query param for filtering."}
+{"path": "frontend/src/pages/admin/UserManagement.tsx", "reason": "Apply Futuristic High-Tech UI: Glassmorphism, JetBrains Mono for IDs, correct colors."}
+{"path": "frontend/src/pages/admin/AIConfiguration.tsx", "reason": "Apply Futuristic High-Tech UI and fix ID vs Key type mismatch."}

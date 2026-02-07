@@ -302,5 +302,8 @@ async def get_breakdown_results(
         "emotions": breakdown.emotions,
         "consistency_status": breakdown.consistency_status,
         "consistency_score": breakdown.consistency_score,
-        "consistency_results": breakdown.consistency_results
+        "consistency_results": breakdown.consistency_results,
+        "qa_status": breakdown.qa_status,
+        "qa_report": breakdown.qa_report,
+        "used_adapt_method_id": breakdown.used_adapt_method_id
     }

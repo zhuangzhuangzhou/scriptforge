@@ -3,8 +3,8 @@ import { mockProjects, mockLogs, mockUser } from './mockData';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 // 增强判断：打印日志并支持字符串或布尔值
-const rawMockEnv = import.meta.env.VITE_USE_MOCK;
-const USE_MOCK = rawMockEnv === 'true' || rawMockEnv === true;
+const rawMockEnv = import.meta.env.VITE_USE_MOCK as string | boolean | undefined;
+const USE_MOCK = String(rawMockEnv) === 'true';
 
 console.log('[API Config] Base URL:', API_BASE_URL);
 console.log('[API Config] Mock Mode:', USE_MOCK, `(Raw: ${rawMockEnv})`);
@@ -65,7 +65,10 @@ export const projectApi = {
       await delay(500);
       const newProject = {
         id: String(mockProjects.length + 1),
-        ...data,
+        name: data.name,
+        novel_type: data.novel_type || '未知',
+        description: data.description || '',
+        batch_size: data.batch_size || 10,
         type: data.novel_type || '未知',
         updated_at: '刚刚',
         status: 'draft',
@@ -73,6 +76,7 @@ export const projectApi = {
         total_chapters: data.batch_size || 10,
         processed_chapters: 0
       };
+      // @ts-expect-error - mock data type mismatch
       mockProjects.push(newProject);
       return { data: newProject };
     }
@@ -279,6 +283,78 @@ export const breakdownApi = {
       };
     }
     return api.get(`/breakdown/results/${batchId}`);
+  }
+};
+
+export const skillsApi = {
+  // 获取可用技能
+  getAvailableSkills: async (category?: string) => {
+    if (USE_MOCK) {
+      await delay(200);
+      return {
+        data: {
+          skills: [
+            { id: 's1', name: 'conflict_extraction', display_name: '冲突提取', description: '自动识别剧本中的核心冲突点', category: 'breakdown', is_active: true, is_builtin: true },
+            { id: 's2', name: 'plot_hook_identification', display_name: '伏笔识别', description: '识别并标记剧情中的伏笔', category: 'breakdown', is_active: true, is_builtin: true },
+            { id: 's3', name: 'character_analysis', display_name: '角色分析', description: '深度分析角色动机与心理', category: 'breakdown', is_active: true, is_builtin: true },
+            { id: 's4', name: 'scene_identification', display_name: '场景切分', description: '识别场景转换与关键场景', category: 'breakdown', is_active: true, is_builtin: true },
+            { id: 's5', name: 'emotion_extraction', display_name: '情感曲线', description: '分析剧情的情感起伏', category: 'breakdown', is_active: true, is_builtin: true },
+          ]
+        }
+      };
+    }
+    return api.get('/skills/available', { params: { category } });
+  }
+};
+
+export const adminApi = {
+  getStats: async () => {
+    if (USE_MOCK) {
+      await new Promise(r => setTimeout(r, 500));
+      return {
+        data: {
+          total_users: 125,
+          active_projects: 42,
+          pending_tasks: 8,
+          system_status: 'normal',
+          credit_consumed_today: 1540
+        }
+      };
+    }
+    return api.get('/admin/stats');
+  },
+
+  getUsers: async (page = 1, pageSize = 20, keyword?: string) => {
+    if (USE_MOCK) {
+      await new Promise(r => setTimeout(r, 500));
+      return {
+        data: {
+          items: [
+            { id: '1', email: 'admin@example.com', username: 'Admin', role: 'admin', tier: 'ENTERPRISE', balance: 99999, is_active: true, created_at: '2026-01-01' },
+            { id: '2', email: 'user@example.com', username: 'User', role: 'user', tier: 'FREE', balance: 100, is_active: true, created_at: '2026-02-01' },
+          ],
+          total: 2
+        }
+      };
+    }
+    const skip = (page - 1) * pageSize;
+    const response = await api.get('/admin/users', { params: { skip, limit: pageSize, keyword } });
+
+    // Map backend response (users, total) to frontend expectation (items, total)
+    return {
+      data: {
+        items: response.data.users,
+        total: response.data.total
+      }
+    };
+  },
+
+  updateUser: async (userId: string, data: unknown) => {
+    if (USE_MOCK) {
+      await new Promise(r => setTimeout(r, 500));
+      return { data: { success: true } };
+    }
+    return api.put(`/admin/users/${userId}`, data);
   }
 };
 

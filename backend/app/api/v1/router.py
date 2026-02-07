@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import auth, projects, breakdown, scripts, export, admin, websocket, skills_admin, skills_user, pipeline, skills_code, agent_definition, quota, billing, subscription
+from app.api.v1 import auth, projects, breakdown, scripts, export, admin, websocket, skills_admin, skills_user, pipeline, skills_code, agent_definition, quota, billing, subscription, configurations
 
 api_router = APIRouter()
 
@@ -18,4 +18,5 @@ api_router.include_router(agent_definition.router, prefix="/agents", tags=["Agen
 api_router.include_router(quota.router, prefix="/user", tags=["用户配额"])
 api_router.include_router(billing.router, prefix="/billing", tags=["计费管理"])
 api_router.include_router(subscription.router, prefix="/subscription", tags=["订阅管理"])
+api_router.include_router(configurations.router, prefix="/configurations", tags=["系统配置"])
 api_router.include_router(websocket.router, tags=["WebSocket"])

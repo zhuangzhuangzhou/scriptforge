@@ -11,6 +11,7 @@ import {
 import { AnimatePresence } from 'framer-motion';
 import ConsoleLogger, { LogEntry } from '../../components/ConsoleLogger';
 import AICopilot from '../../components/AICopilot';
+import SkillSelector from '../../components/SkillSelector';
 import AgentConfigModal from '../../components/modals/AgentConfigModal';
 import { UserTier, Batch, PlotBreakdown } from '../../types';
 import { projectApi, breakdownApi } from '../../services/api';
@@ -189,6 +190,11 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const [isAllBreakdownRunning, setIsAllBreakdownRunning] = useState(false);
     const [breakdownQueue, setBreakdownQueue] = useState<string[]>([]);
     const [currentBreakdownIndex, setCurrentBreakdownIndex] = useState(0);
+
+    // Breakdown Config Modal State
+    const [isBreakdownModalOpen, setIsBreakdownModalOpen] = useState(false);
+    const [targetBatchId, setTargetBatchId] = useState<string | null>(null);
+    const [selectedBreakdownSkills, setSelectedBreakdownSkills] = useState<string[]>([]);
 
     // PLOT Pagination State
     const [batchPage, setBatchPage] = useState(1);
@@ -491,8 +497,18 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         }
     };
 
-    // 启动拆解任务
-    const handleStartBreakdown = async (batchId: string) => {
+    // 启动拆解任务 (打开配置弹窗)
+    const handleStartBreakdownClick = (batchId: string) => {
+        setTargetBatchId(batchId);
+        // 默认全选或根据上次选择，这里暂时留空让用户选，或者 Fetch 默认 skills
+        setIsBreakdownModalOpen(true);
+    };
+
+    // 确认启动拆解
+    const handleConfirmBreakdown = async () => {
+        if (!targetBatchId) return;
+        setIsBreakdownModalOpen(false);
+
         try {
             // 自动弹出 Console
             setShowConsole(true);
@@ -500,16 +516,28 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 id: Date.now().toString(),
                 timestamp: new Date().toLocaleTimeString(),
                 type: 'info',
-                message: `开始拆解批次 ${selectedBatch?.batch_number}...`
+                message: `配置已应用，开始拆解批次 ${selectedBatch?.batch_number || ''}...`
             }]);
 
-            const res = await breakdownApi.startBreakdown(batchId);
+            const res = await breakdownApi.startBreakdown(targetBatchId, {
+                selectedSkills: selectedBreakdownSkills
+            });
             setBreakdownTaskId(res.data.task_id);
             message.info('拆解任务已启动');
             // 开始轮询
-            pollBreakdownStatus(res.data.task_id, batchId);
+            pollBreakdownStatus(res.data.task_id, targetBatchId);
         } catch (err: any) {
             message.error(err.response?.data?.detail || '启动拆解失败');
+        }
+    };
+
+    // 以前的直接启动函数保留给 Loop/All 使用，但需要改造支持参数
+    const internalStartBreakdown = async (batchId: string) => {
+        try {
+            const res = await breakdownApi.startBreakdown(batchId); // 使用默认配置
+            return res;
+        } catch (err) {
+            throw err;
         }
     };
 
@@ -596,7 +624,17 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             return;
         }
         setSelectedBatch(firstPending);
-        await handleStartBreakdown(firstPending.id);
+        // 继续拆解也可以弹出配置，或者默认直接开始。这里选择直接开始以保持连贯性，或者调用 handleStartBreakdownClick
+        // 为了体验一致，"继续" 通常意味着“接着做”，可以用默认配置。
+        // 但如果用户想改配置... 暂时用 internalStartBreakdown (默认)
+        try {
+             setShowConsole(true);
+             const res = await internalStartBreakdown(firstPending.id);
+             setBreakdownTaskId(res.data.task_id);
+             pollBreakdownStatus(res.data.task_id, firstPending.id);
+        } catch (err: any) {
+             message.error(err.response?.data?.detail || '启动失败');
+        }
     };
 
     // 轮询多个任务状态
@@ -1862,7 +1900,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
                                     {selectedBatch && selectedBatch.breakdown_status === 'pending' ? (
                                         <button
-                                            onClick={() => handleStartBreakdown(selectedBatch.id)}
+                                            onClick={() => handleStartBreakdownClick(selectedBatch.id)}
                                             disabled={!!breakdownTaskId || isAllBreakdownRunning}
                                             className="flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-emerald-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
@@ -1871,7 +1909,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                         </button>
                                     ) : selectedBatch && (selectedBatch.breakdown_status === 'failed' || selectedBatch.breakdown_status === 'completed') ? (
                                         <button
-                                            onClick={() => handleStartBreakdown(selectedBatch.id)}
+                                            onClick={() => handleStartBreakdownClick(selectedBatch.id)}
                                             disabled={!!breakdownTaskId || isAllBreakdownRunning}
                                             className="flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 text-white rounded-lg text-xs font-bold shadow-lg transition-all hover:scale-[1.02] disabled:opacity-50"
                                         >
@@ -2052,6 +2090,87 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                             )}
                         </div>
                     </label>
+                </div>
+            </Modal>
+
+            {/* Breakdown Config Modal */}
+            <Modal
+                open={isBreakdownModalOpen}
+                onCancel={() => setIsBreakdownModalOpen(false)}
+                onOk={handleConfirmBreakdown}
+                title={
+                    <div className="flex items-center gap-2 text-white">
+                        <BrainCircuit size={18} className="text-cyan-400" />
+                        <span>剧情拆解配置</span>
+                    </div>
+                }
+                okText="开始拆解"
+                cancelText="取消"
+                centered
+                width={500}
+                closeIcon={<X size={18} className="text-slate-500 hover:text-white transition-colors" />}
+                className="dark-modal"
+                styles={{
+                    mask: { backgroundColor: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(4px)' },
+                    content: {
+                        backgroundColor: '#0f172a',
+                        border: '1px solid #334155',
+                        borderRadius: '16px',
+                        padding: '0',
+                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 40px rgba(6, 182, 212, 0.1)'
+                    },
+                    header: {
+                        backgroundColor: '#0f172a',
+                        borderBottom: '1px solid #1e293b',
+                        padding: '16px 24px',
+                        borderRadius: '16px 16px 0 0'
+                    },
+                    body: {
+                        backgroundColor: '#0f172a',
+                        padding: '20px 24px'
+                    },
+                    footer: {
+                        backgroundColor: '#0f172a',
+                        borderTop: '1px solid #1e293b',
+                        padding: '16px 24px',
+                        borderRadius: '0 0 16px 16px'
+                    }
+                }}
+                okButtonProps={{
+                    style: {
+                        backgroundColor: '#0891b2',
+                        borderColor: '#0891b2',
+                        fontWeight: 600,
+                        boxShadow: '0 0 20px rgba(8, 145, 178, 0.3)'
+                    }
+                }}
+                cancelButtonProps={{
+                    style: {
+                        backgroundColor: '#1e293b',
+                        borderColor: '#334155',
+                        color: '#94a3b8',
+                        fontWeight: 500
+                    }
+                }}
+            >
+                <div className="space-y-4">
+                    <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3 flex gap-3 items-start">
+                        <div className="mt-0.5">
+                            <Sparkles size={16} className="text-blue-400" />
+                        </div>
+                        <div className="text-xs text-blue-300 leading-relaxed">
+                            <span className="font-bold block mb-1 text-blue-200">选择挂载的 AI 技能</span>
+                            不同的技能组合会影响拆解的维度和消耗的 Token。建议根据小说类型选择合适的技能。
+                        </div>
+                    </div>
+
+                    <div className="bg-slate-950/50 p-4 rounded-xl border border-slate-800">
+                        <SkillSelector
+                            category="breakdown"
+                            selectedSkillIds={selectedBreakdownSkills}
+                            onChange={setSelectedBreakdownSkills}
+                        />
+                    </div>
                 </div>
             </Modal>
         </div>
