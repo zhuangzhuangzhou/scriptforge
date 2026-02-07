@@ -17,7 +17,7 @@ interface AuthContextType {
   user: User | null;
   token: string | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<User>;
   logout: () => void;
 }
 
@@ -59,7 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem('token', mockToken);
       setToken(mockToken);
       setUser(mockUser as any);
-      return;
+      return mockUser as any;
     }
 
     const formData = new URLSearchParams();
@@ -83,6 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const userResponse = await api.get('/auth/me');
     setUser(userResponse.data);
+    return userResponse.data;
   };
 
   const logout = () => {

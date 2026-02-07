@@ -47,9 +47,13 @@ const Login: React.FC = () => {
 
     setIsLoading(true);
     try {
-      await login(trimmedUsername, trimmedPassword);
+      const user = await login(trimmedUsername, trimmedPassword);
       message.success('登录成功');
-      navigate('/dashboard');
+      if (user.role === 'admin') {
+        navigate('/admin/dashboard');
+      } else {
+        navigate('/dashboard');
+      }
     } catch (error: any) {
       message.error(error.message || '登录失败');
     } finally {
