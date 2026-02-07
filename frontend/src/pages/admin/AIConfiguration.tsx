@@ -1,8 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, message, Space, Tooltip } from 'antd';
+import React, { useState, useEffect, useRef } from 'react';
+import { Button, Form, Input, message, Space, Tooltip, Table, Modal } from 'antd';
 import { EditOutlined, DeleteOutlined, PlusOutlined, ImportOutlined, CodeOutlined } from '@ant-design/icons';
 import { motion } from 'framer-motion';
 import { configService, AIConfiguration } from '../../services/configService';
+import { GlassTable } from '../../components/ui/GlassTable';
+import { GlassCard } from '../../components/ui/GlassCard';
+import { GlassModal } from '../../components/ui/GlassModal';
 
 const { TextArea } = Input;
 
@@ -31,6 +34,7 @@ const AIConfigurationPage: React.FC = () => {
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingConfig, setEditingConfig] = useState<AIConfiguration | null>(null);
   const [form] = Form.useForm();
+  const initialized = useRef(false);
 
   const fetchConfigs = async () => {
     setLoading(true);
@@ -46,7 +50,10 @@ const AIConfigurationPage: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchConfigs();
+    if (!initialized.current) {
+      fetchConfigs();
+      initialized.current = true;
+    }
   }, []);
 
   const handleCreate = () => {
@@ -133,7 +140,7 @@ const AIConfigurationPage: React.FC = () => {
       dataIndex: 'value',
       key: 'value',
       render: (val: unknown) => (
-        <pre className="max-h-24 overflow-auto bg-slate-950/50 p-2 rounded text-xs font-mono text-slate-400 border border-slate-800 scrollbar-thin scrollbar-thumb-slate-700">
+        <pre className="max-h-24 overflow-auto bg-slate-950/30 p-2 rounded text-xs font-mono text-slate-400 border border-white/10 scrollbar-thin scrollbar-thumb-slate-700">
           {typeof val === 'object' ? JSON.stringify(val, null, 2) : String(val)}
         </pre>
       ),
@@ -191,17 +198,16 @@ const AIConfigurationPage: React.FC = () => {
         </div>
 
         <div className="backdrop-blur-xl bg-slate-900/60 border border-slate-800/60 rounded-2xl overflow-hidden shadow-2xl">
-          <Table
+          <GlassTable
             columns={columns}
             dataSource={configs}
             rowKey="key"
             loading={loading}
             pagination={{ pageSize: 10, className: "p-4" }}
-            className="ant-table-dark-glass"
           />
         </div>
 
-        <Modal
+        <GlassModal
           title={<span className="text-slate-100 flex items-center gap-2"><CodeOutlined /> {editingConfig ? "编辑配置" : "新建配置"}</span>}
           open={isModalVisible}
           onOk={handleModalOk}
@@ -209,7 +215,6 @@ const AIConfigurationPage: React.FC = () => {
           width={800}
           okText="保存配置"
           cancelText="取消"
-          className="dark-glass-modal"
           okButtonProps={{ className: "bg-cyan-600 hover:bg-cyan-500 border-none" }}
           cancelButtonProps={{ className: "border-slate-600 text-slate-300 hover:text-white hover:border-slate-500" }}
         >
@@ -260,7 +265,7 @@ const AIConfigurationPage: React.FC = () => {
               />
             </Form.Item>
           </Form>
-        </Modal>
+        </GlassModal>
       </motion.div>
     </div>
   );

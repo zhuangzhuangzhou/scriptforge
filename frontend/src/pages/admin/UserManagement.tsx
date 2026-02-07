@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Button, Space, Modal, Form, Select, InputNumber, message } from 'antd';
+import { Button, Space, Form, Select, InputNumber, message } from 'antd';
 import { EditOutlined, UserOutlined, ReloadOutlined } from '@ant-design/icons';
 import { motion } from 'framer-motion';
 import { adminApi } from '../../services/api';
 import { UserTier } from '../../types';
+import { GlassTable } from '../../components/ui/GlassTable';
+import { GlassCard } from '../../components/ui/GlassCard';
+import { GlassModal } from '../../components/ui/GlassModal';
 
 const { Option } = Select;
 
@@ -180,8 +183,8 @@ const UserManagement: React.FC = () => {
           </Button>
         </div>
 
-        <div className="backdrop-blur-xl bg-slate-900/60 border border-slate-800/60 rounded-2xl overflow-hidden shadow-2xl">
-          <Table
+        <GlassCard className="shadow-2xl">
+          <GlassTable
             columns={columns}
             dataSource={users}
             rowKey="id"
@@ -194,16 +197,14 @@ const UserManagement: React.FC = () => {
               showSizeChanger: false,
               className: "p-4"
             }}
-            className="ant-table-dark-glass"
           />
-        </div>
+        </GlassCard>
 
-        <Modal
+        <GlassModal
           title={<span className="text-slate-100">编辑用户: {editingUser?.username}</span>}
           open={isModalVisible}
           onOk={handleModalOk}
           onCancel={() => setIsModalVisible(false)}
-          className="dark-glass-modal"
           okText="保存更改"
           cancelText="取消"
           okButtonProps={{ className: "bg-cyan-600 hover:bg-cyan-500 border-none" }}
@@ -211,14 +212,14 @@ const UserManagement: React.FC = () => {
         >
           <Form form={form} layout="vertical" className="mt-6">
             <Form.Item name="role" label={<span className="text-slate-300">角色</span>}>
-              <Select className="glass-select" popupClassName="glass-dropdown">
+              <Select>
                 <Option value="user">User</Option>
                 <Option value="admin">Admin</Option>
               </Select>
             </Form.Item>
 
             <Form.Item name="tier" label={<span className="text-slate-300">等级 (Tier)</span>}>
-              <Select className="glass-select" popupClassName="glass-dropdown">
+              <Select>
                 <Option value="FREE">FREE</Option>
                 <Option value="CREATOR">CREATOR</Option>
                 <Option value="STUDIO">STUDIO</Option>
@@ -227,17 +228,17 @@ const UserManagement: React.FC = () => {
             </Form.Item>
 
             <Form.Item name="balance" label={<span className="text-slate-300">算力余额</span>}>
-              <InputNumber style={{ width: '100%' }} min={0} className="glass-input" />
+              <InputNumber style={{ width: '100%' }} min={0} />
             </Form.Item>
 
             <Form.Item name="is_active" label={<span className="text-slate-300">账号状态</span>}>
-              <Select className="glass-select" popupClassName="glass-dropdown">
+              <Select>
                 <Option value={true}>正常 (Active)</Option>
                 <Option value={false}>禁用 (Inactive)</Option>
               </Select>
             </Form.Item>
           </Form>
-        </Modal>
+        </GlassModal>
       </motion.div>
     </div>
   );

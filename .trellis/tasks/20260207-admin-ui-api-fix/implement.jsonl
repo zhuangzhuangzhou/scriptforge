@@ -7,3 +7,13 @@
 {"path": "backend/app/api/v1/admin.py", "reason": "Fix get_users to accept 'keyword' query param for filtering."}
 {"path": "frontend/src/pages/admin/UserManagement.tsx", "reason": "Apply Futuristic High-Tech UI: Glassmorphism, JetBrains Mono for IDs, correct colors."}
 {"path": "frontend/src/pages/admin/AIConfiguration.tsx", "reason": "Apply Futuristic High-Tech UI and fix ID vs Key type mismatch."}
+{"path": "frontend/src/pages/admin/UserManagement.tsx", "reason": "Fix white background issue: override Antd Table styles globally or locally."}
+{"path": "frontend/src/pages/admin/AIConfiguration.tsx", "reason": "Fix white background, fix double API call, apply Glassmorphism to Modal."}
+{"path": "backend/app/models/ai_configuration.py", "reason": "Ensure table name matches migration."}
+{"path": "backend/alembic/versions", "reason": "Create new migration for ai_configurations table."}
+{"path": "frontend/src/pages/admin/UserManagement.tsx", "reason": "Target file for UI optimization"}
+{"path": "frontend/src/pages/admin/AIConfiguration.tsx", "reason": "Target file for UI optimization"}
+{"path": "backend/app/api/v1/configurations.py", "reason": "Target file for API fix"}
+{"path": "frontend/src/services/api.ts", "reason": "Reference for API calls"}
+{"path": "frontend/src/services/configService.ts", "reason": "Reference for config service"}
+{"path": "frontend/src/index.css", "reason": "Global styles"}

@@ -62,12 +62,19 @@ input:-webkit-autofill:active {
    ========================================= */
 
 /* Table Overrides */
-.ant-table-dark .ant-table {
+.ant-table-dark-glass .ant-table,
+.ant-table-dark-glass .ant-table-container,
+.ant-table-dark-glass .ant-table-content,
+.ant-table-dark-glass .ant-table-tbody,
+.ant-table-dark-glass .ant-table-row,
+.ant-table-dark-glass .ant-table-cell,
+.ant-table-dark-glass td,
+.ant-table-dark-glass tr {
   background: transparent !important;
   color: #e2e8f0;
 }
 
-.ant-table-dark .ant-table-thead > tr > th {
+.ant-table-dark-glass .ant-table-thead > tr > th {
   background: #0f172a !important; /* slate-900 */
   color: #94a3b8 !important; /* slate-400 */
   border-bottom: 1px solid #1e293b !important; /* slate-800 */
@@ -77,49 +84,49 @@ input:-webkit-autofill:active {
   letter-spacing: 0.05em;
 }
 
-.ant-table-dark .ant-table-tbody > tr > td {
+.ant-table-dark-glass .ant-table-tbody > tr > td {
   border-bottom: 1px solid #1e293b !important; /* slate-800 */
   transition: background 0.3s;
 }
 
-.ant-table-dark .ant-table-tbody > tr:hover > td {
+.ant-table-dark-glass .ant-table-tbody > tr:hover > td {
   background: rgba(30, 41, 59, 0.5) !important; /* slate-800 with opacity */
 }
 
 /* Pagination */
-.ant-table-dark .ant-pagination-item {
+.ant-table-dark-glass .ant-pagination-item {
   background: transparent !important;
   border-color: #334155 !important; /* slate-700 */
 }
 
-.ant-table-dark .ant-pagination-item a {
+.ant-table-dark-glass .ant-pagination-item a {
   color: #94a3b8 !important; /* slate-400 */
 }
 
-.ant-table-dark .ant-pagination-item-active {
+.ant-table-dark-glass .ant-pagination-item-active {
   border-color: #22d3ee !important; /* cyan-400 */
   background: rgba(34, 211, 238, 0.1) !important;
 }
 
-.ant-table-dark .ant-pagination-item-active a {
+.ant-table-dark-glass .ant-pagination-item-active a {
   color: #22d3ee !important; /* cyan-400 */
 }
 
-.ant-table-dark .ant-pagination-prev .ant-pagination-item-link,
-.ant-table-dark .ant-pagination-next .ant-pagination-item-link {
+.ant-table-dark-glass .ant-pagination-prev .ant-pagination-item-link,
+.ant-table-dark-glass .ant-pagination-next .ant-pagination-item-link {
   color: #94a3b8 !important;
   background: transparent !important;
   border-color: #334155 !important;
 }
 
-.ant-table-dark .ant-pagination-disabled .ant-pagination-item-link {
+.ant-table-dark-glass .ant-pagination-disabled .ant-pagination-item-link {
   color: #475569 !important; /* slate-600 */
   border-color: #1e293b !important;
 }
 
 /* Modal Dark Theme Overrides */
 /* Glassmorphism: backdrop-blur-xl bg-slate-900/60 border border-slate-800/60 */
-.dark-modal .ant-modal-content {
+.dark-glass-modal .ant-modal-content {
   background-color: rgba(15, 23, 42, 0.95) !important; /* slate-900 high opacity */
   border: 1px solid rgba(30, 41, 59, 0.8); /* slate-800 */
   color: #e2e8f0;
@@ -127,57 +134,57 @@ input:-webkit-autofill:active {
   backdrop-filter: blur(16px);
 }
 
-.dark-modal .ant-modal-header {
+.dark-glass-modal .ant-modal-header {
   background-color: transparent !important;
   border-bottom: 1px solid #1e293b; /* slate-800 */
   margin-bottom: 1.5rem;
 }
 
-.dark-modal .ant-modal-title {
+.dark-glass-modal .ant-modal-title {
   color: #f8fafc !important; /* slate-50 */
   font-weight: 600;
 }
 
-.dark-modal .ant-modal-close {
+.dark-glass-modal .ant-modal-close {
   color: #94a3b8 !important; /* slate-400 */
 }
 
-.dark-modal .ant-modal-close:hover {
+.dark-glass-modal .ant-modal-close:hover {
   color: #fff !important;
   background-color: rgba(255, 255, 255, 0.1) !important;
 }
 
 /* Form Elements in Dark Modals */
-.dark-modal .ant-form-item-label > label {
+.dark-glass-modal .ant-form-item-label > label {
   color: #cbd5e1 !important; /* slate-300 */
 }
 
-.dark-modal .ant-input,
-.dark-modal .ant-input-number,
-.dark-modal .ant-input-textarea,
-.dark-modal .ant-select-selector {
+.dark-glass-modal .ant-input,
+.dark-glass-modal .ant-input-number,
+.dark-glass-modal .ant-input-textarea,
+.dark-glass-modal .ant-select-selector {
   background-color: #020617 !important; /* slate-950 */
   border-color: #334155 !important; /* slate-700 */
   color: #e2e8f0 !important;
   transition: all 0.3s;
 }
 
-.dark-modal .ant-input::placeholder,
-.dark-modal .ant-input-number::placeholder {
+.dark-glass-modal .ant-input::placeholder,
+.dark-glass-modal .ant-input-number::placeholder {
   color: #475569;
 }
 
-.dark-modal .ant-input:hover,
-.dark-modal .ant-input:focus,
-.dark-modal .ant-input-number:hover,
-.dark-modal .ant-input-number:focus,
-.dark-modal .ant-select-selector:hover,
-.dark-modal .ant-select-focused .ant-select-selector {
+.dark-glass-modal .ant-input:hover,
+.dark-glass-modal .ant-input:focus,
+.dark-glass-modal .ant-input-number:hover,
+.dark-glass-modal .ant-input-number:focus,
+.dark-glass-modal .ant-select-selector:hover,
+.dark-glass-modal .ant-select-focused .ant-select-selector {
   border-color: #22d3ee !important; /* cyan-400 */
   box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.1) !important;
 }
 
-.dark-modal .ant-select-arrow {
+.dark-glass-modal .ant-select-arrow {
   color: #94a3b8 !important;
 }
 

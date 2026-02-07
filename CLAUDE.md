@@ -5,12 +5,15 @@
 
 ### Feb 3, 2026
 
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #1 | 8:18 AM | ✅ | Git仓库初始化并完成首次提交 | ~130 |
+| ID  | Time    | T   | Title                       | Read |
+| --- | ------- | --- | --------------------------- | ---- |
+| #1  | 8:18 AM | ✅   | Git仓库初始化并完成首次提交 | ~130 |
 </claude-mem-context>
 
 # Project Guidelines
+
+## 语言
+- 所有代码、注释、文档、提交信息、对话，全部使用中文
 
 ## 🎯 Workflow Principles
 
@@ -55,10 +58,10 @@ Types:
 
 ## 🔗 Key Files
 
-| Path | Purpose |
-|------|---------|
+| Path                     | Purpose                 |
+| ------------------------ | ----------------------- |
 | `frontend/src/CLAUDE.md` | Frontend-specific rules |
-| `.trellis/spec/` | Development standards |
+| `.trellis/spec/`         | Development standards   |
 
 ## Current Stack
 - **Frontend**: React 18, Vite, Tailwind, Framer Motion, Ant Design
