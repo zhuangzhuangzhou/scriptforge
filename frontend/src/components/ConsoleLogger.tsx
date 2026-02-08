@@ -1,24 +1,50 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Terminal, X, Minimize2, Maximize2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Terminal, X, ChevronDown, ChevronUp, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export interface LogEntry {
   id: string;
   timestamp: string;
-  type: 'info' | 'success' | 'warning' | 'error' | 'thinking';
+  type: 'info' | 'success' | 'warning' | 'error' | 'thinking' | 'llm_call';
   message: string;
+  detail?: any;
+}
+
+export interface LLMCallStats {
+  total: number;
+  stages: Array<{
+    stage: string;
+    validator: string;
+    status: string;
+    score?: number;
+    timestamp?: string;
+  }>;
 }
 
 interface ConsoleLoggerProps {
   logs: LogEntry[];
+  llmStats?: LLMCallStats;
   visible: boolean;
   isProcessing: boolean;
   onClose: () => void;
 }
 
-const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({ logs, visible, isProcessing, onClose }) => {
+const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({ logs, llmStats, visible, isProcessing, onClose }) => {
   const [isMinimized, setIsMinimized] = useState(false);
+  const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const toggleLogDetail = (logId: string) => {
+    setExpandedLogs(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(logId)) {
+        newSet.delete(logId);
+      } else {
+        newSet.add(logId);
+      }
+      return newSet;
+    });
+  };
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -71,35 +97,104 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({ logs, visible, isProcessi
 
       {/* Logs Content */}
       {!isMinimized && (
-        <div 
+        <>
+          {/* LLM 调用统计面板 */}
+          {llmStats && llmStats.total > 0 && (
+            <div className="px-3 py-2 bg-cyan-500/10 border-b border-cyan-500/20">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-cyan-300 flex items-center gap-1">
+                  <Zap size={12} className="text-cyan-400" />
+                  LLM 调用统计
+                </span>
+                <span className="text-cyan-400 font-mono font-semibold">{llmStats.total} 次</span>
+              </div>
+              {llmStats.stages.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {llmStats.stages.map((stage, idx) => (
+                    <span
+                      key={idx}
+                      className="px-2 py-0.5 bg-slate-800/80 rounded text-[10px] text-slate-400 border border-slate-700/50"
+                    >
+                      {stage.stage}: <span className={stage.status === 'passed' ? 'text-green-400' : 'text-red-400'}>
+                        {stage.status}
+                      </span>
+                      {stage.score !== undefined && (
+                        <span className="ml-1 text-cyan-400">({stage.score})</span>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 日志内容 */}
+          <div
             ref={scrollRef}
             className="flex-1 overflow-y-auto p-3 font-mono text-xs space-y-2 bg-slate-950/80 backdrop-blur"
-        >
+          >
             {logs.length === 0 && (
-                <div className="text-slate-500 italic opacity-50">Waiting for agent tasks...</div>
+              <div className="text-slate-500 italic opacity-50">Waiting for agent tasks...</div>
             )}
             {logs.map((log) => (
-                <div key={log.id} className="flex gap-2 items-start">
-                    <span className="text-slate-600 shrink-0 select-none">[{log.timestamp}]</span>
-                    <span className={`break-words ${
-                        log.type === 'error' ? 'text-red-400' :
-                        log.type === 'success' ? 'text-green-400' :
-                        log.type === 'warning' ? 'text-amber-400' :
-                        log.type === 'thinking' ? 'text-cyan-300 italic' :
-                        'text-slate-300'
-                    }`}>
-                        {log.type === 'thinking' && <span className="mr-1">◈</span>}
-                        {log.message}
-                    </span>
-                </div>
+              <div key={log.id} className="flex gap-2 items-start">
+                <span className="text-slate-600 shrink-0 select-none">[{log.timestamp}]</span>
+
+                {/* LLM 调用日志 */}
+                {log.type === 'llm_call' ? (
+                  <div className="flex-1 min-w-0">
+                    <div
+                      className="flex items-start gap-2 group cursor-pointer"
+                      onClick={() => log.detail && toggleLogDetail(log.id)}
+                    >
+                      <Zap size={14} className="text-cyan-400 mt-0.5 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-cyan-300 text-xs break-words">{log.message}</div>
+                        {log.detail && (
+                          <div className="mt-0.5 text-[10px] text-slate-500 font-mono">
+                            {log.detail.status && (
+                              <span className={log.detail.status === 'passed' ? 'text-green-400' : 'text-red-400'}>
+                                {log.detail.status}
+                              </span>
+                            )}
+                            {log.detail.score !== undefined && (
+                              <span className="ml-2 text-cyan-400">Score: {log.detail.score}</span>
+                            )}
+                            {expandedLogs.has(log.id) && (
+                              <div className="mt-1 p-2 bg-slate-900/50 rounded border border-slate-700/50 text-slate-400">
+                                <pre className="whitespace-pre-wrap break-words">
+                                  {JSON.stringify(log.detail, null, 2)}
+                                </pre>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  /* 普通日志 */
+                  <span className={`break-words ${
+                    log.type === 'error' ? 'text-red-400' :
+                    log.type === 'success' ? 'text-green-400' :
+                    log.type === 'warning' ? 'text-amber-400' :
+                    log.type === 'thinking' ? 'text-cyan-300 italic' :
+                    'text-slate-300'
+                  }`}>
+                    {log.type === 'thinking' && <span className="mr-1">◈</span>}
+                    {log.message}
+                  </span>
+                )}
+              </div>
             ))}
             {isProcessing && (
-                <div className="flex gap-2 items-start animate-pulse">
-                    <span className="text-slate-600 select-none">[Running]</span>
-                    <span className="text-cyan-500">_</span>
-                </div>
+              <div className="flex gap-2 items-start animate-pulse">
+                <span className="text-slate-600 select-none">[Running]</span>
+                <span className="text-cyan-500">_</span>
+              </div>
             )}
-        </div>
+          </div>
+        </>
       )}
     </motion.div>
   );

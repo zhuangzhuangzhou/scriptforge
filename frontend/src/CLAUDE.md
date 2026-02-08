@@ -20,3 +20,28 @@
 | #13 | 8:19 AM | 🟣 | Frontend Pages Enhanced with Skills Integration | ~172 |
 | #7 | 8:18 AM | 🟣 | 前端页面路由和组件集成 | ~122 |
 </claude-mem-context>
+# Workspace 组件重构说明
+
+## 重构日期
+2026-02-08
+
+## 重构内容
+
+### 1. 目录结构变更
+- **原始**：`pages/user/Workspace.tsx` (2,506 行单文件)
+- **重构后**：`pages/user/Workspace/` (模块化目录结构)
+
+### 2. 组件拆分
+所有 6 个标签页已拆分为独立组件：
+- PlotTab（剧情拆解）
+- ConfigTab（项目配置）
+- SourceTab（小说原文）
+- ScriptTab（剧本生成）
+- AgentsTab（智能体）
+- SkillsTab（技能库）
+
+### 3. Custom Hooks 提取
+- `useBreakdownPolling`: 拆解任务轮询
+- `useBatchProgress`: 批量进度管理
+- `useBreakdownQueue`: 队列管理
+
