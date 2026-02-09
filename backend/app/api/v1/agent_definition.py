@@ -395,7 +395,10 @@ async def execute_agent(
     from app.ai.agents.agent_executor import AgentExecutor
     from app.ai.adapters import get_adapter
 
-    adapter = await get_adapter()
+    adapter = await get_adapter(
+        user_id=str(current_user.id),
+        db=db
+    )
     executor = AgentExecutor(adapter)
 
     result = await executor.execute(
@@ -542,7 +545,10 @@ async def trigger_agent_from_node(
         from app.ai.agents.agent_executor import AgentExecutor
         from app.ai.adapters import get_adapter
 
-        adapter = await get_adapter()
+        adapter = await get_adapter(
+            user_id=str(current_user.id),
+            db=db
+        )
         executor = AgentExecutor(adapter)
 
         # 应用输入映射

@@ -88,7 +88,11 @@ def run_pipeline_task(
                     await db.commit()
                 reserved_quota = episode_stage_count
 
-                model_adapter = await get_adapter()
+                # 创建模型适配器（从数据库读取配置）
+                model_adapter = await get_adapter(
+                    user_id=user_id,
+                    db=db
+                )
 
                 async def progress_callback(step: str, progress: int):
                     await update_pipeline_execution(

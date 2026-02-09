@@ -38,9 +38,6 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   // 配额限制弹窗状态
   const [showQuotaModal, setShowQuotaModal] = useState(false);
 
-  // 暂时移除项目限制逻辑
-  const isProjectLimitReached = false;
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 

@@ -66,3 +66,48 @@
 - 一次 API 改动 → 500 错误
 
 **沟通 > 假设**
+
+---
+
+@@@section:skill-save-plan
+## 任务管理工作流
+
+### 概述
+
+使用 `/save-plan` 技能将 Claude Code 计划模式下的计划持久化到项目任务系统（`.trellis/tasks/`）。
+
+### 工作流程
+
+```
+/plan → 制定计划 → 退出计划模式 → /save-plan → 任务保存 → 下次继续
+```
+
+### 使用方法
+
+```bash
+# 基本用法（自动提取标题）
+/save-plan
+
+# 指定任务标题
+/save-plan Workspace 重构
+```
+
+### 生成的文件
+
+| 文件 | 用途 |
+|------|------|
+| `.trellis/tasks/YYYYMMDD-{slug}/task.json` | 任务元数据 |
+| `.trellis/tasks/YYYYMMDD-{slug}/plan.md` | 完整计划内容 |
+| `.trellis/.current-task` | 当前任务指针 |
+
+### 继续执行任务
+
+下次启动会话后：
+- **"查看当前任务"** - 查看任务详情和计划
+- **"继续执行任务"** - 开始执行
+
+### 参考示例
+
+详见 `examples/skills/save-plan/README.md`
+
+@@@/section:skill-save-plan

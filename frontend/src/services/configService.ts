@@ -5,6 +5,9 @@ export interface AIConfiguration {
   key: string;
   value: any;
   description?: string;
+  user_id?: string | null;
+  category?: string;
+  is_active?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -13,14 +16,20 @@ export interface AIConfigurationCreate {
   key: string;
   value: any;
   description?: string;
+  category?: string;
+  is_active?: boolean;
 }
 
 export const configService = {
   /**
    * 获取所有配置列表
+   * @param merge - true: 返回合并后的生效配置(用户覆盖系统); false: 返回所有原始配置(用于管理)
+   * @param category - 可选过滤分类
    */
-  getConfigurations: async (): Promise<AIConfiguration[]> => {
-    const response = await api.get('/configurations');
+  getConfigurations: async (merge: boolean = true, category?: string): Promise<AIConfiguration[]> => {
+    const response = await api.get('/configurations', {
+      params: { merge, category }
+    });
     return response.data;
   },
 

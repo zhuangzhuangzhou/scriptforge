@@ -3,19 +3,22 @@
 提供积分的消耗、充值、查询等功能。
 
 Token 计费常量：
-- CREDITS_PER_1K_TOKENS: 每1000 token消耗1积分
+- CREDITS_PER_1K_TOKENS: 每1000 token消耗1积分（默认值，可被数据库配置覆盖）
 - BREAKDOWN_BASE_CREDITS: 剧情拆解基础消耗10积分
 - SCRIPT_BASE_CREDITS: 剧本生成基础消耗5积分
 """
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from uuid import UUID
+from decimal import Decimal
 
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
 from app.models.billing import BillingRecord
+from app.models.ai_model import AIModel
+from app.models.ai_model_pricing import AIModelPricing
 
 
 # 积分消耗标准
@@ -230,3 +233,71 @@ class CreditsService:
             select(User).where(User.id == uid)
         )
         return result.scalar_one_or_none()
+
+    async def get_pricing_rule(
+        self,
+        model_id: Optional[str] = None
+    ) -> Tuple[Decimal, Decimal]:
+        """获取模型的计费规则
+
+        Args:
+            model_id: 模型ID（UUID），如果为 None 则使用默认计费规则
+
+        Returns:
+            (input_credits_per_1k, output_credits_per_1k) 元组
+        """
+        if not model_id:
+            # 使用默认计费规则
+            return (Decimal(str(CREDITS_PER_1K_TOKENS)), Decimal(str(CREDITS_PER_1K_TOKENS)))
+
+        # 查询当前生效的计费规则
+        now = datetime.utcnow()
+        result = await self.db.execute(
+            select(AIModelPricing)
+            .where(AIModelPricing.model_id == UUID(model_id) if isinstance(model_id, str) else model_id)
+            .where(AIModelPricing.is_active == True)
+            .where(AIModelPricing.effective_from <= now)
+            .where(
+                and_(
+                    AIModelPricing.effective_until.is_(None) |
+                    (AIModelPricing.effective_until > now)
+                )
+            )
+            .order_by(AIModelPricing.effective_from.desc())
+            .limit(1)
+        )
+        pricing = result.scalar_one_or_none()
+
+        if pricing:
+            return (pricing.input_credits_per_1k_tokens, pricing.output_credits_per_1k_tokens)
+        else:
+            # 如果没有找到计费规则，使用默认值
+            return (Decimal(str(CREDITS_PER_1K_TOKENS)), Decimal(str(CREDITS_PER_1K_TOKENS)))
+
+    async def calculate_model_credits(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        model_id: Optional[str] = None
+    ) -> int:
+        """根据模型和 token 数量计算积分消耗
+
+        Args:
+            input_tokens: 输入 token 数量
+            output_tokens: 输出 token 数量
+            model_id: 模型ID（UUID），如果为 None 则使用默认计费规则
+
+        Returns:
+            需要消耗的积分数（向上取整）
+        """
+        # 获取计费规则
+        input_price, output_price = await self.get_pricing_rule(model_id)
+
+        # 计算积分消耗
+        input_credits = (Decimal(input_tokens) / Decimal('1000')) * input_price
+        output_credits = (Decimal(output_tokens) / Decimal('1000')) * output_price
+        total_credits = input_credits + output_credits
+
+        # 向上取整
+        return int(total_credits.to_integral_value(rounding='ROUND_UP'))
+

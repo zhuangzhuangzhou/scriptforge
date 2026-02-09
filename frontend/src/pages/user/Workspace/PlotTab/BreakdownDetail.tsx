@@ -1,5 +1,5 @@
 import React from 'react';
-import { Layers, Play, Loader2, X, Activity, Swords, Lightbulb } from 'lucide-react';
+import { Layers, Play, Loader2, X, Activity, Swords, Lightbulb, Clock } from 'lucide-react';
 import { Batch, PlotBreakdown } from '../../../../types';
 
 interface BreakdownDetailProps {
@@ -34,6 +34,19 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
         </div>
         <p className="text-sm font-bold">点击"开始拆解"启动 AI 分析</p>
         <p className="text-xs text-slate-700">将分析第 {selectedBatch.start_chapter}-{selectedBatch.end_chapter} 章的剧情结构</p>
+      </div>
+    );
+  }
+
+  // 排队状态
+  if (selectedBatch.breakdown_status === 'queued') {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
+        <div className="w-20 h-20 rounded-2xl bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
+          <Clock size={32} className="text-amber-500" />
+        </div>
+        <p className="text-sm font-bold text-amber-500">任务已排队</p>
+        <p className="text-xs text-slate-700">等待执行中...</p>
       </div>
     );
   }

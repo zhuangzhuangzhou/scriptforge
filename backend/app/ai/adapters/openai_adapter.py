@@ -8,7 +8,8 @@ class OpenAIAdapter(BaseModelAdapter):
 
     def __init__(self, api_key: str, model_name: str = "gpt-4-turbo-preview", **kwargs):
         super().__init__(api_key, model_name, **kwargs)
-        self.client = OpenAI(api_key=api_key)
+        # 设置较长的超时时间（120秒），适应大模型响应时间
+        self.client = OpenAI(api_key=api_key, timeout=120.0)
 
     def generate(self, prompt: str, **kwargs) -> str:
         """生成文本"""

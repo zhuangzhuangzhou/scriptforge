@@ -1,0 +1,3 @@
+curl --location 'https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains' \
+--header 'Authorization: Bearer sk-cp-9JUcxLUc5FFTPSJCcTPUMSaQUmPQziRucbJJtiP7ol6HCDpnnyksHz-RhOlVk7bnqh8ZtpCQ_sSPVnUOy4NCPTevagEhlejvkRrG_cehksS3Nd6ZFf0I5ko' \
+--header 'Content-Type: application/json'

@@ -33,7 +33,7 @@ src/
 ├── types.ts                # 全局 TypeScript 接口定义
 ├── index.css               # Tailwind 指令与全局样式
 ├── components/
-│   ├── ui/                 # 基础 UI 组件 (InputGroup.tsx 应统一至此处)
+│   ├── ui/                 # 基础 Glass UI 组件 (GlassTabs, GlassInput, GlassSelect, GlassTable)
 │   ├── modals/             # 弹窗组件目录
 │   ├── InputGroup.tsx      # [DEPRECATED] 请移除重复文件，使用 ui/InputGroup.tsx
 │   ├── ConsoleLogger.tsx   # 日志控制台
@@ -86,6 +86,24 @@ src/
   - 按钮反馈: 点击时使用 `whileTap={{ scale: 0.98 }}`。
 - **扫描光效 (Scanning Light)**: 在卡片悬停时显示顶部渐变扫描条。
 
+### 🧩 Glass UI 组件库 (Glass Components)
+为了避免全局 CSS 污染并保持样式统一，请使用以下封装组件替代原生 Ant Design 组件：
+
+- **GlassTabs**: 替代 `Tabs`，提供透明背景卡片式切换。
+- **GlassInput / GlassTextArea**: 替代 `Input` / `Input.TextArea`，提供毛玻璃背景与发光边框。
+- **GlassSelect**: 替代 `Select`，解决 Dropdown 挂载点样式问题，提供统一的暗色下拉菜单。
+- **GlassTable**: 替代 `Table`，提供透明背景数据表格。
+- **GlassModal**: 替代 `Modal`，提供磨砂玻璃背景弹窗。
+
+**使用示例**:
+```tsx
+import { GlassTabs } from '../ui/GlassTabs';
+import { GlassInput } from '../ui/GlassInput';
+
+<GlassTabs items={...} />
+<GlassInput placeholder="..." />
+```
+
 ### ⌨️ 排版 (Typography)
 - **UI 文本**: `Inter`, `Noto Sans SC` (苹方/雅黑回退)。
 - **技术文本**: 代码、日志、Token 计数统一使用 **`JetBrains Mono`**。
@@ -105,7 +123,116 @@ src/
 ### 💎 会员等级与配额 (User Tiers)
 - **配置源**: `TIER_LIMITS` 等业务规则应优先从后端 API (`/api/v1/config` 或 `/user/quota`) 获取，而非仅在前端硬编码，以确保安全性和动态更新。
 
-## 6. AI 工作流集成 (AI Integration)
+## 6. 错误处理与性能优化 (Error Handling & Performance)
+
+### 🛡️ 错误边界 (Error Boundary)
+
+**问题**: React 组件渲染错误会导致整个应用崩溃（白屏/黑屏）
+
+**解决方案**: 使用错误边界包裹关键组件
+
+```tsx
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('组件渲染错误:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <Alert
+          message="组件加载失败"
+          description={this.state.error?.message || '未知错误'}
+          type="error"
+          showIcon
+        />
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// 使用
+<ErrorBoundary>
+  <YourComponent />
+</ErrorBoundary>
+```
+
+**适用场景**:
+- 标签页内容
+- 动态加载的组件
+- 第三方组件集成
+
+### ⚡ 标签页懒加载 (Tabs Lazy Loading)
+
+**问题**: GlassTabs 的 `items` 中直接包含 `children: <Component />` 会导致所有标签页组件立即渲染
+
+**错误示例**:
+```tsx
+// ❌ 错误：所有组件立即渲染
+const tabItems = [
+  { key: 'tab1', label: 'Tab 1', children: <Tab1Component /> },
+  { key: 'tab2', label: 'Tab 2', children: <Tab2Component /> },
+];
+```
+
+**正确示例**:
+```tsx
+// ✅ 正确：按需渲染
+const [activeTab, setActiveTab] = useState('tab1');
+
+const renderTabContent = () => {
+  switch (activeTab) {
+    case 'tab1': return <Tab1Component />;
+    case 'tab2': return <Tab2Component />;
+    default: return null;
+  }
+};
+
+const tabItems = [
+  { key: 'tab1', label: 'Tab 1' },  // 不包含 children
+  { key: 'tab2', label: 'Tab 2' },
+];
+
+return (
+  <>
+    <GlassTabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
+    <ErrorBoundary key={activeTab}>
+      {renderTabContent()}
+    </ErrorBoundary>
+  </>
+);
+```
+
+**性能提升**:
+- 减少初始渲染工作量（5 个组件 → 1 个组件）
+- 降低内存占用
+- 加快页面加载速度
+
+**参考实现**: `frontend/src/pages/admin/ModelManagement.tsx`
+
+### 🔍 常见错误排查
+
+| 症状 | 可能原因 | 解决方案 |
+|------|---------|---------|
+| 标签页黑屏 | 子组件渲染错误 | 添加错误边界 + 检查控制台 |
+| 页面加载慢 | 所有标签页提前渲染 | 实现懒加载 |
+| 组件导入错误 | 缺少必要的导入 | 检查 TypeScript 编译错误 |
+| API 调用失败 | 后端未启动或路径错误 | 检查网络面板 + 后端日志 |
+
+## 7. AI 工作流集成 (AI Integration)
 
 ### 🤖 模拟流程 (Simulation)
 目前 `Workspace.tsx` 使用 Mock 函数模拟 AI 处理链：
@@ -121,9 +248,9 @@ src/
 
 ---
 
-## 7. ⚠️ 铁律：禁止擅自修改 UI/UX
+## 8. ⚠️ 铁律：禁止擅自修改 UI/UX
 
-### 7.1 绝对禁止的行为
+### 8.1 绝对禁止的行为
 除非用户**明确请求**，否则**严禁**修改：
 - 样式 (CSS, Tailwind classes)
 - 图标 (Lucide, Ant Design Icons)
@@ -131,16 +258,16 @@ src/
 - 字段名称或显示逻辑
 - 路由架构 (React Router 结构)
 
-### 7.2 如果认为需要修改
+### 8.2 如果认为需要修改
 1. **停止**
 2. **询问**: "这个改动会影响 UI/UX，您同意吗？"
 3. **等待明确许可**
 
-### 7.3 违反后果
+### 8.3 违反后果
 - 历史教训：一次"顺手优化"导致所有子页面乱套
 - 教训：设计风格是用户的选择，不应被 AI 擅自改变
 
-### 7.4 验证流程
+### 8.4 验证流程
 任何前端代码修改后：
 1. **手动打开所有页面**检查是否正常
 2. **检查路由跳转**是否正常

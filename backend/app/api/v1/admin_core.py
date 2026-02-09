@@ -11,6 +11,8 @@ from app.models.project import Project
 
 router = APIRouter()
 
+# 在文件末尾注册模型管理子路由，避免循环导入
+
 
 def check_admin(current_user: User = Depends(get_current_user)):
     """检查是否为管理员"""
@@ -279,3 +281,4 @@ async def get_pipeline_execution_logs_admin(
         "skip": skip,
         "limit": limit
     }
+

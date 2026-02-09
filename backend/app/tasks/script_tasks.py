@@ -42,8 +42,13 @@ def run_script_task(self, task_id: str, batch_id: str, project_id: str, breakdow
                 task_record = task_result.scalar_one_or_none()
                 task_config = task_record.config if task_record else {}
 
-                # 创建模型适配器（统一入口）
-                model_adapter = await get_adapter()
+                # 创建模型适配器（从数据库读取配置）
+                model_id = task_config.get("model_id")  # 如果任务配置中指定了模型
+                model_adapter = await get_adapter(
+                    model_id=model_id,
+                    user_id=user_id,
+                    db=db
+                )
 
                 # 定义进度回调函数
                 async def progress_callback(step: str, progress: int):

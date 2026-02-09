@@ -68,3 +68,21 @@ Types:
 - **Backend**: FastAPI, Async SQLAlchemy 2.0, Celery
 - **Database**: PostgreSQL (via asyncpg)
 - **Storage**: MinIO/S3
+
+# 前端重构记录
+
+## Workspace 组件重构（2026-02-08）
+
+### 重构目标
+将 2,506 行的单文件组件重构为模块化架构，提升代码可维护性。
+
+### 重构成果
+- **代码减少**：35.8%（从 2,506 行减少到 1,607 行）
+- **组件拆分**：6 个标签页独立为单独组件
+- **Hooks 提取**：3 个核心 Custom Hooks
+- **目录结构**：清晰的模块化目录结构
+
+### 文件位置
+- 主容器：`frontend/src/pages/user/Workspace/index.tsx`
+- 组件文档：`frontend/src/pages/user/Workspace/README.md`
+

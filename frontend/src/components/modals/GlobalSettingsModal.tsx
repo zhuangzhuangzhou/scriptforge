@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Cpu, Database, Scissors, Save, Server, Key, FileText, Plus, Sliders, Globe, Check, Crown, Info, Lock, Edit2, Trash2, Library } from 'lucide-react';
+import { Cpu, Scissors, Save, Server, Key, Plus, Sliders, Globe, Check, Crown, Info, Lock, Edit2, Trash2, Library } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { UserTier } from '../../types';
 

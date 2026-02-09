@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, Loader2, X, CircleDashed } from 'lucide-react';
+import { CheckCircle2, Loader2, X, CircleDashed, Clock } from 'lucide-react';
 import { Batch } from '../../../../types';
 
 interface BatchCardProps {
@@ -44,16 +44,20 @@ const BatchCard: React.FC<BatchCardProps> = ({
             ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
             : batch.breakdown_status === 'processing'
             ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20 animate-pulse'
+            : batch.breakdown_status === 'queued'
+            ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
             : batch.breakdown_status === 'failed'
             ? 'bg-red-500/10 text-red-400 border-red-500/20'
             : 'bg-slate-800 text-slate-500 border-slate-700'
         }`}>
           {batch.breakdown_status === 'completed' && <CheckCircle2 size={10} />}
           {batch.breakdown_status === 'processing' && <Loader2 size={10} className="animate-spin" />}
+          {batch.breakdown_status === 'queued' && <Clock size={10} />}
           {batch.breakdown_status === 'failed' && <X size={10} />}
           {batch.breakdown_status === 'pending' && <CircleDashed size={10} />}
           {batch.breakdown_status === 'completed' ? '已拆解' :
            batch.breakdown_status === 'processing' ? '拆解中' :
+           batch.breakdown_status === 'queued' ? '排队中' :
            batch.breakdown_status === 'failed' ? '失败' : '未拆解'}
         </div>
       </div>

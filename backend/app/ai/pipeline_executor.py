@@ -22,12 +22,17 @@ from app.models.script import Script
 class PipelineExecutor:
     """基于数据库 Pipeline 配置的执行器"""
 
-    def __init__(self, db: AsyncSession, model_adapter, user_id: Optional[str] = None):
+    def __init__(self, db: AsyncSession, model_adapter, user_id: Optional[str] = None, task_config: Optional[Dict[str, Any]] = None):
         self.db = db
         self.model_adapter = model_adapter
         self.user_id = user_id
+        self.task_config = task_config or {}
         self.skill_loader = SkillLoader()
         self.template_executor = TemplateSkillExecutor(db, model_adapter=model_adapter)
+        # 配置缓存
+        self._adapt_method = None
+        self._quality_rule = None
+        self._output_style = None
 
     async def run_breakdown(
         self,
@@ -41,10 +46,19 @@ class PipelineExecutor:
         stage = await self._get_stage(pipeline_id, "breakdown")
         skills = self._get_stage_skills(stage, selected_skills, DEFAULT_BREAKDOWN_SKILLS)
 
+        # 加载配置
+        adapt_method = await self.get_adapt_method()
+        quality_rule = await self.get_quality_rule()
+        output_style = await self.get_output_style()
+
         chapters = await self._load_chapters(batch_id)
         context: Dict[str, Any] = {
             "chapters": chapters,
-            "model_adapter": self.model_adapter
+            "model_adapter": self.model_adapter,
+            # 注入配置到上下文
+            "adapt_method": adapt_method,
+            "quality_rule": quality_rule,
+            "output_style": output_style
         }
 
         context = await self._execute_skills(skills, context, progress_callback)
@@ -68,7 +82,8 @@ class PipelineExecutor:
             emotions=context.get("emotions", []),
             consistency_status=validation.get("status", "pending"),
             consistency_score=validation.get("score"),
-            consistency_results=validation.get("results")
+            consistency_results=validation.get("results"),
+            used_adapt_method_id=self.task_config.get("adapt_method_key")
         )
 
         self.db.add(breakdown)
@@ -566,3 +581,44 @@ class PipelineExecutor:
     @staticmethod
     def _looks_like_uuid(value: str) -> bool:
         return bool(re.match(r"^[0-9a-fA-F-]{36}$", value))
+
+    async def get_adapt_method(self) -> dict:
+        """获取适配方法配置（优先用户自定义）"""
+        if self._adapt_method is None:
+            key = self.task_config.get("adapt_method_key", "adapt_method_default")
+            config = await self._load_config(key)
+            self._adapt_method = config.value if config else {}
+        return self._adapt_method
+
+    async def get_quality_rule(self) -> dict:
+        """获取质检规则配置"""
+        if self._quality_rule is None:
+            key = self.task_config.get("quality_rule_key", "qa_breakdown_default")
+            config = await self._load_config(key)
+            self._quality_rule = config.value if config else {}
+        return self._quality_rule
+
+    async def get_output_style(self) -> dict:
+        """获取输出风格配置"""
+        if self._output_style is None:
+            key = self.task_config.get("output_style_key", "output_style_default")
+            config = await self._load_config(key)
+            self._output_style = config.value if config else {}
+        return self._output_style
+
+    async def _load_config(self, key: str):
+        """加载配置（用户自定义优先）"""
+        from app.models.ai_configuration import AIConfiguration
+
+        result = await self.db.execute(
+            select(AIConfiguration)
+            .where(AIConfiguration.key == key)
+            .where((AIConfiguration.user_id == self.user_id) | (AIConfiguration.user_id.is_(None)))
+            .order_by(AIConfiguration.user_id.desc().nulls_last())
+            .limit(1)
+        )
+        config = result.scalar_one_or_none()
+        if not config:
+            # 如果配置不存在，返回 None（调用方会使用空字典）
+            return None
+        return config

@@ -1,0 +1,5 @@
+{"path": ".trellis/spec/backend/index.md", "reason": "后端开发规范 - FastAPI/SQLAlchemy/Pydantic 标准"}
+{"path": ".trellis/spec/frontend/index.md", "reason": "前端开发规范 - React/TypeScript/Glass UI 标准"}
+{"path": "backend/app/api/v1/configurations.py", "reason": "AIConfiguration API 实现参考"}
+{"path": "backend/app/api/v1/breakdown.py", "reason": "Breakdown API 现有实现"}
+{"path": "frontend/src/components/modals/AIConfigurationModal.tsx", "reason": "配置管理界面组件参考"}

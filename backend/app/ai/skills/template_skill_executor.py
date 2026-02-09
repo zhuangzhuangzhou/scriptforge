@@ -24,10 +24,17 @@ class TemplateSkillExecutor:
         self.db = db
         self._model_adapter = model_adapter
 
-    async def _get_model_adapter(self):
-        """获取模型适配器（懒加载）"""
+    async def _get_model_adapter(self, user_id: Optional[str] = None):
+        """获取模型适配器（懒加载）
+
+        Args:
+            user_id: 用户ID，用于获取用户自定义配置
+        """
         if self._model_adapter is None:
-            self._model_adapter = await get_adapter()
+            self._model_adapter = await get_adapter(
+                user_id=user_id,
+                db=self.db
+            )
         return self._model_adapter
 
     async def execute(
@@ -70,8 +77,8 @@ class TemplateSkillExecutor:
 
         logger.info(f"执行模板 Skill: {skill.name}, 变量: {list(variables.keys())}")
 
-        # 5. 调用 LLM
-        model_adapter = await self._get_model_adapter()
+        # 5. 调用 LLM（传递 user_id 以支持用户自定义配置）
+        model_adapter = await self._get_model_adapter(user_id)
         response = model_adapter.generate(prompt)
 
         # 6. 解析结果

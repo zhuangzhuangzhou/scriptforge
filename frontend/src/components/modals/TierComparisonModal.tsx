@@ -1,6 +1,6 @@
 import React from 'react';
 import { Crown, TrendingUp, Zap, Star, Check, X } from 'lucide-react';
-import { Modal, Button } from 'antd';
+import { Modal } from 'antd';
 import { motion } from 'framer-motion';
 
 interface TierComparisonModalProps {

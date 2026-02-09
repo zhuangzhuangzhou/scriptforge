@@ -149,6 +149,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
     // PLOT Tab State
     const [batches, setBatches] = useState<Batch[]>([]);
+    const [batchTotal, setBatchTotal] = useState(0);
     const [selectedBatch, setSelectedBatch] = useState<Batch | null>(null);
     const [breakdownResult, setBreakdownResult] = useState<PlotBreakdown | null>(null);
     const [breakdownLoading, setBreakdownLoading] = useState(false);
@@ -223,8 +224,8 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         setLoadingBatches(true);
         try {
             const res = await projectApi.getBatches(projectId, pageNum, 20);
-            const newItems = res.data.items || [];
-            const total = res.data.total || 0;
+            const newItems = res.data?.items || [];
+            const total = res.data?.total || 0;
 
             setBatchTotal(total);
 

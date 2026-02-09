@@ -4,7 +4,8 @@ from app.core.config import settings
 celery_app = Celery(
     "novel_script",
     broker=settings.CELERY_BROKER_URL,
-    backend=settings.CELERY_RESULT_BACKEND
+    backend=settings.CELERY_RESULT_BACKEND,
+    include=['app.tasks.breakdown_tasks']
 )
 
 celery_app.conf.update(

@@ -14,6 +14,7 @@ import SkillsManagement from './pages/user/SkillsManagement';
 import AIConfiguration from './pages/admin/AIConfiguration';
 import AdminDashboard from './pages/admin/Dashboard';
 import UserManagement from './pages/admin/UserManagement';
+import ModelManagement from './pages/admin/ModelManagement';
 import { UserTier } from './types';
 
 // 加载状态组件
@@ -69,6 +70,7 @@ const AppContent: React.FC = () => {
             <Route path="/admin/dashboard" element={<AdminDashboard />} />
             <Route path="/admin/users" element={<UserManagement />} />
             <Route path="/admin/configurations" element={<AIConfiguration />} />
+            <Route path="/admin/models" element={<ModelManagement />} />
           </Route>
         </Route>
       </Route>

@@ -223,6 +223,9 @@ export const breakdownApi = {
     modelConfigId?: string;
     selectedSkills?: string[];
     pipelineId?: string;
+    adaptMethodKey?: string;
+    qualityRuleKey?: string;
+    outputStyleKey?: string;
   }) => {
     if (USE_MOCK) {
       await delay(500);
@@ -232,7 +235,10 @@ export const breakdownApi = {
       batch_id: batchId,
       model_config_id: options?.modelConfigId,
       selected_skills: options?.selectedSkills,
-      pipeline_id: options?.pipelineId
+      pipeline_id: options?.pipelineId,
+      adapt_method_key: options?.adaptMethodKey,
+      quality_rule_key: options?.qualityRuleKey,
+      output_style_key: options?.outputStyleKey
     });
   },
 
@@ -263,6 +269,60 @@ export const breakdownApi = {
     return api.get(`/breakdown/tasks/${taskId}`);
   },
 
+  // 获取任务执行日志（包括 LLM 调用详情）
+  getTaskLogs: async (taskId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return {
+        data: {
+          task_id: taskId,
+          execution_id: 'mock-exec-1',
+          execution_logs: [
+            {
+              timestamp: new Date().toISOString(),
+              stage: 'breakdown',
+              event: 'stage_start',
+              message: '开始剧情拆解',
+              detail: null
+            },
+            {
+              timestamp: new Date().toISOString(),
+              stage: 'breakdown',
+              event: 'validator_result',
+              message: 'LLM 调用: 一致性检查',
+              detail: {
+                validator_name: 'consistency_checker',
+                status: 'passed',
+                score: 85
+              }
+            },
+            {
+              timestamp: new Date().toISOString(),
+              stage: 'breakdown',
+              event: 'stage_completed',
+              message: '剧情拆解完成',
+              detail: null
+            }
+          ],
+          llm_calls: {
+            total: 1,
+            stages: [
+              {
+                stage: 'breakdown',
+                validator: 'consistency_checker',
+                status: 'passed',
+                score: 85,
+                timestamp: new Date().toISOString()
+              }
+            ]
+          },
+          timeline: []
+        }
+      };
+    }
+    return api.get(`/breakdown/tasks/${taskId}/logs`);
+  },
+
   // 获取拆解结果
   getBreakdownResults: async (batchId: string) => {
     if (USE_MOCK) {
@@ -283,6 +343,118 @@ export const breakdownApi = {
       };
     }
     return api.get(`/breakdown/results/${batchId}`);
+  },
+
+  // 获取可用的配置列表
+  getAvailableConfigs: async () => {
+    if (USE_MOCK) {
+      await delay(300);
+      return {
+        data: {
+          adapt_methods: [
+            { key: 'adapt_method_default', description: '网文改编漫剧方法论（系统默认）', is_custom: false }
+          ],
+          quality_rules: [
+            { key: 'qa_breakdown_default', description: '剧情拆解质检标准（系统默认）', is_custom: false }
+          ],
+          output_styles: [
+            { key: 'output_style_default', description: '漫剧输出风格（系统默认）', is_custom: false }
+          ]
+        }
+      };
+    }
+    return api.get('/breakdown/available-configs');
+  },
+
+  // 批量启动拆解（增强版）
+  startBatchBreakdown: async (options: {
+    projectId: string;
+    adaptMethodKey?: string;
+    qualityRuleKey?: string;
+    outputStyleKey?: string;
+    concurrentLimit?: number;
+  }) => {
+    if (USE_MOCK) {
+      await delay(500);
+      const total = 5;
+      return {
+        data: {
+          task_ids: Array.from({ length: total }, (_, i) => `mock-batch-task-${i}`),
+          total,
+          project_id: options.projectId,
+          config: {
+            adapt_method_key: options.adaptMethodKey,
+            quality_rule_key: options.qualityRuleKey,
+            output_style_key: options.outputStyleKey
+          },
+          message: `已启动 ${total} 个拆解任务`
+        }
+      };
+    }
+    return api.post('/breakdown/start-batch', {
+      project_id: options.projectId,
+      adapt_method_key: options.adaptMethodKey,
+      quality_rule_key: options.qualityRuleKey,
+      output_style_key: options.outputStyleKey,
+      concurrent_limit: options.concurrentLimit
+    });
+  },
+
+  // 获取批量拆解进度
+  getBatchProgress: async (projectId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return {
+        data: {
+          project_id: projectId,
+          total_batches: 10,
+          completed: 3,
+          in_progress: 2,
+          pending: 4,
+          failed: 1,
+          overall_progress: 30,
+          status_summary: {
+            pending: 4,
+            queued: 0,
+            running: 2,
+            retrying: 0,
+            completed: 3,
+            failed: 1
+          },
+          task_details: [],
+          last_updated: new Date().toISOString()
+        }
+      };
+    }
+    return api.get(`/breakdown/batch-progress/${projectId}`);
+  },
+
+  // 重试失败的任务
+  retryTask: async (taskId: string, newConfig?: {
+    adaptMethodKey?: string;
+    qualityRuleKey?: string;
+    outputStyleKey?: string;
+  }) => {
+    if (USE_MOCK) {
+      await delay(500);
+      return {
+        data: {
+          task_id: `retry-${taskId}`,
+          status: 'queued',
+          retry_count: 1,
+          batch_id: 'mock-batch-1',
+          config: newConfig || {},
+          message: '任务已重新加入队列（第 1 次尝试）'
+        }
+      };
+    }
+    return api.post(`/breakdown/tasks/${taskId}/retry`, {
+      new_config: newConfig ? {
+        adapt_method_key: newConfig.adaptMethodKey,
+        quality_rule_key: newConfig.qualityRuleKey,
+        output_style_key: newConfig.outputStyleKey
+      } : undefined
+    });
   }
 };
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Row, Col, Statistic, Typography, Button, Space } from 'antd';
-import { UserOutlined, ProjectOutlined, ThunderboltOutlined, DatabaseOutlined, SettingOutlined, TeamOutlined } from '@ant-design/icons';
+import { UserOutlined, ProjectOutlined, ThunderboltOutlined, DatabaseOutlined, SettingOutlined, TeamOutlined, ApiOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { adminApi } from '../../services/api';
 
@@ -115,6 +115,21 @@ const AdminDashboard: React.FC = () => {
               </div>
               <span className="text-slate-200 font-medium">AI 系统配置</span>
               <span className="text-slate-500 text-xs mt-1">配置方法论与系统参数</span>
+            </div>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={8} lg={6}>
+          <Card
+            hoverable
+            className="bg-slate-800 border-slate-700 cursor-pointer group"
+            onClick={() => navigate('/admin/models')}
+          >
+            <div className="flex flex-col items-center justify-center py-4">
+              <div className="p-3 rounded-full bg-purple-500/10 mb-3 group-hover:bg-purple-500/20 transition-colors">
+                <ApiOutlined className="text-2xl text-purple-500" />
+              </div>
+              <span className="text-slate-200 font-medium">模型管理</span>
+              <span className="text-slate-500 text-xs mt-1">管理 AI 模型与凭证</span>
             </div>
           </Card>
         </Col>

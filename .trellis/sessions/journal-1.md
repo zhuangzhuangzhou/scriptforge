@@ -293,3 +293,141 @@
 
 ---
 
+
+## [20260208-000623] Admin UI 系统化重构与 API 安全加固
+
+**时间**: 2026-02-08 00:06:23
+
+**提交**:
+- `edd99c9` - refactor(ui): 引入 Glass UI 系统并重构管理后台
+
+
+| 功能模块 | 描述 |
+|---------|-------------|
+| **Glass UI 系统** | 新增 `GlassTable`, `GlassCard`, `GlassModal` 通用组件库，基于 `ConfigProvider` 实现原生背景透明。 |
+| **Admin 页面重构** | `UserManagement` 与 `AIConfiguration` 页面迁移至新组件，代码更简洁，视觉风格更统一。 |
+| **API 安全加固** | 提取 `check_admin` 权限校验并应用于 AI 配置接口，修复非管理员可操作配置的漏洞。 |
+| **样式清理** | 移除了 `index.css` 中 100+ 行冗余的 CSS Hack，回归声明式样式管理。 |
+| **Bug 修复** | 修复了重构过程中的 JSX 闭合标签错误及导入路径问题。 |
+
+**更新文件**:
+- `frontend/src/components/ui/GlassTable.tsx` (New)
+- `frontend/src/components/ui/GlassCard.tsx` (New)
+- `frontend/src/components/ui/GlassModal.tsx` (New)
+- `frontend/src/pages/admin/UserManagement.tsx` (Refactored)
+- `frontend/src/pages/admin/AIConfiguration.tsx` (Refactored)
+- `backend/app/api/v1/auth.py` (Refactored)
+- `backend/app/api/v1/configurations.py` (Hardened)
+- `frontend/src/index.css` (Cleaned)
+
+---
+
+
+## [20260208-002457] Skills UI 迁移与登录逻辑修复
+
+**时间**: 2026-02-08 00:24:57
+
+**提交**:
+- `92e7aeb` - refactor(ui): 迁移 Skills 管理页面至 Glass UI 系统
+- `5d84077` - fix(auth): 修复管理员登录后未正确跳转至管理后台的问题
+- `9bafaa9` - feat(db): 添加 ai_configurations 表迁移脚本
+
+
+| 功能模块 | 描述 |
+|---------|-------------|
+| **UI 迁移** | 将 `SkillsManagement` 和 `SkillAccessControl` 迁移至 Glass UI 系统，统一全站赛博朋克风格。 |
+| **登录修复** | 修复管理员登录后重定向至普通 Dashboard 的 Bug，实现自动跳转至 `/admin/dashboard`。 |
+| **Auth 优化** | 增强 `AuthContext` 的 `login` 方法，使其同步返回用户信息，解决重定向的时序竞争问题。 |
+| **数据库** | 添加 `ai_configurations` 表的 Alembic 迁移脚本，修复后端启动异常。 |
+
+**更新文件**:
+- `frontend/src/pages/user/SkillsManagement.tsx`
+- `frontend/src/components/SkillAccessControl.tsx`
+- `frontend/src/context/AuthContext.tsx`
+- `frontend/src/pages/auth/Login.tsx`
+- `backend/alembic/versions/4b9418e09e5a_add_ai_configurations_table.py`
+
+---
+
+
+## [20260208-020501] 实现用户自定义 AI 配置与 Glass UI 弹窗重构
+
+**时间**: 2026-02-08 02:05:01
+
+**提交**:
+- `8886926` - feat(config): 实现用户自定义 AI 配置系统与 Glass UI 重构 (含文档更新)
+
+
+## 交付摘要
+成功实现了用户级 AI 配置覆盖系统，并将配置中心从独立页面重构为高保真玻璃质感弹窗。
+
+### 核心改动
+| 模块 | 描述 |
+| :--- | :--- |
+| **后端** | 升级 `AIConfiguration` 模型支持多租户；实现“用户优先”覆盖逻辑；添加数据库迁移脚本。 |
+| **数据** | 自动解析 `docs/ai_flow_desc/` 存入数据库作为系统默认配置。 |
+| **前端** | 封装 `GlassTabs`, `GlassInput`, `GlassSelect` 等 UI 组件；实现 `AIConfigurationModal` 弹窗。 |
+| **交互** | 在 `MainLayout` 顶部导航栏集成 Bot 图标入口，支持无缝切换配置。 |
+
+### 涉及文件
+- 后端：`app/models/ai_configuration.py`, `app/api/v1/configurations.py`
+- 前端：`src/components/modals/AIConfigurationModal.tsx`, `src/components/ui/GlassTabs.tsx` 等
+
+---
+
+
+## [20260208-151114] Workspace 组件重构：从 2,506 行单文件到模块化架构
+
+**时间**: 2026-02-08 15:11:14
+
+**提交**:
+- `9638d76` - refactor(frontend): 重构 Workspace 组件为模块化架构
+
+
+**摘要**: 完成 Workspace.tsx 大型组件重构，拆分为 6 个独立标签页组件和 3 个 Custom Hooks，显著提升代码可维护性
+
+
+## 重构成果
+
+| 指标 | 重构前 | 重构后 | 改进 |
+|------|--------|--------|------|
+| 文件结构 | 单文件 2,506 行 | 模块化目录 + 主容器 1,540 行 | 拆分为 13 个文件 |
+| renderContent() | 900 行 | 76 行 | 减少 92% |
+| 组件复用性 | 低（耦合严重） | 高（独立组件） | 显著提升 |
+
+## 组件拆分
+
+**6 个标签页组件**：
+- `PlotTab/` - 剧情拆解（含 3 个子组件 + 3 个 Hooks）
+- `ConfigTab/` - 项目配置
+- `SourceTab/` - 小说原文
+- `ScriptTab/` - 剧本生成
+- `AgentsTab/` - 智能体
+- `SkillsTab/` - 技能库
+
+**3 个 Custom Hooks**：
+- `useBreakdownPolling` - 拆解任务轮询
+- `useBatchProgress` - 批量进度管理
+- `useBreakdownQueue` - 队列管理
+
+## 代码优化
+
+- 修复 GlassSelect.tsx 类型约束 lint 错误
+- 移除不必要的 try/catch 包装
+- 清理未使用的导入（保留动画相关如 AnimatePresence）
+- 修正导入路径以适配新目录结构
+
+## 文档更新
+
+- 新增 `.trellis/spec/frontend/component-refactoring.md` 组件重构规范
+- 更新 `frontend/src/CLAUDE.md` 记录重构内容
+- 创建 `Workspace/README.md` 说明目录结构
+
+## 关键文件
+
+- `frontend/src/pages/user/Workspace/index.tsx` - 主容器（1,540 行）
+- `frontend/src/pages/user/Workspace/PlotTab/` - 最复杂的标签页
+- `.trellis/spec/frontend/component-refactoring.md` - 重构规范文档
+
+---
+

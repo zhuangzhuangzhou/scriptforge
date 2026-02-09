@@ -15,6 +15,11 @@ from app.models.consistency_check import ConsistencyCheck
 from app.models.billing import BillingRecord, Subscription
 
 from app.models.ai_configuration import AIConfiguration
+from app.models.ai_model_provider import AIModelProvider
+from app.models.ai_model import AIModel
+from app.models.ai_model_credential import AIModelCredential
+from app.models.ai_model_pricing import AIModelPricing
+from app.models.system_model_config import SystemModelConfig
 
 __all__ = [
     "User",
@@ -39,4 +44,9 @@ __all__ = [
     "BillingRecord",
     "Subscription",
     "AIConfiguration",
+    "AIModelProvider",
+    "AIModel",
+    "AIModelCredential",
+    "AIModelPricing",
+    "SystemModelConfig",
 ]
