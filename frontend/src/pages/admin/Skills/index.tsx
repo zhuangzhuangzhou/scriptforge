@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Table, Button, Input, Select, Tag, Space, message, Modal, Card } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, PlayCircleOutlined, SearchOutlined } from '@ant-design/icons';
+import { Table, Button, Input, Select, Tag, Space, message, Modal, Card, Tabs } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, PlayCircleOutlined, SearchOutlined, CopyOutlined } from '@ant-design/icons';
 import axios from 'axios';
 
 const { Search } = Input;
 const { Option } = Select;
+const { TabPane } = Tabs;
 
 interface Skill {
   id: string;
@@ -17,6 +18,7 @@ interface Skill {
   is_builtin: boolean;
   is_active: boolean;
   visibility: string;
+  owner_id: string;
   created_at: string;
 }
 
@@ -26,6 +28,7 @@ const SkillsPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string | undefined>(undefined);
+  const [activeTab, setActiveTab] = useState('all');
 
   // 加载 Skills 列表
   const loadSkills = async () => {
@@ -48,6 +51,19 @@ const SkillsPage: React.FC = () => {
     loadSkills();
   }, [searchText, categoryFilter]);
 
+  // 复制 Skill
+  const handleClone = async (skill: Skill) => {
+    try {
+      const response = await axios.post(`/api/v1/skills/${skill.id}/clone`);
+      message.success('复制成功！您现在可以编辑自己的版本');
+      loadSkills();
+      // 跳转到编辑页面
+      navigate(`/admin/skills/${response.data.id}/edit`);
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '复制失败');
+    }
+  };
+
   // 删除 Skill
   const handleDelete = (skill: Skill) => {
     Modal.confirm({
@@ -67,6 +83,13 @@ const SkillsPage: React.FC = () => {
       },
     });
   };
+
+  // 根据标签页筛选
+  const filteredSkills = skills.filter(skill => {
+    if (activeTab === 'builtin') return skill.is_builtin;
+    if (activeTab === 'mine') return !skill.is_builtin;
+    return true;
+  });
 
   // 表格列定义
   const columns = [
@@ -126,7 +149,7 @@ const SkillsPage: React.FC = () => {
     {
       title: '操作',
       key: 'actions',
-      width: 200,
+      width: 250,
       render: (_: any, record: Skill) => (
         <Space>
           <Button
@@ -137,25 +160,36 @@ const SkillsPage: React.FC = () => {
           >
             测试
           </Button>
-          <Button
-            type="link"
-            size="small"
-            icon={<EditOutlined />}
-            onClick={() => navigate(`/admin/skills/${record.id}/edit`)}
-            disabled={record.is_builtin}
-          >
-            编辑
-          </Button>
-          <Button
-            type="link"
-            size="small"
-            danger
-            icon={<DeleteOutlined />}
-            onClick={() => handleDelete(record)}
-            disabled={record.is_builtin}
-          >
-            删除
-          </Button>
+          {record.is_builtin ? (
+            <Button
+              type="link"
+              size="small"
+              icon={<CopyOutlined />}
+              onClick={() => handleClone(record)}
+            >
+              复制
+            </Button>
+          ) : (
+            <Button
+              type="link"
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => navigate(`/admin/skills/${record.id}/edit`)}
+            >
+              编辑
+            </Button>
+          )}
+          {!record.is_builtin && (
+            <Button
+              type="link"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              onClick={() => handleDelete(record)}
+            >
+              删除
+            </Button>
+          )}
         </Space>
       ),
     },
@@ -195,9 +229,15 @@ const SkillsPage: React.FC = () => {
           </Select>
         </div>
 
+        <Tabs activeKey={activeTab} onChange={setActiveTab}>
+          <TabPane tab="全部" key="all" />
+          <TabPane tab="系统内置" key="builtin" />
+          <TabPane tab="我的 Skills" key="mine" />
+        </Tabs>
+
         <Table
           columns={columns}
-          dataSource={skills}
+          dataSource={filteredSkills}
           rowKey="id"
           loading={loading}
           pagination={{
@@ -206,6 +246,14 @@ const SkillsPage: React.FC = () => {
             showTotal: (total) => `共 ${total} 个 Skill`,
           }}
         />
+
+        {activeTab === 'builtin' && (
+          <div className="mt-4 p-4 bg-blue-50 rounded">
+            <p className="text-sm text-blue-700">
+              💡 提示：系统内置的 Skills 不能直接编辑。如果您想修改 Prompt，请点击"复制"按钮创建自己的版本。
+            </p>
+          </div>
+        )}
       </Card>
     </div>
   );

@@ -425,3 +425,86 @@ async def test_skill(
             success=False,
             error=str(e)
         )
+
+
+@router.post("/{skill_id}/clone", response_model=SkillResponse)
+async def clone_skill(
+    skill_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """复制 Skill（用于高级用户复制内置 Skill 并修改）"""
+
+    # 获取原始 Skill
+    result = await db.execute(
+        select(Skill).where(Skill.id == uuid.UUID(skill_id))
+    )
+    original_skill = result.scalar_one_or_none()
+
+    if not original_skill:
+        raise HTTPException(status_code=404, detail="Skill 不存在")
+
+    # 权限检查：只能复制公共的或自己的 Skill
+    if original_skill.visibility == "private" and original_skill.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="无权复制此 Skill")
+
+    # 生成新的名称（避免冲突）
+    base_name = original_skill.name
+    new_name = f"{base_name}_copy"
+    counter = 1
+
+    while True:
+        result = await db.execute(
+            select(Skill).where(Skill.name == new_name)
+        )
+        if not result.scalar_one_or_none():
+            break
+        counter += 1
+        new_name = f"{base_name}_copy_{counter}"
+
+    # 创建新的 Skill
+    new_skill = Skill(
+        id=uuid.uuid4(),
+        name=new_name,
+        display_name=f"{original_skill.display_name} (副本)",
+        description=original_skill.description,
+        category=original_skill.category,
+        is_template_based=original_skill.is_template_based,
+        prompt_template=original_skill.prompt_template,
+        input_schema=original_skill.input_schema,
+        output_schema=original_skill.output_schema,
+        model_config=original_skill.model_config,
+        example_input=original_skill.example_input,
+        example_output=original_skill.example_output,
+        visibility="private",  # 复制的 Skill 默认为私有
+        owner_id=current_user.id,
+        is_active=True,
+        is_builtin=False,  # 复制的不是内置的
+        module_path="app.ai.simple_executor",
+        class_name="SimpleSkillExecutor"
+    )
+
+    db.add(new_skill)
+    await db.commit()
+    await db.refresh(new_skill)
+
+    return SkillResponse(
+        id=str(new_skill.id),
+        name=new_skill.name,
+        display_name=new_skill.display_name,
+        description=new_skill.description,
+        category=new_skill.category,
+        is_template_based=new_skill.is_template_based,
+        prompt_template=new_skill.prompt_template,
+        input_schema=new_skill.input_schema,
+        output_schema=new_skill.output_schema,
+        model_config=new_skill.model_config,
+        example_input=new_skill.example_input,
+        example_output=new_skill.example_output,
+        visibility=new_skill.visibility,
+        owner_id=str(new_skill.owner_id),
+        is_active=new_skill.is_active,
+        is_builtin=new_skill.is_builtin,
+        created_at=new_skill.created_at.isoformat(),
+        updated_at=new_skill.updated_at.isoformat()
+    )
