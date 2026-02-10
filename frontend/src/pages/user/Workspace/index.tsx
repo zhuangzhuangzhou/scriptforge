@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Settings, FileEdit, Play,
@@ -17,6 +17,7 @@ import { UserTier, Batch, PlotBreakdown } from '../../../types';
 import { projectApi, breakdownApi } from '../../../services/api';
 import { message, Modal, Upload } from 'antd';
 import { useConsoleLogger } from '../../../hooks/useConsoleLogger';
+import { useBreakdownWebSocket } from '../../../hooks/useBreakdownWebSocket';
 import ConfigTab from './ConfigTab';
 import SourceTab from './SourceTab';
 import PlotTab from './PlotTab';
@@ -200,6 +201,147 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         addLog,
         clearLogs
     } = useConsoleLogger(breakdownTaskId);
+
+    // 使用 WebSocket Hook 监听任务进度（优先使用 WebSocket，失败时降级到轮询）
+    const lastStepRef = useRef<string>('');
+    const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+    const { isConnected: wsConnected, progress: wsProgress, currentStep: wsCurrentStep, usePolling } = useBreakdownWebSocket(
+        breakdownTaskId,
+        {
+            onProgress: (data) => {
+                setBreakdownProgress(data.progress || 0);
+
+                // 去重日志：只在步骤变化时添加
+                if (data.current_step && data.current_step !== lastStepRef.current) {
+                    addLog('thinking', data.current_step);
+                    lastStepRef.current = data.current_step;
+                }
+            },
+            onComplete: () => {
+                setBreakdownTaskId(null);
+                message.success('拆解完成');
+                if (selectedBatch) {
+                    fetchBreakdownResults(selectedBatch.id);
+                }
+                fetchBatches();
+            },
+            onError: (error) => {
+                setBreakdownTaskId(null);
+
+                // 解析错误信息
+                try {
+                    const errorData = typeof error === 'string' ? JSON.parse(error) : error;
+                    showError({
+                        code: errorData.code || 'UNKNOWN_ERROR',
+                        message: errorData.message || error
+                    });
+                } catch {
+                    showError({
+                        code: 'UNKNOWN_ERROR',
+                        message: error
+                    });
+                }
+            },
+            fallbackToPolling: true
+        }
+    );
+
+    // 当 WebSocket 降级到轮询时，启动优化的轮询机制
+    useEffect(() => {
+        if (usePolling && breakdownTaskId && selectedBatch) {
+            console.log('[Polling] WebSocket 不可用，启动优化轮询机制');
+            startOptimizedPolling(breakdownTaskId, selectedBatch.id);
+        }
+
+        return () => {
+            if (pollingIntervalRef.current) {
+                clearInterval(pollingIntervalRef.current);
+                pollingIntervalRef.current = null;
+            }
+        };
+    }, [usePolling, breakdownTaskId, selectedBatch]);
+
+    // 优化的轮询机制（动态间隔 + 去重日志）
+    const startOptimizedPolling = (taskId: string, batchId: string) => {
+        let pollInterval = 2000; // 初始间隔 2 秒
+
+        const poll = async () => {
+            try {
+                const res = await breakdownApi.getTaskStatus(taskId);
+                const { status, progress, current_step } = res.data;
+
+                setBreakdownProgress(progress || 0);
+
+                // 去重日志
+                if (current_step && current_step !== lastStepRef.current) {
+                    addLog('thinking', current_step);
+                    lastStepRef.current = current_step;
+                }
+
+                // 根据状态动态调整轮询间隔
+                if (status === 'queued') {
+                    pollInterval = 3000; // 排队中，降低频率
+                } else if (status === 'running' || status === 'processing') {
+                    pollInterval = 1500; // 运行中，提高频率
+                } else if (status === 'retrying') {
+                    pollInterval = 5000; // 重试中，降低频率
+                }
+
+                // 任务完成
+                if (status === 'completed') {
+                    if (pollingIntervalRef.current) {
+                        clearInterval(pollingIntervalRef.current);
+                        pollingIntervalRef.current = null;
+                    }
+                    setBreakdownTaskId(null);
+                    message.success('拆解完成');
+                    fetchBreakdownResults(batchId);
+                    fetchBatches();
+                    return;
+                }
+
+                // 任务失败
+                if (status === 'failed') {
+                    if (pollingIntervalRef.current) {
+                        clearInterval(pollingIntervalRef.current);
+                        pollingIntervalRef.current = null;
+                    }
+                    setBreakdownTaskId(null);
+
+                    const errorMsg = res.data.error_message || '拆解失败';
+                    try {
+                        const errorData = typeof errorMsg === 'string' ? JSON.parse(errorMsg) : errorMsg;
+                        showError({
+                            code: errorData.code || 'UNKNOWN_ERROR',
+                            message: errorData.message || errorMsg
+                        });
+                    } catch {
+                        showError({
+                            code: 'UNKNOWN_ERROR',
+                            message: errorMsg
+                        });
+                    }
+                    return;
+                }
+
+                // 调度下一次轮询
+                if (pollingIntervalRef.current) {
+                    clearInterval(pollingIntervalRef.current);
+                }
+                pollingIntervalRef.current = setTimeout(poll, pollInterval);
+
+            } catch (err) {
+                console.error('[Polling] 轮询失败:', err);
+                if (pollingIntervalRef.current) {
+                    clearInterval(pollingIntervalRef.current);
+                    pollingIntervalRef.current = null;
+                }
+            }
+        };
+
+        poll();
+    };
 
     // 创建批次并获取列表
     const createBatchesAndFetch = async () => {
@@ -474,16 +616,28 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     }, [activeTab, projectId]);
 
 
-    // 获取拆解结果
-    const fetchBreakdownResults = async (batchId: string) => {
+    // 获取拆解结果（带重试机制）
+    const fetchBreakdownResults = async (batchId: string, retryCount = 0) => {
         setBreakdownLoading(true);
         try {
             const res = await breakdownApi.getBreakdownResults(batchId);
             setBreakdownResult(res.data);
-        } catch (err) {
-            setBreakdownResult(null);
+        } catch (err: any) {
+            // 如果是 404 且批次状态为 completed，可能是时序问题，自动重试
+            if (err.response?.status === 404 && retryCount < 3) {
+                console.log(`拆解结果未找到，${2}秒后重试 (${retryCount + 1}/3)...`);
+                setTimeout(() => {
+                    fetchBreakdownResults(batchId, retryCount + 1);
+                }, 2000);
+            } else {
+                console.error('获取拆解结果失败:', err);
+                setBreakdownResult(null);
+                setBreakdownLoading(false);
+            }
         } finally {
-            setBreakdownLoading(false);
+            if (retryCount === 0) {
+                setBreakdownLoading(false);
+            }
         }
     };
 
@@ -503,6 +657,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             // 自动弹出 Console
             setShowConsole(true);
             clearLogs();
+            lastStepRef.current = ''; // 重置步骤记录
             addLog('info', `配置已应用，开始拆解批次 ${selectedBatch?.batch_number || ''}...`);
 
             const res = await breakdownApi.startBreakdown(targetBatchId, {
@@ -513,8 +668,8 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             });
             setBreakdownTaskId(res.data.task_id);
             message.info('拆解任务已启动');
-            // 开始轮询
-            pollBreakdownStatus(res.data.task_id, targetBatchId);
+
+            // WebSocket 会自动连接，如果失败会降级到轮询
         } catch (err: any) {
             const errorMsg = err.response?.data?.detail || '启动拆解失败';
             message.error(errorMsg);
@@ -697,88 +852,16 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         setSelectedBatch(firstPending);
         try {
              setShowConsole(true);
+             clearLogs();
+             lastStepRef.current = '';
              const res = await internalStartBreakdown(firstPending.id);
              setBreakdownTaskId(res.data.task_id);
-             pollBreakdownStatus(res.data.task_id, firstPending.id);
+             // WebSocket 会自动连接
         } catch (err: any) {
              const errorMsg = err.response?.data?.detail || '启动失败';
              message.error(errorMsg);
              showError({ code: 'START_FAILED', message: errorMsg });
         }
-    };
-
-    // 带回调的轮询
-    const pollBreakdownStatusWithCallback = (taskId: string, onComplete: () => void) => {
-        const interval = setInterval(async () => {
-            try {
-                const res = await breakdownApi.getTaskStatus(taskId);
-                setBreakdownProgress(res.data.progress || 0);
-
-                if (res.data.current_step) {
-                    addLog('thinking', res.data.current_step);
-                }
-
-                if (res.data.status === 'completed') {
-                    clearInterval(interval);
-                    setBreakdownTaskId(null);
-                    fetchBatches();
-                    onComplete();
-                } else if (res.data.status === 'failed') {
-                    clearInterval(interval);
-                    setBreakdownTaskId(null);
-                    setIsAllBreakdownRunning(false);
-                    message.error(res.data.error_message || '拆解失败');
-                }
-            } catch (err) {
-                clearInterval(interval);
-            }
-        }, 2000);
-    };
-
-    // 轮询任务状态
-    const pollBreakdownStatus = (taskId: string, batchId: string) => {
-        const interval = setInterval(async () => {
-            try {
-                const res = await breakdownApi.getTaskStatus(taskId);
-                setBreakdownProgress(res.data.progress || 0);
-
-                // 推送日志
-                if (res.data.current_step) {
-                    addLog('thinking', res.data.current_step);
-                }
-
-                if (res.data.status === 'completed') {
-                    clearInterval(interval);
-                    setBreakdownTaskId(null);
-                    message.success('拆解完成');
-                    fetchBreakdownResults(batchId);
-                    fetchBatches(); // 刷新批次状态
-                } else if (res.data.status === 'failed') {
-                    clearInterval(interval);
-                    setBreakdownTaskId(null);
-
-                    // 解析错误信息
-                    const errorMsg = res.data.error_message || '拆解失败';
-                    let errorCode = 'UNKNOWN_ERROR';
-
-                    try {
-                        const errorData = typeof errorMsg === 'string' ? JSON.parse(errorMsg) : errorMsg;
-                        errorCode = errorData.code || errorCode;
-                        showError({
-                            code: errorCode,
-                            message: errorData.message || errorMsg
-                        });
-                    } catch {
-                        showError({
-                            code: errorCode,
-                            message: errorMsg
-                        });
-                    }
-                }
-            } catch (err) {
-                clearInterval(interval);
-            }
-        }, 2000);
     };
 
     // 触发文件选择
@@ -1388,6 +1471,17 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 }}
             >
                 <div className="space-y-4">
+                    {/* 积分说明提示 */}
+                    <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 flex gap-3 items-start">
+                        <div className="mt-0.5">
+                            <Zap size={16} className="text-amber-400" />
+                        </div>
+                        <div className="text-xs text-amber-300 leading-relaxed">
+                            <span className="font-bold block mb-1 text-amber-200">积分扣除说明</span>
+                            任务启动时会预扣剧集配额，<span className="font-bold text-amber-100">积分将在任务成功完成后扣除</span>（基础消耗 10 积分）。如果任务失败，配额和积分都会自动回滚。
+                        </div>
+                    </div>
+
                     <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3 flex gap-3 items-start">
                         <div className="mt-0.5">
                             <Sparkles size={16} className="text-blue-400" />

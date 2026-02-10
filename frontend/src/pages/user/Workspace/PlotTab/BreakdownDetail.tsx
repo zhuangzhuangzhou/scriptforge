@@ -82,6 +82,20 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
     );
   }
 
+  // 拆解完成但无结果（数据异常）
+  if (selectedBatch.breakdown_status === 'completed' && !breakdownResult) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
+        <div className="w-20 h-20 rounded-2xl bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
+          <Activity size={32} className="text-amber-400" />
+        </div>
+        <p className="text-sm font-bold text-amber-400">拆解结果加载异常</p>
+        <p className="text-xs text-slate-700">批次状态已完成，但未找到拆解结果</p>
+        <p className="text-xs text-slate-600">请尝试刷新页面或联系技术支持</p>
+      </div>
+    );
+  }
+
   // 拆解完成且有结果
   if (selectedBatch.breakdown_status === 'completed' && breakdownResult) {
     return (

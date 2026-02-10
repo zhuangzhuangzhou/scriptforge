@@ -136,6 +136,17 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
                     current_step="任务完成"
                 )
 
+                # 验证拆解结果已保存（状态一致性检查）
+                from app.models.plot_breakdown import PlotBreakdown
+                breakdown_check = await db.execute(
+                    select(PlotBreakdown).where(PlotBreakdown.batch_id == batch_id)
+                )
+                breakdown_exists = breakdown_check.scalar_one_or_none()
+
+                if not breakdown_exists:
+                    # 如果拆解结果未保存，记录警告但不阻止状态更新
+                    print(f"警告：批次 {batch_id} 的拆解结果未找到，但任务状态已标记为完成")
+
                 # 更新批次状态为 completed
                 if batch_record:
                     batch_record.breakdown_status = "completed"
