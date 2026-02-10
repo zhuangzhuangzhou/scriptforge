@@ -64,64 +64,159 @@ async def websocket_breakdown_progress(websocket: WebSocket, task_id: str):
     """WebSocket端点：实时推送Breakdown任务进度
 
     优化特性：
-    - 使用Redis Pub/Sub（如果可用）
-    - 智能轮询间隔（任务进行时1秒，完成时2秒）
+    - 使用 Redis Pub/Sub 实时推送（高效）
+    - 连接时立即发送当前状态
+    - Redis 不可用时降级到数据库轮询
     - 状态变更检测，避免发送重复数据
     """
     await websocket.accept()
 
-    last_data = None
-    task_status = None
-    poll_interval = 1  # 初始轮询间隔（秒）
+    redis_client = None
+    pubsub = None
+    use_polling = False
 
     try:
+        # 1. 首次连接时立即查询并发送当前状态
         async with AsyncSessionLocal() as db:
+            result = await db.execute(select(AITask).where(AITask.id == task_id))
+            task = result.scalar_one_or_none()
+
+            if not task:
+                await websocket.send_json({"error": "任务不存在", "code": "TASK_NOT_FOUND"})
+                return
+
+            # 立即发送当前状态
+            initial_data = serialize_task(task)
+            await websocket.send_json(initial_data)
+
+            # 如果任务已经完成，发送完成消息后退出
+            if task.status in ["completed", "failed", "canceled"]:
+                await websocket.send_json({
+                    "task_id": task_id,
+                    "status": "done",
+                    "final_status": task.status,
+                    "message": f"任务已{ '完成' if task.status == 'completed' else '失败' }"
+                })
+                return
+
+        # 2. 尝试连接 Redis 并订阅频道
+        try:
+            redis_client = await get_redis()
+            if redis_client:
+                channel_name = f"breakdown:progress:{task_id}"
+                pubsub = redis_client.pubsub()
+                await pubsub.subscribe(channel_name)
+                print(f"[WebSocket] 已订阅 Redis 频道: {channel_name}")
+            else:
+                print(f"[WebSocket] Redis 不可用，降级到数据库轮询")
+                use_polling = True
+        except Exception as e:
+            print(f"[WebSocket] Redis 订阅失败: {e}，降级到数据库轮询")
+            use_polling = True
+
+        # 3. 主循环：接收更新
+        last_data = initial_data
+
+        if not use_polling and pubsub:
+            # 使用 Redis Pub/Sub（高效）
+            print(f"[WebSocket] 使用 Redis Pub/Sub 模式")
             while True:
-                # 查询任务状态
-                result = await db.execute(select(AITask).where(AITask.id == task_id))
-                task = result.scalar_one_or_none()
+                try:
+                    # 从 Redis 获取消息（带超时）
+                    message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
 
-                if not task:
-                    await websocket.send_json({"error": "任务不存在", "code": "TASK_NOT_FOUND"})
-                    break
+                    if message and message['type'] == 'message':
+                        try:
+                            # 解析进度数据
+                            progress_data = json.loads(message['data'])
 
-                # 构建进度数据
-                progress_data = serialize_task(task)
+                            # 避免发送重复数据
+                            if progress_data != last_data:
+                                await websocket.send_json(progress_data)
+                                last_data = progress_data
 
-                # 状态变更检测，避免发送重复数据
-                if progress_data != last_data:
-                    await websocket.send_json(progress_data)
-                    last_data = progress_data
+                            # 检测任务完成
+                            if progress_data.get('status') in ["completed", "failed", "canceled"]:
+                                await websocket.send_json({
+                                    "task_id": task_id,
+                                    "status": "done",
+                                    "final_status": progress_data.get('status'),
+                                    "message": f"任务已{ '完成' if progress_data.get('status') == 'completed' else '失败' }"
+                                })
+                                break
 
-                # 更新任务状态变量
-                new_status = task.status
+                        except json.JSONDecodeError as e:
+                            print(f"[WebSocket] JSON 解析失败: {e}")
+                            continue
 
-                # 如果状态发生变化，调整轮询间隔
-                if new_status != task_status:
-                    task_status = new_status
-                    if new_status in ["completed", "failed", "canceled"]:
-                        # 任务结束时，发送最终状态后退出
-                        await websocket.send_json({
-                            "task_id": task_id,
-                            "status": "done",
-                            "final_status": new_status,
-                            "message": f"任务已{ '完成' if new_status == 'completed' else '失败' }"
-                        })
+                    # 短暂等待，避免过度轮询
+                    await asyncio.sleep(0.1)
+
+                except asyncio.TimeoutError:
+                    # 超时是正常的，继续循环
+                    continue
+
+        else:
+            # 降级到数据库轮询（兼容模式）
+            print(f"[WebSocket] 使用数据库轮询模式")
+            poll_interval = 1
+            task_status = initial_data.get('status')
+
+            async with AsyncSessionLocal() as db:
+                while True:
+                    await asyncio.sleep(poll_interval)
+
+                    # 查询任务状态
+                    result = await db.execute(select(AITask).where(AITask.id == task_id))
+                    task = result.scalar_one_or_none()
+
+                    if not task:
+                        await websocket.send_json({"error": "任务不存在", "code": "TASK_NOT_FOUND"})
                         break
-                    else:
-                        # 任务进行中，保持快速轮询
-                        poll_interval = 1
 
-                # 等待后再次查询
-                await asyncio.sleep(poll_interval)
+                    # 构建进度数据
+                    progress_data = serialize_task(task)
+
+                    # 状态变更检测，避免发送重复数据
+                    if progress_data != last_data:
+                        await websocket.send_json(progress_data)
+                        last_data = progress_data
+
+                    # 更新任务状态变量
+                    new_status = task.status
+
+                    # 如果状态发生变化，调整轮询间隔
+                    if new_status != task_status:
+                        task_status = new_status
+                        if new_status in ["completed", "failed", "canceled"]:
+                            # 任务结束时，发送最终状态后退出
+                            await websocket.send_json({
+                                "task_id": task_id,
+                                "status": "done",
+                                "final_status": new_status,
+                                "message": f"任务已{ '完成' if new_status == 'completed' else '失败' }"
+                            })
+                            break
+                        else:
+                            # 任务进行中，保持快速轮询
+                            poll_interval = 1
 
     except WebSocketDisconnect:
-        pass
+        print(f"[WebSocket] 客户端断开连接: {task_id}")
     except Exception as e:
+        print(f"[WebSocket] 错误: {e}")
         try:
             await websocket.send_json({"error": str(e), "code": "INTERNAL_ERROR"})
         except:
             pass
+    finally:
+        # 清理资源
+        if pubsub:
+            try:
+                await pubsub.unsubscribe()
+                await pubsub.close()
+            except Exception as e:
+                print(f"[WebSocket] 清理 pubsub 失败: {e}")
 
 
 @router.websocket("/ws/batch-progress/{project_id}")
@@ -306,33 +401,44 @@ async def websocket_batch_simple(websocket: WebSocket, project_id: str):
 @router.websocket("/ws/breakdown-logs/{task_id}")
 async def websocket_breakdown_logs(websocket: WebSocket, task_id: str):
     """WebSocket端点：实时推送拆解日志
-    
+
     功能：
     - 订阅 Redis 频道 breakdown:logs:{task_id}
     - 接收并转发所有日志消息到前端
     - 检测任务完成状态并自动关闭连接
     - 正确处理 WebSocket 断开和异常
-    
+
     消息类型：
     - step_start: 步骤开始
     - stream_chunk: 流式内容片段
     - step_end: 步骤结束
     - error: 错误信息
     - progress: 进度更新
-    
+
     Requirements: 3.4.1, 3.4.3
     """
-    await websocket.accept()
-    
+    # 添加调试日志
+    print(f"[WebSocket] 收到连接请求: task_id={task_id}")
+    print(f"[WebSocket] Origin: {websocket.headers.get('origin')}")
+    print(f"[WebSocket] Host: {websocket.headers.get('host')}")
+
+    try:
+        await websocket.accept()
+        print(f"[WebSocket] 连接已接受: task_id={task_id}")
+    except Exception as e:
+        print(f"[WebSocket] 接受连接失败: {e}")
+        return
+
     redis_client = None
     pubsub = None
-    
+
     try:
         # 获取 Redis 客户端
         redis_client = await get_redis()
-        
+
         if not redis_client:
             # Redis 不可用
+            print(f"[WebSocket] Redis 不可用")
             await websocket.send_json({
                 "type": "error",
                 "content": "Redis 服务不可用，无法提供实时日志",
@@ -340,18 +446,24 @@ async def websocket_breakdown_logs(websocket: WebSocket, task_id: str):
             })
             await websocket.close()
             return
-        
+
+        print(f"[WebSocket] Redis 连接成功")
+
         # 订阅 Redis 频道
         channel_name = f"breakdown:logs:{task_id}"
         pubsub = redis_client.pubsub()
         await pubsub.subscribe(channel_name)
-        
+
+        print(f"[WebSocket] 已订阅频道: {channel_name}")
+
         # 发送连接成功消息
         await websocket.send_json({
             "type": "connected",
             "task_id": task_id,
             "message": f"已连接到任务日志流: {task_id}"
         })
+
+        print(f"[WebSocket] 已发送连接成功消息")
         
         # 主循环：接收 Redis 消息并转发
         while True:

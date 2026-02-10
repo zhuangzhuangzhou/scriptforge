@@ -5,6 +5,9 @@ from sqlalchemy import update, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.ai_task import AITask
 from app.models.pipeline import PipelineExecution
+import json
+import redis
+from app.core.config import settings
 
 
 async def update_task_progress(
@@ -151,6 +154,43 @@ async def update_pipeline_execution(
 from sqlalchemy.orm import Session
 
 
+def _publish_progress_to_redis(task_id: str, task: AITask) -> None:
+    """发布任务进度到 Redis Pub/Sub
+
+    Args:
+        task_id: 任务 ID
+        task: 任务对象
+    """
+    try:
+        redis_client = redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=2,
+            socket_timeout=2
+        )
+
+        # 构建进度消息
+        progress_data = {
+            "task_id": str(task_id),
+            "status": task.status,
+            "progress": task.progress or 0,
+            "current_step": task.current_step or "",
+            "error_message": task.error_message,
+            "retry_count": task.retry_count or 0,
+            "depends_on": task.depends_on or [],
+            "updated_at": datetime.utcnow().isoformat()
+        }
+
+        # 发布到 Redis 频道
+        channel = f"breakdown:progress:{task_id}"
+        redis_client.publish(channel, json.dumps(progress_data, ensure_ascii=False))
+        redis_client.close()
+
+    except Exception as e:
+        # Redis 发布失败不应影响任务执行
+        print(f"[Progress] 发布到 Redis 失败: {e}")
+
+
 def update_task_progress_sync(
     db: Session,
     task_id: str,
@@ -233,3 +273,6 @@ def update_task_progress_sync(
 
     # 提交更改
     db.commit()
+
+    # 发布进度更新到 Redis（用于 WebSocket 实时推送）
+    _publish_progress_to_redis(task_id, task)
