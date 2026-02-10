@@ -54,6 +54,19 @@ export interface EmotionPoint {
   intensity: number;
 }
 
+export interface Episode {
+  episode_number: number;
+  title: string;
+  main_conflict: string;
+  key_scenes: string[];
+  chapter_range: [number, number];
+  conflicts: Conflict[];
+  plot_hooks: PlotHook[];
+  characters: Character[];
+  scenes: Scene[];
+  emotions: EmotionPoint[];
+}
+
 export interface PlotBreakdown {
   batch_id: string;
   conflicts: Conflict[];
@@ -61,6 +74,7 @@ export interface PlotBreakdown {
   characters: Character[];
   scenes: Scene[];
   emotions: EmotionPoint[];
+  episodes: Episode[];
   consistency_status?: string;
   consistency_score?: number;
   consistency_results?: Record<string, unknown>;

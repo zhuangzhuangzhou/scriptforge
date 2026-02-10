@@ -1,6 +1,10 @@
-import React from 'react';
-import { Layers, Play, Loader2, X, Activity, Swords, Lightbulb, Clock } from 'lucide-react';
-import { Batch, PlotBreakdown } from '../../../../types';
+import React, { useState } from 'react';
+import {
+  Layers, Play, Loader2, X, Activity, Swords, Lightbulb, Clock,
+  Film, ChevronDown, Users, MapPin, Heart
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Batch, PlotBreakdown, Episode } from '../../../../types';
 
 interface BreakdownDetailProps {
   selectedBatch: Batch | null;
@@ -10,6 +14,189 @@ interface BreakdownDetailProps {
   onStartBreakdown?: (batchId: string) => void;
 }
 
+interface EpisodeCardProps {
+  episode: Episode;
+  isExpanded: boolean;
+  onToggle: () => void;
+}
+
+const EpisodeCard: React.FC<EpisodeCardProps> = ({ episode, isExpanded, onToggle }) => {
+  return (
+    <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
+      {/* 标题栏 - 可点击折叠/展开 */}
+      <div
+        className="flex items-center justify-between cursor-pointer"
+        onClick={onToggle}
+      >
+        <div className="flex-1">
+          <h3 className="text-lg font-semibold text-cyan-400">
+            第{episode.episode_number}集 - {episode.title}
+          </h3>
+          <p className="text-sm text-slate-400 mt-1">
+            主要冲突：{episode.main_conflict}
+          </p>
+          <p className="text-xs text-slate-500 mt-1">
+            章节范围：第{episode.chapter_range[0]}-{episode.chapter_range[1]}章
+          </p>
+        </div>
+        <ChevronDown
+          className={`w-5 h-5 text-slate-400 transition-transform ${
+            isExpanded ? 'rotate-180' : ''
+          }`}
+        />
+      </div>
+
+      {/* 详情区域 - 可折叠 */}
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="mt-4 space-y-4 overflow-hidden"
+          >
+            {/* 关键场景 */}
+            {episode.key_scenes && episode.key_scenes.length > 0 && (
+              <div>
+                <h4 className="text-sm font-semibold text-purple-400 flex items-center gap-2 mb-2">
+                  <Film className="w-4 h-4" />
+                  关键场景
+                </h4>
+                <div className="flex flex-wrap gap-2">
+                  {episode.key_scenes.map((scene, idx) => (
+                    <span key={idx} className="text-xs px-2 py-1 bg-purple-500/20 text-purple-300 rounded border border-purple-500/30">
+                      {scene}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 冲突点 */}
+            {episode.conflicts && episode.conflicts.length > 0 && (
+              <div>
+                <h4 className="text-sm font-semibold text-red-400 flex items-center gap-2 mb-2">
+                  <Swords className="w-4 h-4" />
+                  冲突点 ({episode.conflicts.length})
+                </h4>
+                <div className="space-y-2">
+                  {episode.conflicts.map((conflict, idx) => (
+                    <div key={idx} className="bg-slate-900/50 rounded-lg p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-semibold text-slate-200">{conflict.title}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-slate-500">紧张度</span>
+                          <div className="w-16 bg-slate-700 rounded-full h-1.5">
+                            <div
+                              className="bg-gradient-to-r from-yellow-500 to-red-500 h-1.5 rounded-full"
+                              style={{ width: `${conflict.tension}%` }}
+                            />
+                          </div>
+                          <span className="text-[10px] text-red-400 font-mono">{conflict.tension}</span>
+                        </div>
+                      </div>
+                      {conflict.description && (
+                        <p className="text-xs text-slate-400">{conflict.description}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 剧情钩子 */}
+            {episode.plot_hooks && episode.plot_hooks.length > 0 && (
+              <div>
+                <h4 className="text-sm font-semibold text-amber-400 flex items-center gap-2 mb-2">
+                  <Lightbulb className="w-4 h-4" />
+                  剧情钩子 ({episode.plot_hooks.length})
+                </h4>
+                <div className="flex flex-wrap gap-2">
+                  {episode.plot_hooks.map((hook, idx) => (
+                    <div key={idx} className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                      <span className="text-xs text-amber-400">{hook.hook}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 角色 */}
+            {episode.characters && episode.characters.length > 0 && (
+              <div>
+                <h4 className="text-sm font-semibold text-cyan-400 flex items-center gap-2 mb-2">
+                  <Users className="w-4 h-4" />
+                  角色 ({episode.characters.length})
+                </h4>
+                <div className="flex flex-wrap gap-2">
+                  {episode.characters.map((char, idx) => (
+                    <div key={idx} className="bg-cyan-500/10 border border-cyan-500/20 rounded-lg px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-cyan-300">{char.name}</span>
+                        {char.role && (
+                          <span className="text-xs text-cyan-500">{char.role}</span>
+                        )}
+                      </div>
+                      {char.description && (
+                        <p className="text-xs text-slate-400 mt-1">{char.description}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 场景 */}
+            {episode.scenes && episode.scenes.length > 0 && (
+              <div>
+                <h4 className="text-sm font-semibold text-purple-400 flex items-center gap-2 mb-2">
+                  <MapPin className="w-4 h-4" />
+                  场景 ({episode.scenes.length})
+                </h4>
+                <div className="space-y-2">
+                  {episode.scenes.map((scene, idx) => (
+                    <div key={idx} className="bg-slate-900/50 rounded-lg p-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm font-semibold text-slate-200">{scene.title}</span>
+                        {scene.location && (
+                          <span className="text-xs text-slate-500">{scene.location}</span>
+                        )}
+                      </div>
+                      {scene.description && (
+                        <p className="text-xs text-slate-400">{scene.description}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 情感 */}
+            {episode.emotions && episode.emotions.length > 0 && (
+              <div>
+                <h4 className="text-sm font-semibold text-pink-400 flex items-center gap-2 mb-2">
+                  <Heart className="w-4 h-4" />
+                  情感 ({episode.emotions.length})
+                </h4>
+                <div className="flex flex-wrap gap-2">
+                  {episode.emotions.map((emotion, idx) => (
+                    <div key={idx} className="bg-pink-500/10 border border-pink-500/20 rounded-lg px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-pink-300">{emotion.emotion}</span>
+                        <span className="text-xs text-pink-500">强度: {emotion.intensity}/10</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
 const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   selectedBatch,
   breakdownResult,
@@ -17,6 +204,20 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   breakdownProgress,
   onStartBreakdown
 }) => {
+  const [expandedEpisodes, setExpandedEpisodes] = useState<Set<number>>(new Set([1])); // 默认展开第一集
+
+  const toggleEpisode = (episodeNumber: number) => {
+    setExpandedEpisodes(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(episodeNumber)) {
+        newSet.delete(episodeNumber);
+      } else {
+        newSet.add(episodeNumber);
+      }
+      return newSet;
+    });
+  };
+
   // 未选择批次
   if (!selectedBatch) {
     return (
@@ -117,80 +318,120 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   // 拆解完成且有结果
   if (selectedBatch.breakdown_status === 'completed' && breakdownResult) {
     return (
-      <div className="space-y-6 max-w-4xl mx-auto p-8">
-        {/* Consistency Score */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <Activity size={16} className="text-emerald-400" />
-              一致性评分
-            </h3>
-            <div className="text-2xl font-black text-emerald-400">
-              {breakdownResult.consistency_score || 0}
-              <span className="text-sm text-slate-500 ml-1">/ 100</span>
+      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {/* 一致性评分卡片 */}
+        {breakdownResult.consistency_score !== undefined && breakdownResult.consistency_score !== null && (
+          <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-emerald-400 flex items-center gap-2">
+                <Activity className="w-5 h-5" />
+                一致性评分
+              </h3>
+              <div className="text-2xl font-black text-emerald-400">
+                {breakdownResult.consistency_score}
+                <span className="text-sm text-slate-500 ml-1">/ 100</span>
+              </div>
+            </div>
+            <div className="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-emerald-500 to-cyan-500"
+                style={{ width: `${breakdownResult.consistency_score}%` }}
+              />
             </div>
           </div>
-          <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-gradient-to-r from-emerald-500 to-cyan-500"
-              style={{ width: `${breakdownResult.consistency_score || 0}%` }}
+        )}
+
+        {/* 剧集规划概览卡片 */}
+        {breakdownResult.episodes && breakdownResult.episodes.length > 0 && (
+          <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
+            <h3 className="text-lg font-semibold text-purple-400 flex items-center gap-2 mb-3">
+              <Film className="w-5 h-5" />
+              剧集规划
+            </h3>
+            <p className="text-slate-300">
+              共 <span className="text-cyan-400 font-semibold">{breakdownResult.episodes.length}</span> 集
+            </p>
+            {breakdownResult.episodes.length > 0 && (
+              <p className="text-sm text-slate-400 mt-1">
+                涵盖第{breakdownResult.episodes[0]?.chapter_range[0]}-
+                {breakdownResult.episodes[breakdownResult.episodes.length - 1]?.chapter_range[1]}章
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* 剧集详情卡片列表 */}
+        {breakdownResult.episodes && breakdownResult.episodes.length > 0 ? (
+          breakdownResult.episodes.map((episode) => (
+            <EpisodeCard
+              key={episode.episode_number}
+              episode={episode}
+              isExpanded={expandedEpisodes.has(episode.episode_number)}
+              onToggle={() => toggleEpisode(episode.episode_number)}
             />
-          </div>
-        </div>
-
-        {/* Conflicts */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
-          <h3 className="text-sm font-bold text-white flex items-center gap-2 mb-4">
-            <Swords size={16} className="text-red-400" />
-            核心冲突
-            <span className="bg-red-500/10 text-red-400 text-[10px] px-2 py-0.5 rounded-full border border-red-500/20">
-              {breakdownResult.conflicts?.length || 0}
-            </span>
-          </h3>
-          <div className="space-y-3">
-            {breakdownResult.conflicts?.map((conflict, idx) => (
-              <div key={idx} className="bg-slate-950 border border-slate-800 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-bold text-white">{conflict.title}</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-slate-500">紧张度</span>
-                    <div className="w-16 bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-yellow-500 to-red-500"
-                        style={{ width: `${conflict.tension}%` }}
-                      />
+          ))
+        ) : (
+          /* 无剧集规划时显示传统视图 */
+          <>
+            {/* 核心冲突 */}
+            {breakdownResult.conflicts && breakdownResult.conflicts.length > 0 && (
+              <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
+                <h3 className="text-lg font-semibold text-red-400 flex items-center gap-2 mb-4">
+                  <Swords className="w-5 h-5" />
+                  核心冲突
+                  <span className="bg-red-500/10 text-red-400 text-xs px-2 py-0.5 rounded-full border border-red-500/20">
+                    {breakdownResult.conflicts.length}
+                  </span>
+                </h3>
+                <div className="space-y-3">
+                  {breakdownResult.conflicts.map((conflict, idx) => (
+                    <div key={idx} className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-bold text-white">{conflict.title}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-slate-500">紧张度</span>
+                          <div className="w-16 bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-to-r from-yellow-500 to-red-500"
+                              style={{ width: `${conflict.tension}%` }}
+                            />
+                          </div>
+                          <span className="text-[10px] text-red-400 font-mono">{conflict.tension}</span>
+                        </div>
+                      </div>
+                      {conflict.description && (
+                        <p className="text-xs text-slate-400">{conflict.description}</p>
+                      )}
                     </div>
-                    <span className="text-[10px] text-red-400 font-mono">{conflict.tension}</span>
-                  </div>
+                  ))}
                 </div>
-                {conflict.description && (
-                  <p className="text-xs text-slate-400">{conflict.description}</p>
-                )}
               </div>
-            ))}
-          </div>
-        </div>
+            )}
 
-        {/* Plot Hooks */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl">
-          <h3 className="text-sm font-bold text-white flex items-center gap-2 mb-4">
-            <Lightbulb size={16} className="text-amber-400" />
-            剧情钩子
-            <span className="bg-amber-500/10 text-amber-400 text-[10px] px-2 py-0.5 rounded-full border border-amber-500/20">
-              {breakdownResult.plot_hooks?.length || 0}
-            </span>
-          </h3>
-          <div className="flex flex-wrap gap-2">
-            {breakdownResult.plot_hooks?.map((hook, idx) => (
-              <div key={idx} className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
-                <span className="text-xs text-amber-400">{hook.hook}</span>
-                {hook.episode && (
-                  <span className="text-[10px] text-amber-600 ml-2">EP.{hook.episode}</span>
-                )}
+            {/* 剧情钩子 */}
+            {breakdownResult.plot_hooks && breakdownResult.plot_hooks.length > 0 && (
+              <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
+                <h3 className="text-lg font-semibold text-amber-400 flex items-center gap-2 mb-4">
+                  <Lightbulb className="w-5 h-5" />
+                  剧情钩子
+                  <span className="bg-amber-500/10 text-amber-400 text-xs px-2 py-0.5 rounded-full border border-amber-500/20">
+                    {breakdownResult.plot_hooks.length}
+                  </span>
+                </h3>
+                <div className="flex flex-wrap gap-2">
+                  {breakdownResult.plot_hooks.map((hook, idx) => (
+                    <div key={idx} className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                      <span className="text-xs text-amber-400">{hook.hook}</span>
+                      {hook.episode && (
+                        <span className="text-[10px] text-amber-600 ml-2">EP.{hook.episode}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
+            )}
+          </>
+        )}
       </div>
     );
   }

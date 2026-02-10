@@ -20,6 +20,7 @@ class PlotBreakdown(Base):
     characters = Column(JSONB)
     scenes = Column(JSONB)
     emotions = Column(JSONB)
+    episodes = Column(JSONB)  # 剧集规划结果
 
     # 一致性检查
     consistency_status = Column(String(50), default="pending", index=True)

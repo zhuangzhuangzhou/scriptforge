@@ -127,123 +127,8 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
             batch_record.breakdown_status = "completed"
             batch_record.ai_processed = True  # 标记为已处理
             db.commit()
-
-            try:
-                # 任务开始：更新状态为 running
-                await update_task_progress(
-                    db, task_id,
-                    status="running",
-                    progress=0,
-                    current_step="初始化任务"
-                )
-
-                # 更新批次状态为 processing
-                batch_result = await db.execute(
-                    select(Batch).where(Batch.id == batch_id)
-                )
-                batch_record = batch_result.scalar_one_or_none()
-                if batch_record:
-                    batch_record.breakdown_status = "processing"
-                    await db.commit()
-
-                # 读取任务配置
-                task_result = await db.execute(
-                    select(AITask).where(AITask.id == task_id)
-                )
-                task_record = task_result.scalar_one_or_none()
-                task_config = task_record.config if task_record else {}
-
-                # 创建模型适配器（从数据库读取配置）
-                model_id = task_config.get("model_id")  # 如果任务配置中指定了模型
-                model_adapter = await get_adapter(
-                    model_id=model_id,
-                    user_id=user_id,
-                    db=db
-                )
-
-                # 定义进度回调函数
-                async def progress_callback(step: str, progress: int):
-                    await update_task_progress(
-                        db, task_id,
-                        progress=progress,
-                        current_step=step
-                    )
-
-                # 各阶段进度更新
-                await progress_callback("加载章节", 10)
-
-                # 使用配置驱动的 Pipeline 执行
-                executor = PipelineExecutor(
-                    db=db,
-                    model_adapter=model_adapter,
-                    user_id=user_id,
-                    task_config=task_config
-                )
-
-                await executor.run_breakdown(
-                    project_id=project_id,
-                    batch_id=batch_id,
-                    pipeline_id=task_config.get("pipeline_id"),
-                    selected_skills=task_config.get("selected_skills"),
-                    progress_callback=progress_callback
-                )
-
-                # 验证拆解结果已保存（状态一致性检查）
-                from app.models.plot_breakdown import PlotBreakdown
-                breakdown_check = await db.execute(
-                    select(PlotBreakdown).where(PlotBreakdown.batch_id == batch_id)
-                )
-                breakdown_exists = breakdown_check.scalar_one_or_none()
-
-                if not breakdown_exists:
-                    # 如果拆解结果未保存，抛出异常阻止状态更新
-                    raise ValueError(f"批次 {batch_id} 的拆解结果未保存，任务执行异常")
-
-                # 任务完成：更新状态
-                await update_task_progress(
-                    db, task_id,
-                    status="completed",
-                    progress=100,
-                    current_step="任务完成"
-                )
-
-                # 更新批次状态为 completed
-                if batch_record:
-                    batch_record.breakdown_status = "completed"
-                    await db.commit()
-
-                # 任务成功完成后扣费
-                credits_service = CreditsService(db)
-                await credits_service.consume_credits(
-                    user_id=user_id,
-                    amount=BREAKDOWN_BASE_CREDITS,
-                    description=f"剧情拆解 - 批次 {batch_id}",
-                    reference_id=task_id
-                )
-                await db.commit()
-
-                return {"status": "completed", "task_id": task_id}
-
-            except RetryableError as e:
-                # 可重试错误：更新状态，Celery会自动重试
-                await _handle_retryable_error(
-                    db, task_id, batch_record, task_record, e
-                )
-                raise  # 重新抛出，让Celery处理重试
-
-            except QuotaExceededError as e:
-                # 配额不足错误：标记失败，回滚配额，不重试
-                await _handle_quota_exceeded(
-                    db, task_id, batch_record, task_record, user_id, e
-                )
-                raise
-
-            except AITaskException as e:
-                # 其他AI任务错误：标记失败，不重试
-                await _handle_task_failure(
-                    db, task_id, batch_record, task_record, user_id, e
-                )
-                raise
+        
+        return {"status": "completed", "task_id": task_id}
 
     except AITaskException as e:
         # 其他AI任务错误：标记失败，不重试
@@ -476,8 +361,23 @@ def _execute_breakdown_sync(
     emotions = _extract_emotions_sync(
         chapters_text, model_adapter, task_config, log_publisher, task_id
     )
-    
-    # 4. 保存拆解结果
+
+    # 4. 规划剧集结构
+    update_task_progress_sync(db, task_id, progress=85, current_step="规划剧集结构中... (85%)")
+    episodes = _plan_episodes_sync(
+        conflicts=conflicts,
+        plot_hooks=plot_hooks,
+        characters=characters,
+        scenes=scenes,
+        emotions=emotions,
+        chapters=chapters,
+        model_adapter=model_adapter,
+        task_config=task_config,
+        log_publisher=log_publisher,
+        task_id=task_id
+    )
+
+    # 5. 保存拆解结果
     update_task_progress_sync(db, task_id, progress=90, current_step="保存拆解结果中... (90%)")
     
     breakdown = PlotBreakdown(
@@ -488,6 +388,7 @@ def _execute_breakdown_sync(
         characters=characters,
         scenes=scenes,
         emotions=emotions,
+        episodes=episodes,
         consistency_status="pending",
         consistency_score=None,
         consistency_results=None,
@@ -506,7 +407,8 @@ def _execute_breakdown_sync(
         "plot_hooks_count": len(plot_hooks) if plot_hooks else 0,
         "characters_count": len(characters) if characters else 0,
         "scenes_count": len(scenes) if scenes else 0,
-        "emotions_count": len(emotions) if emotions else 0
+        "emotions_count": len(emotions) if emotions else 0,
+        "episodes_count": len(episodes) if episodes else 0
     }
 
 
@@ -905,6 +807,118 @@ def _extract_emotions_sync(
         if log_publisher and task_id:
             log_publisher.publish_error(task_id, str(e), error_code=None, step_name=step_name)
         print(f"提取情感失败: {e}")
+        return []
+
+
+def _plan_episodes_sync(
+    conflicts: list,
+    plot_hooks: list,
+    characters: list,
+    scenes: list,
+    emotions: list,
+    chapters: list,
+    model_adapter,
+    task_config: dict,
+    log_publisher=None,
+    task_id: str = None
+) -> list:
+    """规划剧集结构（支持流式输出）
+
+    基于拆解结果，AI智能规划剧集结构，将章节内容分配到不同剧集。
+
+    Args:
+        conflicts: 冲突列表
+        plot_hooks: 剧情钩子列表
+        characters: 角色列表
+        scenes: 场景列表
+        emotions: 情感列表
+        chapters: 章节列表
+        model_adapter: 模型适配器
+        task_config: 任务配置
+        log_publisher: Redis 日志发布器（可选）
+        task_id: 任务 ID（可选）
+
+    Returns:
+        list: 剧集列表
+    """
+    step_name = "规划剧集结构"
+
+    if log_publisher and task_id:
+        log_publisher.publish_step_start(task_id, step_name)
+
+    # 构建章节信息
+    chapter_info = [{"chapter_number": ch.chapter_number, "title": ch.title} for ch in chapters]
+
+    # 构建提示词
+    prompt = f"""你是一个专业的剧集规划师。基于以下剧情拆解结果，智能规划剧集结构。
+
+章节信息：
+{json.dumps(chapter_info, ensure_ascii=False)}
+
+拆解结果统计：
+- 冲突点：{len(conflicts)}个
+- 剧情钩子：{len(plot_hooks)}个
+- 角色：{len(characters)}个
+- 场景：{len(scenes)}个
+- 情感点：{len(emotions)}个
+
+详细数据：
+冲突：{json.dumps(conflicts, ensure_ascii=False)}
+钩子：{json.dumps(plot_hooks, ensure_ascii=False)}
+角色：{json.dumps(characters, ensure_ascii=False)}
+场景：{json.dumps(scenes, ensure_ascii=False)}
+情感：{json.dumps(emotions, ensure_ascii=False)}
+
+请规划剧集结构，将章节内容合理分配到不同剧集中。每集应该：
+1. 有完整的故事弧线
+2. 包含主要冲突和高潮
+3. 有吸引人的剧情钩子
+4. 时长适中（建议每集包含2-4个章节）
+
+以JSON格式返回：
+[
+  {{
+    "episode_number": 1,
+    "title": "第一集标题",
+    "main_conflict": "主要冲突描述",
+    "key_scenes": ["关键场景1", "关键场景2"],
+    "chapter_range": [1, 3],
+    "conflicts": [],
+    "plot_hooks": [],
+    "characters": [],
+    "scenes": [],
+    "emotions": []
+  }}
+]
+
+注意：
+- conflicts/plot_hooks/characters/scenes/emotions 字段应该从上面的详细数据中筛选出该集包含的内容
+- 根据 chapter 字段或 chapter_range 字段判断是否属于该集
+- 如果某个数据项没有明确的章节信息，可以根据内容判断
+
+请只返回JSON数组，不要包含其他文字。
+"""
+
+    try:
+        # 使用流式生成
+        full_response = ""
+        for chunk in model_adapter.stream_generate(prompt):
+            if log_publisher and task_id:
+                log_publisher.publish_stream_chunk(task_id, step_name, chunk)
+            full_response += chunk
+
+        # 解析结果
+        result = _parse_json_response_sync(full_response, default=[])
+
+        if log_publisher and task_id:
+            log_publisher.publish_step_end(task_id, step_name, {"count": len(result)})
+
+        return result
+
+    except Exception as e:
+        if log_publisher and task_id:
+            log_publisher.publish_error(task_id, str(e), error_code=None, step_name=step_name)
+        print(f"规划剧集结构失败: {e}")
         return []
 
 
