@@ -7,13 +7,15 @@ interface BreakdownDetailProps {
   breakdownResult: PlotBreakdown | null;
   breakdownLoading: boolean;
   breakdownProgress: number;
+  onStartBreakdown?: (batchId: string) => void;
 }
 
 const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   selectedBatch,
   breakdownResult,
   breakdownLoading,
-  breakdownProgress
+  breakdownProgress,
+  onStartBreakdown
 }) => {
   // 未选择批次
   if (!selectedBatch) {
@@ -78,6 +80,36 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
       <div className="flex flex-col items-center justify-center h-full">
         <Loader2 size={32} className="animate-spin text-cyan-500" />
         <p className="text-xs text-slate-500 mt-3">加载拆解结果...</p>
+      </div>
+    );
+  }
+
+  // 拆解完成但无结果（数据异常）
+  if (selectedBatch.breakdown_status === 'completed' && !breakdownResult) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
+        <div className="w-20 h-20 rounded-2xl bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
+          <Activity size={32} className="text-amber-400" />
+        </div>
+        <p className="text-sm font-bold text-amber-400">拆解结果加载异常</p>
+        <p className="text-xs text-slate-700">批次状态已完成，但未找到拆解结果</p>
+        <p className="text-xs text-slate-600 mb-2">可能是数据同步延迟或系统异常</p>
+        <div className="flex gap-3">
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg transition-colors border border-slate-700"
+          >
+            刷新页面
+          </button>
+          {onStartBreakdown && (
+            <button
+              onClick={() => onStartBreakdown(selectedBatch.id)}
+              className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs rounded-lg transition-colors border border-amber-500/30"
+            >
+              重新拆解
+            </button>
+          )}
+        </div>
       </div>
     );
   }

@@ -55,6 +55,7 @@ const PlotTab: React.FC<PlotTabProps> = ({
             breakdownResult={breakdownResult}
             breakdownLoading={breakdownLoading}
             breakdownProgress={breakdownProgress}
+            onStartBreakdown={onStartBreakdown}
           />
         </div>
       </div>

@@ -128,25 +128,122 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
             batch_record.ai_processed = True  # 标记为已处理
             db.commit()
 
-        # TODO: 任务成功完成后扣费
-        # credits_service = SyncCreditsService(db)
-        # credits_service.consume_credits(...)
+            try:
+                # 任务开始：更新状态为 running
+                await update_task_progress(
+                    db, task_id,
+                    status="running",
+                    progress=0,
+                    current_step="初始化任务"
+                )
 
-        return {"status": "completed", "task_id": task_id}
+                # 更新批次状态为 processing
+                batch_result = await db.execute(
+                    select(Batch).where(Batch.id == batch_id)
+                )
+                batch_record = batch_result.scalar_one_or_none()
+                if batch_record:
+                    batch_record.breakdown_status = "processing"
+                    await db.commit()
 
-    except RetryableError as e:
-        # 可重试错误：更新状态，Celery会自动重试
-        _handle_retryable_error_sync(
-            db, task_id, batch_record, task_record, e, log_publisher
-        )
-        raise  # 重新抛出，让Celery处理重试
+                # 读取任务配置
+                task_result = await db.execute(
+                    select(AITask).where(AITask.id == task_id)
+                )
+                task_record = task_result.scalar_one_or_none()
+                task_config = task_record.config if task_record else {}
 
-    except QuotaExceededError as e:
-        # 配额不足错误：标记失败，回滚配额，不重试
-        _handle_quota_exceeded_sync(
-            db, task_id, batch_record, task_record, user_id, e, log_publisher
-        )
-        raise
+                # 创建模型适配器（从数据库读取配置）
+                model_id = task_config.get("model_id")  # 如果任务配置中指定了模型
+                model_adapter = await get_adapter(
+                    model_id=model_id,
+                    user_id=user_id,
+                    db=db
+                )
+
+                # 定义进度回调函数
+                async def progress_callback(step: str, progress: int):
+                    await update_task_progress(
+                        db, task_id,
+                        progress=progress,
+                        current_step=step
+                    )
+
+                # 各阶段进度更新
+                await progress_callback("加载章节", 10)
+
+                # 使用配置驱动的 Pipeline 执行
+                executor = PipelineExecutor(
+                    db=db,
+                    model_adapter=model_adapter,
+                    user_id=user_id,
+                    task_config=task_config
+                )
+
+                await executor.run_breakdown(
+                    project_id=project_id,
+                    batch_id=batch_id,
+                    pipeline_id=task_config.get("pipeline_id"),
+                    selected_skills=task_config.get("selected_skills"),
+                    progress_callback=progress_callback
+                )
+
+                # 验证拆解结果已保存（状态一致性检查）
+                from app.models.plot_breakdown import PlotBreakdown
+                breakdown_check = await db.execute(
+                    select(PlotBreakdown).where(PlotBreakdown.batch_id == batch_id)
+                )
+                breakdown_exists = breakdown_check.scalar_one_or_none()
+
+                if not breakdown_exists:
+                    # 如果拆解结果未保存，抛出异常阻止状态更新
+                    raise ValueError(f"批次 {batch_id} 的拆解结果未保存，任务执行异常")
+
+                # 任务完成：更新状态
+                await update_task_progress(
+                    db, task_id,
+                    status="completed",
+                    progress=100,
+                    current_step="任务完成"
+                )
+
+                # 更新批次状态为 completed
+                if batch_record:
+                    batch_record.breakdown_status = "completed"
+                    await db.commit()
+
+                # 任务成功完成后扣费
+                credits_service = CreditsService(db)
+                await credits_service.consume_credits(
+                    user_id=user_id,
+                    amount=BREAKDOWN_BASE_CREDITS,
+                    description=f"剧情拆解 - 批次 {batch_id}",
+                    reference_id=task_id
+                )
+                await db.commit()
+
+                return {"status": "completed", "task_id": task_id}
+
+            except RetryableError as e:
+                # 可重试错误：更新状态，Celery会自动重试
+                await _handle_retryable_error(
+                    db, task_id, batch_record, task_record, e
+                )
+                raise  # 重新抛出，让Celery处理重试
+
+            except QuotaExceededError as e:
+                # 配额不足错误：标记失败，回滚配额，不重试
+                await _handle_quota_exceeded(
+                    db, task_id, batch_record, task_record, user_id, e
+                )
+                raise
+
+            except AITaskException as e:
+                # 其他AI任务错误：标记失败，不重试
+                await _handle_task_failure(
+                    db, task_id, batch_record, task_record, user_id, e
+                )
+                raise
 
     except AITaskException as e:
         # 其他AI任务错误：标记失败，不重试
