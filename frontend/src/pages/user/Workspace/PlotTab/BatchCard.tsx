@@ -88,21 +88,6 @@ const BatchCard: React.FC<BatchCardProps> = ({
           )}
         </div>
       )}
-      {/* 失败状态显示重试按钮 */}
-      {batch.breakdown_status === 'failed' && (
-        <div className="mt-2 flex items-center gap-1">
-          <span className="text-[10px] text-red-400">失败</span>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onRetry();
-            }}
-            className="text-[10px] text-cyan-400 hover:text-cyan-300 underline"
-          >
-            重试
-          </button>
-        </div>
-      )}
     </div>
   );
 };
