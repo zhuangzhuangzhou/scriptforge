@@ -23,9 +23,10 @@ def login():
     print("1. 登录系统")
     print("=" * 60)
 
-    response = requests.post(f"{BASE_URL}/auth/login", json={
+    # 使用表单数据格式登录
+    response = requests.post(f"{BASE_URL}/auth/login", data={
         "username": "admin",
-        "password": "admin123"
+        "password": "admin"
     })
 
     if response.status_code == 200:
@@ -179,7 +180,7 @@ def create_test_batch(project_id):
     }
 
     response = requests.post(
-        f"{BASE_URL}/projects/{project_id}/batches",
+        f"{BASE_URL}/projects/{project_id}/create-batches",
         headers=get_headers(),
         json=batch_data
     )

@@ -65,17 +65,28 @@ class SkillUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
-class SkillResponse(SkillBase):
+class SkillResponse(BaseModel):
     """Skill 响应"""
+    model_config = {"protected_namespaces": (), "from_attributes": True}
+
     id: str
+    name: str
+    display_name: str
+    description: Optional[str] = None
+    category: Optional[str] = None
+    is_template_based: Optional[bool] = None
+    prompt_template: Optional[str] = None
+    input_schema: Optional[dict] = None
+    output_schema: Optional[dict] = None
+    llm_config: Optional[dict] = Field(None, alias="model_config")
+    example_input: Optional[dict] = None
+    example_output: Optional[dict] = None
+    visibility: Optional[str] = None
     owner_id: str
     is_active: bool
     is_builtin: bool
     created_at: str
     updated_at: str
-
-    class Config:
-        from_attributes = True
 
 
 class SkillTestRequest(BaseModel):
