@@ -18,6 +18,7 @@ import { projectApi, breakdownApi } from '../../../services/api';
 import { message, Modal, Upload } from 'antd';
 import { useConsoleLogger } from '../../../hooks/useConsoleLogger';
 import { useBreakdownWebSocket } from '../../../hooks/useBreakdownWebSocket';
+import { useBreakdownLogs } from '../../../hooks/useBreakdownLogs';
 import { parseErrorMessage } from '../../../utils/errorParser';
 import ConfigTab from './ConfigTab';
 import SourceTab from './SourceTab';
@@ -196,13 +197,14 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const [batchHasMore, setBatchHasMore] = useState(true);
     const [loadingBatches, setLoadingBatches] = useState(false);
 
-    // 使用 useConsoleLogger Hook 管理日志
+    // 使用 useConsoleLogger Hook 管理日志（禁用内置 WebSocket，避免重复连接）
     const {
         logs,
         llmStats,
         addLog,
+        updateStreamLog,
         clearLogs
-    } = useConsoleLogger(breakdownTaskId);
+    } = useConsoleLogger(null, { enableWebSocket: false });
 
     // 使用 WebSocket Hook 监听任务进度（优先使用 WebSocket，失败时降级到轮询）
     const lastStepRef = useRef<string>('');
@@ -213,6 +215,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         breakdownTaskId,
         {
             onProgress: (data) => {
+                console.log('[Workspace] 收到进度更新:', data);
                 setBreakdownProgress(data.progress || 0);
 
                 // 去重日志：只在步骤变化时添加
@@ -234,11 +237,70 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 const parsedError = parseErrorMessage(error);
                 showError(parsedError);
             },
-            fallbackToPolling: true
+            fallbackToPolling: false  // 🔧 调试模式：禁用降级轮询
         }
     );
 
+    // 流式日志 WebSocket（接收大模型返回的实时流式数据）
+    const { isConnected: logsConnected, streamContent, currentStep: logsCurrentStep } = useBreakdownLogs(
+        breakdownTaskId,
+        {
+            onStepStart: (stepName, metadata) => {
+                console.log('[StreamLogs] 步骤开始:', stepName, metadata);
+                addLog('thinking', `🚀 ${stepName}`);
+            },
+            onStreamChunk: (stepName, chunk) => {
+                // 实时显示流式内容 - 不再每次创建新日志，而是更新同一行
+                console.log('[StreamLogs] 流式内容:', chunk);
+                // 注意：这里不调用 addLog，而是依赖 streamContent 的更新
+            },
+            onStepEnd: (stepName, result) => {
+                console.log('[StreamLogs] 步骤完成:', stepName, result);
+                addLog('success', `✅ ${stepName} 完成`);
+            },
+            onProgress: (progress, currentStep, totalSteps) => {
+                setBreakdownProgress(progress);
+                addLog('info', `进度: ${progress}% (${currentStep}/${totalSteps})`);
+            },
+            onError: (error, errorCode) => {
+                console.error('[StreamLogs] 错误:', error, errorCode);
+                addLog('error', `❌ ${error}`);
+            },
+            onComplete: () => {
+                console.log('[StreamLogs] 任务完成');
+                setBreakdownTaskId(null);
+                message.success('拆解完成');
+                if (selectedBatch) {
+                    fetchBreakdownResults(selectedBatch.id);
+                }
+                fetchBatches();
+            }
+        }
+    );
+
+    // 监听 streamContent 变化，实时更新流式日志
+    useEffect(() => {
+        if (streamContent) {
+            updateStreamLog(streamContent);
+        }
+    }, [streamContent, updateStreamLog]);
+
+    // 监听 selectedBatch 变化，自动加载拆解结果
+    useEffect(() => {
+        if (selectedBatch && selectedBatch.breakdown_status === 'completed') {
+            console.log('[Workspace] 批次选择变化，加载拆解结果:', selectedBatch.id);
+            fetchBreakdownResults(selectedBatch.id);
+        } else if (selectedBatch) {
+            console.log('[Workspace] 批次选择变化，状态:', selectedBatch.breakdown_status, '- 不加载拆解结果');
+            // 清空之前的结果
+            setBreakdownResult(null);
+            setBreakdownLoading(false);
+        }
+    }, [selectedBatch?.id, selectedBatch?.breakdown_status]);
+
     // 当 WebSocket 降级到轮询时，启动优化的轮询机制
+    // 🔧 调试模式：暂时禁用降级轮询，以便调试 WebSocket
+    /*
     useEffect(() => {
         if (usePolling && breakdownTaskId && selectedBatch) {
             console.log('[Polling] WebSocket 不可用，启动优化轮询机制');
@@ -252,6 +314,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             }
         };
     }, [usePolling, breakdownTaskId, selectedBatch]);
+    */
 
     // 优化的轮询机制（动态间隔 + 去重日志）
     const startOptimizedPolling = (taskId: string, batchId: string) => {
@@ -632,20 +695,38 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             setBreakdownLoading(true);
         }
 
+        console.log(`[fetchBreakdownResults] 开始获取拆解结果, batchId: ${batchId}, 重试次数: ${retryCount}`);
+
         try {
             const res = await breakdownApi.getBreakdownResults(batchId);
+            console.log('[fetchBreakdownResults] 获取成功:', res.data);
             setBreakdownResult(res.data);
             setBreakdownLoading(false);
         } catch (err: any) {
-            // 如果是 404 且批次状态为 completed，可能是时序问题，自动重试
-            if (err.response?.status === 404 && retryCount < 3) {
-                const retryDelay = Math.pow(2, retryCount) * 1000; // 指数退避：1s, 2s, 4s
-                console.log(`拆解结果未找到，${retryDelay / 1000}秒后重试 (${retryCount + 1}/3)...`);
+            console.error('[fetchBreakdownResults] 获取失败:', err);
+            console.error('[fetchBreakdownResults] 错误详情:', {
+                status: err.response?.status,
+                statusText: err.response?.statusText,
+                data: err.response?.data,
+                message: err.message
+            });
+
+            // 如果是 404 或 500，且重试次数未达上限，自动重试
+            if ((err.response?.status === 404 || err.response?.status === 500) && retryCount < 5) {
+                const retryDelay = Math.pow(2, retryCount) * 1000; // 指数退避：1s, 2s, 4s, 8s, 16s
+                console.log(`[fetchBreakdownResults] ${retryDelay / 1000}秒后重试 (${retryCount + 1}/5)...`);
                 setTimeout(() => {
                     fetchBreakdownResults(batchId, retryCount + 1);
                 }, retryDelay);
+            } else if (err.response?.status === 401) {
+                // 认证失败
+                console.error('[fetchBreakdownResults] 认证失败，请重新登录');
+                message.error('认证失败，请重新登录');
+                setBreakdownResult(null);
+                setBreakdownLoading(false);
             } else {
-                console.error('获取拆解结果失败:', err);
+                console.error('[fetchBreakdownResults] 获取拆解结果失败，已达最大重试次数');
+                message.error('获取拆解结果失败，请刷新页面重试');
                 setBreakdownResult(null);
                 setBreakdownLoading(false);
             }
@@ -1286,7 +1367,9 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     logs={logs}
                     llmStats={llmStats}
                     visible={showConsole}
-                    isProcessing={isProcessing}
+                    isProcessing={!!breakdownTaskId}
+                    progress={breakdownProgress}
+                    currentStep={logsCurrentStep || wsCurrentStep}
                     onClose={() => setShowConsole(false)}
                 />
 

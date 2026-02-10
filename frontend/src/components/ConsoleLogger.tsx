@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 export interface LogEntry {
   id: string;
   timestamp: string;
-  type: 'info' | 'success' | 'warning' | 'error' | 'thinking' | 'llm_call';
+  type: 'info' | 'success' | 'warning' | 'error' | 'thinking' | 'llm_call' | 'stream';
   message: string;
   detail?: any;
 }
@@ -21,18 +21,62 @@ export interface LLMCallStats {
   }>;
 }
 
+// 格式化流式内容，美化 JSON 显示
+const formatStreamContent = (content: string): React.ReactNode => {
+  try {
+    // 尝试解析 JSON
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const json = JSON.parse(jsonMatch[0]);
+      return (
+        <div className="space-y-1">
+          {Object.entries(json).map(([key, value]) => (
+            <div key={key} className="flex gap-2">
+              <span className="text-cyan-400 font-semibold">{key}:</span>
+              <span className="text-slate-300">{JSON.stringify(value)}</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+  } catch (e) {
+    // 不是 JSON，直接返回原文
+  }
+  return content;
+};
+
 interface ConsoleLoggerProps {
   logs: LogEntry[];
   llmStats?: LLMCallStats;
   visible: boolean;
   isProcessing: boolean;
+  progress?: number;
+  currentStep?: string;
   onClose: () => void;
 }
 
-const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({ logs, llmStats, visible, isProcessing, onClose }) => {
+const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
+  logs,
+  llmStats,
+  visible,
+  isProcessing,
+  progress = 0,
+  currentStep = '',
+  onClose
+}) => {
   const [isMinimized, setIsMinimized] = useState(false);
   const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // 调试日志
+  useEffect(() => {
+    console.log('[ConsoleLogger] Props 更新:', {
+      isProcessing,
+      progress,
+      currentStep,
+      visible
+    });
+  }, [isProcessing, progress, currentStep, visible]);
 
   const toggleLogDetail = (logId: string) => {
     setExpandedLogs(prev => {
@@ -65,28 +109,41 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({ logs, llmStats, visible, 
       }`}
     >
       {/* Header */}
-      <div 
+      <div
         className="flex items-center justify-between px-3 py-2 bg-slate-800 border-b border-slate-700 cursor-pointer"
         onClick={() => setIsMinimized(!isMinimized)}
       >
-        <div className="flex items-center gap-2">
-           <Terminal size={14} className="text-cyan-400" />
-           <span className="text-xs font-medium text-slate-300">System Console</span>
-           {isProcessing && (
-              <span className="flex h-2 w-2 relative ml-2">
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+           <Terminal size={14} className="text-cyan-400 flex-shrink-0" />
+           <span className="text-xs font-medium text-slate-300 flex-shrink-0">System Console</span>
+
+           {/* 进度和步骤显示 */}
+           {isProcessing && currentStep && (
+              <div className="flex items-center gap-2 ml-2 flex-1 min-w-0">
+                <span className="flex h-2 w-2 relative flex-shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+                </span>
+                <span className="text-xs text-cyan-400 font-mono flex-shrink-0">{progress}%</span>
+                <span className="text-xs text-slate-400 truncate">{currentStep}</span>
+              </div>
+           )}
+
+           {isProcessing && !currentStep && (
+              <span className="flex h-2 w-2 relative ml-2 flex-shrink-0">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
               </span>
            )}
         </div>
-        <div className="flex items-center gap-1">
-           <button 
+        <div className="flex items-center gap-1 flex-shrink-0">
+           <button
              onClick={(e) => { e.stopPropagation(); setIsMinimized(!isMinimized); }}
              className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white"
            >
              {isMinimized ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
            </button>
-           <button 
+           <button
              onClick={(e) => { e.stopPropagation(); onClose(); }}
              className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white"
            >
@@ -179,10 +236,13 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({ logs, llmStats, visible, 
                     log.type === 'success' ? 'text-green-400' :
                     log.type === 'warning' ? 'text-amber-400' :
                     log.type === 'thinking' ? 'text-cyan-300 italic' :
+                    log.type === 'stream' ? 'text-purple-300 font-normal whitespace-pre-wrap leading-relaxed' :
                     'text-slate-300'
                   }`}>
                     {log.type === 'thinking' && <span className="mr-1">◈</span>}
-                    {log.message}
+                    {log.type === 'stream' && <span className="mr-2 text-purple-400">▸</span>}
+                    {/* 格式化 JSON 显示 */}
+                    {log.type === 'stream' ? formatStreamContent(log.message) : log.message}
                   </span>
                 )}
               </div>
