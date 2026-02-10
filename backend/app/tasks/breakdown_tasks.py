@@ -303,8 +303,8 @@ def _execute_breakdown_sync(
     task_config: dict,
     log_publisher=None
 ) -> dict:
-    """执行拆解逻辑（同步版本，支持流式输出）
-    
+    """执行拆解逻辑（使用简化的 Agent 系统）
+
     Args:
         db: 同步数据库会话
         task_id: 任务ID
@@ -313,77 +313,116 @@ def _execute_breakdown_sync(
         model_adapter: 模型适配器
         task_config: 任务配置
         log_publisher: Redis 日志发布器（可选）
-        
+
     Returns:
         dict: 拆解结果
     """
     from app.models.chapter import Chapter
     from app.models.plot_breakdown import PlotBreakdown
-    
+    from app.ai.simple_executor import SimpleAgentExecutor
+
     # 1. 加载章节数据
     update_task_progress_sync(db, task_id, progress=10, current_step="加载章节数据中... (10%)")
-    
+
     chapters = db.query(Chapter).filter(
         Chapter.batch_id == batch_id
     ).order_by(Chapter.chapter_number).all()
-    
+
     if not chapters:
         raise AITaskException(
             code="DATA_NOT_FOUND",
             message=f"批次 {batch_id} 没有章节数据"
         )
-    
+
     # 2. 格式化章节文本
     chapters_text = _format_chapters_sync(chapters)
-    
-    # 3. 执行各个拆解技能（传递 log_publisher 和 task_id）
-    update_task_progress_sync(db, task_id, progress=20, current_step="提取冲突中... (20%)")
-    conflicts = _extract_conflicts_sync(
-        chapters_text, model_adapter, task_config, log_publisher, task_id
-    )
-    
-    update_task_progress_sync(db, task_id, progress=35, current_step="识别情节钩子中... (35%)")
-    plot_hooks = _identify_plot_hooks_sync(
-        chapters_text, model_adapter, task_config, log_publisher, task_id
-    )
-    
-    update_task_progress_sync(db, task_id, progress=50, current_step="分析角色中... (50%)")
-    characters = _analyze_characters_sync(
-        chapters_text, model_adapter, task_config, log_publisher, task_id
-    )
-    
-    update_task_progress_sync(db, task_id, progress=65, current_step="识别场景中... (65%)")
-    scenes = _identify_scenes_sync(
-        chapters_text, model_adapter, task_config, log_publisher, task_id
-    )
-    
-    update_task_progress_sync(db, task_id, progress=80, current_step="提取情感中... (80%)")
-    emotions = _extract_emotions_sync(
-        chapters_text, model_adapter, task_config, log_publisher, task_id
-    )
 
-    # 4. 规划剧集结构
-    update_task_progress_sync(db, task_id, progress=85, current_step="规划剧集结构中... (85%)")
-    episodes = _plan_episodes_sync(
-        conflicts=conflicts,
-        plot_hooks=plot_hooks,
-        characters=characters,
-        scenes=scenes,
-        emotions=emotions,
-        chapters=chapters,
+    # 3. 使用简化的 Agent 系统执行拆解
+    update_task_progress_sync(db, task_id, progress=20, current_step="开始执行拆解流程... (20%)")
+
+    # 创建 Agent 执行器
+    executor = SimpleAgentExecutor(
+        db=db,
         model_adapter=model_adapter,
-        task_config=task_config,
-        log_publisher=log_publisher,
-        task_id=task_id
+        log_publisher=log_publisher
     )
 
-    # 5. 质量检查（可选）
+    # 准备上下文数据
+    context = {
+        "chapters_text": chapters_text
+    }
+
+    # 执行 breakdown_agent
+    try:
+        results = executor.execute_agent(
+            agent_name="breakdown_agent",
+            context=context,
+            task_id=task_id
+        )
+
+        # 提取结果
+        conflicts = results.get("conflicts", [])
+        plot_hooks = results.get("plot_hooks", [])
+        characters = results.get("characters", [])
+        scenes = results.get("scenes", [])
+        emotions = results.get("emotions", [])
+        episodes = results.get("episodes", [])
+
+    except Exception as e:
+        # 如果使用简化系统失败，回退到旧方法
+        if log_publisher:
+            log_publisher.publish_warning(
+                task_id,
+                f"简化系统执行失败，回退到传统方法: {str(e)}"
+            )
+
+        # 回退：使用旧的逐个调用方法
+        update_task_progress_sync(db, task_id, progress=20, current_step="提取冲突中... (20%)")
+        conflicts = _extract_conflicts_sync(
+            chapters_text, model_adapter, task_config, log_publisher, task_id
+        )
+
+        update_task_progress_sync(db, task_id, progress=35, current_step="识别情节钩子中... (35%)")
+        plot_hooks = _identify_plot_hooks_sync(
+            chapters_text, model_adapter, task_config, log_publisher, task_id
+        )
+
+        update_task_progress_sync(db, task_id, progress=50, current_step="分析角色中... (50%)")
+        characters = _analyze_characters_sync(
+            chapters_text, model_adapter, task_config, log_publisher, task_id
+        )
+
+        update_task_progress_sync(db, task_id, progress=65, current_step="识别场景中... (65%)")
+        scenes = _identify_scenes_sync(
+            chapters_text, model_adapter, task_config, log_publisher, task_id
+        )
+
+        update_task_progress_sync(db, task_id, progress=80, current_step="提取情感中... (80%)")
+        emotions = _extract_emotions_sync(
+            chapters_text, model_adapter, task_config, log_publisher, task_id
+        )
+
+        update_task_progress_sync(db, task_id, progress=85, current_step="规划剧集结构中... (85%)")
+        episodes = _plan_episodes_sync(
+            conflicts=conflicts,
+            plot_hooks=plot_hooks,
+            characters=characters,
+            scenes=scenes,
+            emotions=emotions,
+            chapters=chapters,
+            model_adapter=model_adapter,
+            task_config=task_config,
+            log_publisher=log_publisher,
+            task_id=task_id
+        )
+
+    # 4. 质量检查（可选）
     qa_status = "pending"
     qa_score = None
     qa_report = None
 
     # 检查是否启用质检
-    enable_qa = task_config.get("enable_qa", True)  # 默认启用
+    enable_qa = task_config.get("enable_qa", False)  # 默认禁用，避免影响现有流程
 
     if enable_qa:
         update_task_progress_sync(db, task_id, progress=88, current_step="质量检查中... (88%)")
