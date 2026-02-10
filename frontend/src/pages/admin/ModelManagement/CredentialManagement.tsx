@@ -7,6 +7,7 @@ import { GlassCard } from '../../../components/ui/GlassCard';
 import { GlassInput } from '../../../components/ui/GlassInput';
 import { GlassSelect } from '../../../components/ui/GlassSelect';
 import { credentialApi, providerApi, Credential, CredentialCreate, CredentialUpdate, Provider } from '../../../services/modelManagementApi';
+import { extractArrayData } from '../../../utils/apiHelpers';
 import dayjs from 'dayjs';
 
 const CredentialManagement: React.FC = () => {
@@ -25,7 +26,7 @@ const CredentialManagement: React.FC = () => {
   const fetchProviders = async () => {
     try {
       const response = await providerApi.getProviders();
-      setProviders(response.data);
+      setProviders(extractArrayData<Provider>(response.data));
     } catch (error) {
       console.error('获取提供商列表失败:', error);
     }
@@ -36,7 +37,7 @@ const CredentialManagement: React.FC = () => {
     setLoading(true);
     try {
       const response = await credentialApi.getCredentials(selectedProviderId);
-      setCredentials(response.data);
+      setCredentials(extractArrayData<Credential>(response.data));
     } catch (error) {
       console.error('获取凭证列表失败:', error);
       message.error('获取凭证列表失败');

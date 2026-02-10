@@ -56,6 +56,9 @@ class ProjectCreate(BaseModel):
     # 兼容两种方式：直接传规则 或 传规则ID
     chapter_split_rule: Optional[Union[str, Dict[str, Any]]] = None
     split_rule_id: Optional[str] = None
+    # AI 模型配置
+    breakdown_model_id: Optional[str] = None  # 剧情拆解模型 ID
+    script_model_id: Optional[str] = None  # 剧本生成模型 ID
 
 
 class ProjectUpdate(BaseModel):
@@ -65,6 +68,9 @@ class ProjectUpdate(BaseModel):
     batch_size: Optional[int] = None
     chapter_split_rule: Optional[Union[str, Dict[str, Any]]] = None
     split_rule_id: Optional[str] = None
+    # AI 模型配置
+    breakdown_model_id: Optional[str] = None  # 剧情拆解模型 ID
+    script_model_id: Optional[str] = None  # 剧本生成模型 ID
 
 
 class ProjectResponse(BaseModel):
@@ -88,10 +94,21 @@ class ProjectResponse(BaseModel):
     original_file_size: Optional[int] = None
     original_file_type: Optional[str] = None
     original_file_path: Optional[str] = None
+    
+    # AI 模型配置
+    breakdown_model_id: Optional[str] = None
+    script_model_id: Optional[str] = None
 
     @field_validator('id', mode='before')
     @classmethod
     def validate_id(cls, v):
+        if isinstance(v, UUID):
+            return str(v)
+        return v
+    
+    @field_validator('breakdown_model_id', 'script_model_id', mode='before')
+    @classmethod
+    def validate_model_id(cls, v):
         if isinstance(v, UUID):
             return str(v)
         return v
@@ -196,7 +213,9 @@ async def create_project(
         novel_type=project_data.novel_type,
         description=project_data.description,
         batch_size=project_data.batch_size,
-        chapter_split_rule=normalize_chapter_split_rule(project_data.chapter_split_rule)
+        chapter_split_rule=normalize_chapter_split_rule(project_data.chapter_split_rule),
+        breakdown_model_id=project_data.breakdown_model_id,
+        script_model_id=project_data.script_model_id
     )
 
     db.add(new_project)
@@ -495,6 +514,10 @@ async def update_project(
         project.batch_size = project_data.batch_size
     if project_data.chapter_split_rule is not None:
         project.chapter_split_rule = normalize_chapter_split_rule(project_data.chapter_split_rule)
+    if project_data.breakdown_model_id is not None:
+        project.breakdown_model_id = project_data.breakdown_model_id
+    if project_data.script_model_id is not None:
+        project.script_model_id = project_data.script_model_id
     # if project_data.split_rule_id is not None:
     #     project.split_rule_id = project_data.split_rule_id
 

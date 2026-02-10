@@ -19,7 +19,7 @@ router = APIRouter()
 class BreakdownStartRequest(BaseModel):
     """启动拆解请求"""
     batch_id: str
-    model_config_id: Optional[str] = None
+    # model_config_id 不再需要，从项目配置读取
     selected_skills: Optional[List[str]] = None
     pipeline_id: Optional[str] = None
     # 配置选择
@@ -55,6 +55,7 @@ async def start_breakdown(
     优化：
     - 配额在任务成功启动后才消耗
     - 使用事务保证数据一致性
+    - 防止重复提交
     - 更新批次状态
     """
     # 验证批次存在且属于当前用户
@@ -69,70 +70,121 @@ async def start_breakdown(
     if not batch:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="批次不存在"
+            detail="批次不存在或无权访问"
+        )
+    
+    # 获取项目配置（包含模型 ID）
+    project_result = await db.execute(
+        select(Project).where(Project.id == batch.project_id)
+    )
+    project = project_result.scalar_one_or_none()
+    
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="项目不存在"
+        )
+    
+    # 检查项目是否配置了拆解模型
+    if not project.breakdown_model_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="项目未配置剧情拆解模型，请先在项目设置中选择模型"
         )
 
-    # 检查剧集配额
+    # 检查是否已有任务在执行（防止重复提交）
+    existing_task_result = await db.execute(
+        select(AITask).where(
+            AITask.batch_id == request.batch_id,
+            AITask.status.in_(["queued", "running"])
+        )
+    )
+    existing_task = existing_task_result.scalar_one_or_none()
+    
+    if existing_task:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"该批次已有任务在执行中，任务ID: {existing_task.id}"
+        )
+    
+    # 如果批次状态是 failed，允许重新提交（清理旧的失败任务记录）
+    if batch.breakdown_status == "failed":
+        # 查找失败的任务记录
+        failed_task_result = await db.execute(
+            select(AITask).where(
+                AITask.batch_id == request.batch_id,
+                AITask.status == "failed"
+            )
+        )
+        failed_tasks = failed_task_result.scalars().all()
+        # 注意：不删除失败任务记录，保留用于历史追溯
+        # 只是允许创建新任务
+
+    # 锁定用户记录，防止并发请求导致配额超支
+    user_result = await db.execute(
+        select(User).where(User.id == current_user.id).with_for_update()
+    )
+    locked_user = user_result.scalar_one()
+    
+    # 检查剧集配额（在锁内检查）
     quota_service = QuotaService(db)
-    quota = await quota_service.check_episode_quota(current_user)
+    quota = await quota_service.check_episode_quota(locked_user)
     if not quota["allowed"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"剧集配额已用尽，本月已使用 {quota['used']}/{quota['limit']} 集"
         )
 
+    # 消耗剧集配额（预扣）
+    await quota_service.consume_episode_quota(locked_user)
+
+    # 创建AI任务
+    task = AITask(
+        project_id=batch.project_id,
+        batch_id=batch.id,
+        task_type="breakdown",
+        status="queued",
+        depends_on=[],
+        config={
+            "model_config_id": str(project.breakdown_model_id),  # 从项目配置读取
+            "selected_skills": request.selected_skills or [],
+            "pipeline_id": request.pipeline_id,
+            "adapt_method_key": request.adapt_method_key,
+            "quality_rule_key": request.quality_rule_key,
+            "output_style_key": request.output_style_key
+        }
+    )
+    db.add(task)
+    await db.flush()  # 获取 task.id
+
+    # 启动Celery异步任务
     try:
-        # 使用事务保证原子性
-        async with db.begin_nested():
-            # 先消耗剧集配额（预扣）
-            await quota_service.consume_episode_quota(current_user)
-
-            # 创建AI任务
-            task = AITask(
-                project_id=batch.project_id,
-                batch_id=batch.id,
-                task_type="breakdown",
-                status="queued",
-                depends_on=[],
-                config={
-                    "model_config_id": request.model_config_id,
-                    "selected_skills": request.selected_skills or [],
-                    "pipeline_id": request.pipeline_id,
-                    "adapt_method_key": request.adapt_method_key,
-                    "quality_rule_key": request.quality_rule_key,
-                    "output_style_key": request.output_style_key
-                }
-            )
-            db.add(task)
-            await db.flush()  # 获取 task.id
-
-            # 启动Celery异步任务
-            celery_task = run_breakdown_task.delay(
-                str(task.id),
-                str(batch.id),
-                str(batch.project_id),
-                str(current_user.id)
-            )
-
-            # 更新任务的celery_task_id
-            task.celery_task_id = celery_task.id
-
-            # 更新批次状态
-            batch.breakdown_status = "queued"
-
-        # 提交事务
-        await db.commit()
-        await db.refresh(task)
-
-        return {"task_id": str(task.id), "status": "queued"}
-
-    except Exception as e:
-        # 如果任务启动失败，回滚事务（配额会被回滚）
+        celery_task = run_breakdown_task.delay(
+            str(task.id),
+            str(batch.id),
+            str(batch.project_id),
+            str(current_user.id)
+        )
+        
+        # 更新任务的celery_task_id
+        task.celery_task_id = celery_task.id
+        
+    except Exception as celery_error:
+        # Celery 连接失败，回滚配额和任务
         await db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"任务创建失败: {str(e)}"
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"任务队列服务不可用，请稍后重试"
         )
+
+    # 更新批次状态
+    batch.breakdown_status = "queued"
+    
+    # 提交事务
+    await db.commit()
+    await db.refresh(task)
+
+    return {"task_id": str(task.id), "status": "queued"}
 
 
 @router.get("/tasks/{task_id}")
@@ -156,14 +208,142 @@ async def get_breakdown_task(
             detail="任务不存在"
         )
 
+    # 解析并人性化错误信息
+    error_display = None
+    if task.error_message:
+        error_display = _humanize_error_message(task.error_message)
+
     return {
         "task_id": str(task.id),
         "status": task.status,
         "progress": task.progress,
         "current_step": task.current_step,
-        "error_message": task.error_message,
+        "error_message": task.error_message,  # 保留原始错误信息
+        "error_display": error_display,  # 人性化错误信息
         "retry_count": task.retry_count,
         "depends_on": task.depends_on or []
+    }
+
+
+def _humanize_error_message(error_message: str) -> dict:
+    """将技术错误信息转换为用户友好的提示
+    
+    Args:
+        error_message: 原始错误信息（JSON字符串或普通字符串）
+        
+    Returns:
+        包含人性化错误信息的字典
+    """
+    import json
+    import re
+    
+    # 尝试解析JSON格式的错误信息
+    try:
+        if error_message.startswith('{'):
+            error_data = json.loads(error_message)
+        else:
+            error_data = {"message": error_message}
+    except:
+        error_data = {"message": error_message}
+    
+    code = error_data.get("code", "UNKNOWN_ERROR")
+    message = error_data.get("message", "")
+    
+    # 定义错误类型和对应的人性化提示
+    error_patterns = {
+        "greenlet_spawn": {
+            "title": "系统配置问题",
+            "description": "后台任务执行环境配置异常，这是一个技术问题。",
+            "suggestion": "请联系技术支持或稍后重试。我们正在修复这个问题。",
+            "icon": "⚙️",
+            "severity": "error"
+        },
+        "QUOTA_EXCEEDED": {
+            "title": "配额不足",
+            "description": "您的剧集配额已用完。",
+            "suggestion": "请升级套餐或等待下月配额重置。",
+            "icon": "📊",
+            "severity": "warning"
+        },
+        "MODEL_ERROR": {
+            "title": "AI模型错误",
+            "description": "AI模型处理时出现问题。",
+            "suggestion": "请检查模型配置或稍后重试。",
+            "icon": "🤖",
+            "severity": "error"
+        },
+        "NETWORK_ERROR": {
+            "title": "网络连接问题",
+            "description": "无法连接到AI服务。",
+            "suggestion": "请检查网络连接或稍后重试。",
+            "icon": "🌐",
+            "severity": "warning"
+        },
+        "TIMEOUT": {
+            "title": "处理超时",
+            "description": "任务处理时间过长。",
+            "suggestion": "请尝试减少章节数量或稍后重试。",
+            "icon": "⏱️",
+            "severity": "warning"
+        },
+        "PERMISSION_DENIED": {
+            "title": "权限不足",
+            "description": "您没有权限执行此操作。",
+            "suggestion": "请检查您的账户权限。",
+            "icon": "🔒",
+            "severity": "error"
+        },
+        "DATA_NOT_FOUND": {
+            "title": "数据不存在",
+            "description": "找不到相关的批次或章节数据。",
+            "suggestion": "请确认数据已正确上传。",
+            "icon": "📁",
+            "severity": "error"
+        }
+    }
+    
+    # 匹配错误类型
+    matched_error = None
+    for pattern, error_info in error_patterns.items():
+        if pattern in code or pattern.lower() in message.lower():
+            matched_error = error_info
+            break
+    
+    # 如果没有匹配到，使用默认错误信息
+    if not matched_error:
+        # 检查是否是SQLAlchemy相关错误
+        if "sqlalchemy" in message.lower() or "greenlet" in message.lower():
+            matched_error = error_patterns["greenlet_spawn"]
+        else:
+            matched_error = {
+                "title": "任务执行失败",
+                "description": "处理过程中遇到了问题。",
+                "suggestion": "请稍后重试，如果问题持续存在，请联系技术支持。",
+                "icon": "❌",
+                "severity": "error"
+            }
+    
+    # 提取失败时间
+    failed_at = error_data.get("failed_at", "")
+    if failed_at:
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(failed_at.replace('Z', '+00:00'))
+            failed_at_display = dt.strftime("%Y-%m-%d %H:%M:%S")
+        except:
+            failed_at_display = failed_at
+    else:
+        failed_at_display = None
+    
+    return {
+        "title": matched_error["title"],
+        "description": matched_error["description"],
+        "suggestion": matched_error["suggestion"],
+        "icon": matched_error["icon"],
+        "severity": matched_error["severity"],
+        "failed_at": failed_at_display,
+        "retry_count": error_data.get("retry_count", 0),
+        "technical_details": message if len(message) < 200 else message[:200] + "..."
     }
 
 
@@ -273,6 +453,7 @@ async def start_all_breakdowns(
     优化：
     - 配额在所有任务成功启动后才消耗
     - 使用事务保证原子性
+    - 防止重复提交
     - 更新批次状态
     """
     # 验证项目归属
@@ -286,7 +467,14 @@ async def start_all_breakdowns(
     if not project:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="项目不存在"
+            detail="项目不存在或无权访问"
+        )
+    
+    # 检查项目是否配置了拆解模型
+    if not project.breakdown_model_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="项目未配置剧情拆解模型，请先在项目设置中选择模型"
         )
 
     # 获取所有 pending 状态的批次
@@ -301,69 +489,118 @@ async def start_all_breakdowns(
     if not batches:
         return {"task_ids": [], "total": 0, "message": "没有待拆解的批次"}
 
+    # 检查每个批次是否已有任务在执行
+    batch_ids = [batch.id for batch in batches]
+    existing_tasks_result = await db.execute(
+        select(AITask).where(
+            AITask.batch_id.in_(batch_ids),
+            AITask.status.in_(["queued", "running"])
+        )
+    )
+    existing_tasks = existing_tasks_result.scalars().all()
+
+    if existing_tasks:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"部分批次已有任务在执行中，任务数: {len(existing_tasks)}"
+        )
+
+    # 锁定用户记录
+    user_result = await db.execute(
+        select(User).where(User.id == current_user.id).with_for_update()
+    )
+    locked_user = user_result.scalar_one()
+
     # 检查剧集配额
     quota_service = QuotaService(db)
-    quota = await quota_service.check_episode_quota(current_user)
+    required_quota = len(batches)
+    quota = await quota_service.check_episode_quota(locked_user)
+
     if not quota["allowed"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"剧集配额已用尽，本月已使用 {quota['used']}/{quota['limit']} 集"
         )
 
-    try:
-        task_ids = []
-        # 使用事务保证原子性
-        async with db.begin_nested():
-            for batch in batches:
-                # 先消耗剧集配额（预扣）
-                await quota_service.consume_episode_quota(current_user)
+    # 检查配额是否足够
+    if quota["remaining"] != -1 and quota["remaining"] < required_quota:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"配额不足：需要 {required_quota} 集，剩余 {quota['remaining']} 集"
+        )
 
-                # 创建AI任务
-                task = AITask(
-                    project_id=batch.project_id,
-                    batch_id=batch.id,
-                    task_type="breakdown",
-                    status="queued",
-                    depends_on=[],
-                    config={
-                        "adapt_method_key": "adapt_method_default",
-                        "quality_rule_key": "qa_breakdown_default",
-                        "output_style_key": "output_style_default"
-                    }
-                )
-                db.add(task)
-                await db.flush()  # 获取 task.id
+    task_ids = []
+    failed_batches = []
 
-                # 启动Celery异步任务
+    for batch in batches:
+        try:
+            # 消耗剧集配额（预扣）
+            await quota_service.consume_episode_quota(locked_user)
+
+            # 创建AI任务
+            task = AITask(
+                project_id=batch.project_id,
+                batch_id=batch.id,
+                task_type="breakdown",
+                status="queued",
+                depends_on=[],
+                config={
+                    "model_config_id": str(project.breakdown_model_id),  # 从项目配置读取
+                    "adapt_method_key": "adapt_method_default",
+                    "quality_rule_key": "qa_breakdown_default",
+                    "output_style_key": "output_style_default"
+                }
+            )
+            db.add(task)
+            await db.flush()  # 获取 task.id
+
+            # 启动Celery异步任务
+            try:
                 celery_task = run_breakdown_task.delay(
                     str(task.id),
                     str(batch.id),
                     str(batch.project_id),
                     str(current_user.id)
                 )
-
                 task.celery_task_id = celery_task.id
+            except Exception as celery_error:
+                # Celery 提交失败，标记任务为失败
+                import json
+                task.status = "failed"
+                task.error_message = json.dumps({
+                    "code": "CELERY_UNAVAILABLE",
+                    "message": "任务队列服务不可用，请稍后重试",
+                    "failed_at": datetime.utcnow().isoformat(),
+                    "retry_count": 0
+                })
+                batch.breakdown_status = "failed"
+                failed_batches.append(str(batch.id))
+                continue
 
-                # 更新批次状态
-                batch.breakdown_status = "queued"
+            # 更新批次状态
+            batch.breakdown_status = "queued"
+            task_ids.append(str(task.id))
 
-                task_ids.append(str(task.id))
+        except Exception:
+            # 单个批次处理失败
+            failed_batches.append(str(batch.id))
+            continue
 
-        # 提交事务
-        await db.commit()
+    # 提交事务
+    await db.commit()
 
-        return {"task_ids": task_ids, "total": len(task_ids)}
+    if failed_batches:
+        return {
+            "task_ids": task_ids,
+            "total": len(task_ids),
+            "failed": len(failed_batches),
+            "message": f"成功启动 {len(task_ids)} 个任务，{len(failed_batches)} 个失败"
+        }
 
-    except Exception as e:
-        # 如果任务启动失败，回滚事务（配额会被回滚）
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"批量任务创建失败: {str(e)}"
-        )
+    return {"task_ids": task_ids, "total": len(task_ids)}
 
 
-@router.post("/start-continue")
+@router.post("/continue/{project_id}")
 async def start_continue_breakdown(
     project_id: str,
     current_user: User = Depends(get_current_user),
@@ -374,6 +611,7 @@ async def start_continue_breakdown(
     优化：
     - 配额在任务成功启动后才消耗
     - 使用事务保证数据一致性
+    - 防止重复提交
     - 更新批次状态
     """
     # 验证项目归属
@@ -387,7 +625,14 @@ async def start_continue_breakdown(
     if not project:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="项目不存在"
+            detail="项目不存在或无权访问"
+        )
+    
+    # 检查项目是否配置了拆解模型
+    if not project.breakdown_model_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="项目未配置剧情拆解模型，请先在项目设置中选择模型"
         )
 
     # 获取第一个 pending 状态的批次
@@ -402,63 +647,86 @@ async def start_continue_breakdown(
     if not batch:
         return {"task_id": None, "batch_id": None, "message": "没有待拆解的批次"}
 
+    # 检查是否已有任务在执行
+    existing_task_result = await db.execute(
+        select(AITask).where(
+            AITask.batch_id == batch.id,
+            AITask.status.in_(["queued", "running"])
+        )
+    )
+    existing_task = existing_task_result.scalar_one_or_none()
+
+    if existing_task:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"该批次已有任务在执行中，任务ID: {existing_task.id}"
+        )
+    
+    # 如果批次状态是 failed，允许重新提交
+    if batch.breakdown_status == "failed":
+        # 允许创建新任务，不删除失败任务记录（保留历史）
+        pass
+
+    # 锁定用户记录
+    user_result = await db.execute(
+        select(User).where(User.id == current_user.id).with_for_update()
+    )
+    locked_user = user_result.scalar_one()
+
     # 检查剧集配额
     quota_service = QuotaService(db)
-    quota = await quota_service.check_episode_quota(current_user)
+    quota = await quota_service.check_episode_quota(locked_user)
     if not quota["allowed"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"剧集配额已用尽，本月已使用 {quota['used']}/{quota['limit']} 集"
         )
 
+    # 消耗剧集配额（预扣）
+    await quota_service.consume_episode_quota(locked_user)
+
+    # 创建AI任务
+    task = AITask(
+        project_id=batch.project_id,
+        batch_id=batch.id,
+        task_type="breakdown",
+        status="queued",
+        depends_on=[],
+        config={
+            "model_config_id": str(project.breakdown_model_id),  # 从项目配置读取
+            "adapt_method_key": "adapt_method_default",
+            "quality_rule_key": "qa_breakdown_default",
+            "output_style_key": "output_style_default"
+        }
+    )
+    db.add(task)
+    await db.flush()  # 获取 task.id
+
+    # 启动Celery异步任务
     try:
-        # 使用事务保证原子性
-        async with db.begin_nested():
-            # 先消耗剧集配额（预扣）
-            await quota_service.consume_episode_quota(current_user)
-
-            # 创建AI任务
-            task = AITask(
-                project_id=batch.project_id,
-                batch_id=batch.id,
-                task_type="breakdown",
-                status="queued",
-                depends_on=[],
-                config={
-                    "adapt_method_key": "adapt_method_default",
-                    "quality_rule_key": "qa_breakdown_default",
-                    "output_style_key": "output_style_default"
-                }
-            )
-            db.add(task)
-            await db.flush()  # 获取 task.id
-
-            # 启动Celery异步任务
-            celery_task = run_breakdown_task.delay(
-                str(task.id),
-                str(batch.id),
-                str(batch.project_id),
-                str(current_user.id)
-            )
-
-            task.celery_task_id = celery_task.id
-
-            # 更新批次状态
-            batch.breakdown_status = "queued"
-
-        # 提交事务
-        await db.commit()
-        await db.refresh(task)
-
-        return {"task_id": str(task.id), "batch_id": str(batch.id), "status": "queued"}
-
-    except Exception as e:
-        # 如果任务启动失败，回滚事务（配额会被回滚）
+        celery_task = run_breakdown_task.delay(
+            str(task.id),
+            str(batch.id),
+            str(batch.project_id),
+            str(current_user.id)
+        )
+        task.celery_task_id = celery_task.id
+    except Exception:
+        # Celery 连接失败，回滚配额和任务
         await db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"任务创建失败: {str(e)}"
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="任务队列服务不可用，请稍后重试"
         )
+
+    # 更新批次状态
+    batch.breakdown_status = "queued"
+    
+    # 提交事务
+    await db.commit()
+    await db.refresh(task)
+
+    return {"task_id": str(task.id), "batch_id": str(batch.id), "status": "queued"}
 
 
 @router.get("/available-configs")
@@ -556,7 +824,7 @@ async def get_breakdown_results(
     }
 
 
-@router.post("/start-batch")
+@router.post("/batch-start")
 async def start_batch_breakdown(
     request: BatchStartRequest,
     current_user: User = Depends(get_current_user),
@@ -568,6 +836,7 @@ async def start_batch_breakdown(
     - 支持自定义配置参数
     - 跳过已完成的批次
     - 配额预检查
+    - 防止重复提交
     - 返回任务列表和批量信息
     """
     # 验证项目归属
@@ -581,7 +850,14 @@ async def start_batch_breakdown(
     if not project:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="项目不存在"
+            detail="项目不存在或无权访问"
+        )
+    
+    # 检查项目是否配置了拆解模型
+    if not project.breakdown_model_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="项目未配置剧情拆解模型，请先在项目设置中选择模型"
         )
 
     # 获取所有未完成的批次（pending 或 failed）
@@ -601,15 +877,20 @@ async def start_batch_breakdown(
             "project_id": request.project_id
         }
 
-    # 配额预检查
-    required_quota = len(batches)
-    quota_service = QuotaService(db)
-    quota = await quota_service.check_episode_quota(current_user)
+    # 检查每个批次是否已有任务在执行
+    batch_ids = [batch.id for batch in batches]
+    existing_tasks_result = await db.execute(
+        select(AITask).where(
+            AITask.batch_id.in_(batch_ids),
+            AITask.status.in_(["queued", "running"])
+        )
+    )
+    existing_tasks = existing_tasks_result.scalars().all()
 
-    if quota["remaining"] != -1 and quota["remaining"] < required_quota:
+    if existing_tasks:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"配额不足：需要 {required_quota} 集，剩余 {quota['remaining']} 集"
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"部分批次已有任务在执行中，任务数: {len(existing_tasks)}"
         )
 
     # 构建任务配置
@@ -619,59 +900,88 @@ async def start_batch_breakdown(
         "output_style_key": request.output_style_key
     }
 
-    try:
-        task_ids = []
-        # 使用事务保证原子性
-        async with db.begin_nested():
-            for batch in batches:
-                # 先消耗剧集配额（预扣）
-                await quota_service.consume_episode_quota(current_user)
+    # 锁定用户记录
+    user_result = await db.execute(
+        select(User).where(User.id == current_user.id).with_for_update()
+    )
+    locked_user = user_result.scalar_one()
 
-                # 创建AI任务
-                task = AITask(
-                    project_id=batch.project_id,
-                    batch_id=batch.id,
-                    task_type="breakdown",
-                    status="queued",
-                    depends_on=[],
-                    config=task_config
-                )
-                db.add(task)
-                await db.flush()  # 获取 task.id
+    # 配额预检查
+    required_quota = len(batches)
+    quota_service = QuotaService(db)
+    quota = await quota_service.check_episode_quota(locked_user)
 
-                # 启动Celery任务
+    if quota["remaining"] != -1 and quota["remaining"] < required_quota:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"配额不足：需要 {required_quota} 集，剩余 {quota['remaining']} 集"
+        )
+
+    task_ids = []
+    failed_batches = []
+
+    for batch in batches:
+        try:
+            # 消耗剧集配额（预扣）
+            await quota_service.consume_episode_quota(locked_user)
+
+            # 创建AI任务
+            task = AITask(
+                project_id=batch.project_id,
+                batch_id=batch.id,
+                task_type="breakdown",
+                status="queued",
+                depends_on=[],
+                config={
+                    "model_config_id": str(project.breakdown_model_id),  # 从项目配置读取
+                    **task_config  # 包含 adapt_method_key 等
+                }
+            )
+            db.add(task)
+            await db.flush()  # 获取 task.id
+
+            # 启动Celery任务
+            try:
                 celery_task = run_breakdown_task.delay(
                     str(task.id),
                     str(batch.id),
                     str(batch.project_id),
                     str(current_user.id)
                 )
-
                 task.celery_task_id = celery_task.id
+            except Exception:
+                # Celery 提交失败
+                failed_batches.append(str(batch.id))
+                continue
 
-                # 更新批次状态
-                batch.breakdown_status = "queued"
+            # 更新批次状态
+            batch.breakdown_status = "queued"
+            task_ids.append(str(task.id))
 
-                task_ids.append(str(task.id))
+        except Exception:
+            failed_batches.append(str(batch.id))
+            continue
 
-        # 提交事务
-        await db.commit()
+    # 提交事务
+    await db.commit()
 
+    if failed_batches:
         return {
             "task_ids": task_ids,
             "total": len(task_ids),
+            "failed": len(failed_batches),
             "project_id": request.project_id,
             "config": task_config,
-            "message": f"已启动 {len(task_ids)} 个拆解任务"
+            "message": f"已启动 {len(task_ids)} 个任务，{len(failed_batches)} 个失败"
         }
 
-    except Exception as e:
-        # 如果任务启动失败，回滚事务（配额会被回滚）
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"批量任务创建失败: {str(e)}"
-        )
+    return {
+        "task_ids": task_ids,
+        "total": len(task_ids),
+        "project_id": request.project_id,
+        "config": task_config,
+        "message": f"已启动 {len(task_ids)} 个拆解任务"
+    }
 
 
 @router.get("/batch-progress/{project_id}")

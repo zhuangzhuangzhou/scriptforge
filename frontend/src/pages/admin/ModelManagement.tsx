@@ -90,8 +90,8 @@ const ModelManagement: React.FC = () => {
 
   // 渲染
   return (
-    <div style={{ padding: '24px' }}>
-      <GlassCard>
+    <div style={{ height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column' }}>
+      <GlassCard style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div style={{ marginBottom: 24 }}>
           <h1 style={{ margin: 0, fontSize: 24, fontWeight: 600 }}>
             模型管理中心
@@ -108,7 +108,7 @@ const ModelManagement: React.FC = () => {
         />
 
         {/* 懒加载标签页内容，并用错误边界包裹 */}
-        <div style={{ marginTop: 16 }}>
+        <div style={{ marginTop: 16, flex: 1, overflow: 'auto' }}>
           <ErrorBoundary key={activeTab}>
             {renderTabContent()}
           </ErrorBoundary>

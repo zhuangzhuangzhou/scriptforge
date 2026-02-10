@@ -76,10 +76,22 @@ export interface ProviderUpdate {
 
 export const providerApi = {
   /**
-   * 获取提供商列表
+   * 获取提供商列表（支持分页）
    */
-  getProviders: async () => {
-    return api.get<Provider[]>('/admin/models/providers');
+  getProviders: async (params?: {
+    page?: number;
+    page_size?: number;
+    sort_by?: string;
+    sort_order?: 'asc' | 'desc';
+    search?: string;
+  }) => {
+    return api.get<{
+      items: Provider[];
+      total: number;
+      page: number;
+      page_size: number;
+      total_pages: number;
+    }>('/admin/models/providers', { params });
   },
 
   /**
@@ -107,7 +119,7 @@ export const providerApi = {
    * 删除提供商
    */
   deleteProvider: async (id: string) => {
-    return api.delete(`/admin/models/providers/${id}`);
+    return api.delete<{ success: boolean; message: string; data?: any }>(`/admin/models/providers/${id}`);
   },
 
   /**
@@ -115,6 +127,30 @@ export const providerApi = {
    */
   toggleProvider: async (id: string) => {
     return api.post<Provider>(`/admin/models/providers/${id}/toggle`);
+  },
+
+  /**
+   * 批量启用/禁用提供商
+   */
+  batchToggleProviders: async (ids: string[], enable: boolean) => {
+    return api.post<{
+      success_count: number;
+      failed_count: number;
+      failed_ids: string[];
+      message: string;
+    }>('/admin/models/providers/batch/toggle', { ids }, { params: { enable } });
+  },
+
+  /**
+   * 批量删除提供商
+   */
+  batchDeleteProviders: async (ids: string[]) => {
+    return api.delete<{
+      success_count: number;
+      failed_count: number;
+      failed_ids: string[];
+      message: string;
+    }>('/admin/models/providers/batch', { data: { ids } });
   },
 };
 

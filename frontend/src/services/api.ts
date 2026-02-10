@@ -196,6 +196,23 @@ export const projectApi = {
   }
 };
 
+// 模型管理 API
+export const modelsApi = {
+  getModels: async () => {
+    if (USE_MOCK) {
+      await delay(300);
+      return {
+        data: [
+          { id: 'm1', model_key: 'gpt-4o', display_name: 'GPT-4o (推荐)', pricing: { input_credits_per_1k: 5, output_credits_per_1k: 15 } },
+          { id: 'm2', model_key: 'gpt-4-turbo', display_name: 'GPT-4 Turbo', pricing: { input_credits_per_1k: 10, output_credits_per_1k: 30 } },
+          { id: 'm3', model_key: 'claude-3-5-sonnet', display_name: 'Claude 3.5 Sonnet', pricing: { input_credits_per_1k: 3, output_credits_per_1k: 15 } },
+        ]
+      };
+    }
+    return api.get('/models');
+  }
+};
+
 export const logsApi = {
   getLogs: async (projectId: string) => {
     if (USE_MOCK) {

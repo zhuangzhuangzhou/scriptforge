@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "检查模型配置",
+  "description": "手动触发模型配置检查脚本",
+  "version": "1",
+  "when": {
+    "type": "userTriggered"
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "cd backend && ./venv/bin/python check_model_config.py"
+  }
+}

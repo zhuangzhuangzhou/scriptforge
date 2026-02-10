@@ -97,23 +97,33 @@ const ConfigSelector: React.FC<ConfigSelectorProps> = ({
           className="w-full"
           disabled={disabled}
           placeholder="选择适配方法"
+          optionLabelProp="label"
         >
           {configs.adapt_methods.map((cfg) => (
-            <Select.Option key={cfg.key} value={cfg.key}>
-              <div className="flex flex-col">
-                <div className="flex items-center justify-between gap-2">
+            <Select.Option 
+              key={cfg.key} 
+              value={cfg.key}
+              label={
+                <span className="font-mono text-xs">
+                  {cfg.key}
+                  {cfg.is_custom && <span className="ml-2 text-[9px] text-purple-400">自定义</span>}
+                </span>
+              }
+            >
+              <div className="py-1">
+                <div className="flex items-center justify-between gap-2 mb-1">
                   <span className="font-mono text-xs text-slate-200">{cfg.key}</span>
                   {cfg.is_custom ? (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 whitespace-nowrap">
                       自定义
                     </span>
                   ) : (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 whitespace-nowrap">
                       系统默认
                     </span>
                   )}
                 </div>
-                <div className="text-[10px] text-slate-500 mt-1 line-clamp-2">
+                <div className="text-[10px] text-slate-500 leading-relaxed">
                   {cfg.description}
                 </div>
               </div>
@@ -139,23 +149,33 @@ const ConfigSelector: React.FC<ConfigSelectorProps> = ({
           className="w-full"
           disabled={disabled}
           placeholder="选择质检规则"
+          optionLabelProp="label"
         >
           {configs.quality_rules.map((cfg) => (
-            <Select.Option key={cfg.key} value={cfg.key}>
-              <div className="flex flex-col">
-                <div className="flex items-center justify-between gap-2">
+            <Select.Option 
+              key={cfg.key} 
+              value={cfg.key}
+              label={
+                <span className="font-mono text-xs">
+                  {cfg.key}
+                  {cfg.is_custom && <span className="ml-2 text-[9px] text-purple-400">自定义</span>}
+                </span>
+              }
+            >
+              <div className="py-1">
+                <div className="flex items-center justify-between gap-2 mb-1">
                   <span className="font-mono text-xs text-slate-200">{cfg.key}</span>
                   {cfg.is_custom ? (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 whitespace-nowrap">
                       自定义
                     </span>
                   ) : (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 whitespace-nowrap">
                       系统默认
                     </span>
                   )}
                 </div>
-                <div className="text-[10px] text-slate-500 mt-1 line-clamp-2">
+                <div className="text-[10px] text-slate-500 leading-relaxed">
                   {cfg.description}
                 </div>
               </div>
@@ -181,23 +201,33 @@ const ConfigSelector: React.FC<ConfigSelectorProps> = ({
           className="w-full"
           disabled={disabled}
           placeholder="选择输出风格"
+          optionLabelProp="label"
         >
           {configs.output_styles.map((cfg) => (
-            <Select.Option key={cfg.key} value={cfg.key}>
-              <div className="flex flex-col">
-                <div className="flex items-center justify-between gap-2">
+            <Select.Option 
+              key={cfg.key} 
+              value={cfg.key}
+              label={
+                <span className="font-mono text-xs">
+                  {cfg.key}
+                  {cfg.is_custom && <span className="ml-2 text-[9px] text-purple-400">自定义</span>}
+                </span>
+              }
+            >
+              <div className="py-1">
+                <div className="flex items-center justify-between gap-2 mb-1">
                   <span className="font-mono text-xs text-slate-200">{cfg.key}</span>
                   {cfg.is_custom ? (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 whitespace-nowrap">
                       自定义
                     </span>
                   ) : (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 whitespace-nowrap">
                       系统默认
                     </span>
                   )}
                 </div>
-                <div className="text-[10px] text-slate-500 mt-1 line-clamp-2">
+                <div className="text-[10px] text-slate-500 leading-relaxed">
                   {cfg.description}
                 </div>
               </div>

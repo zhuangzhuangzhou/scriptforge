@@ -153,27 +153,28 @@ celery -A app.core.celery_app worker --loglevel=info
 
 详见：`docs/spec-storage-contract.md`
 
-## 文档索引（简版）
+## 📚 文档
 
-- 核心流程规范：`docs/spec-workflow.md`
-- 配置驱动规范：`docs/spec-config-driven.md`
-- 数据与文件关系：`docs/spec-storage-contract.md`
-- 实施进度：`docs/status-progress.md`
-- 商业与定价：`docs/product-business-analysis.md`
-- 完整索引：`docs/index.md`
+完整文档请查看：[docs/README.md](./docs/README.md)
 
----
+### 快速链接
 
-## 文档
+| 分类 | 文档 | 说明 |
+|------|------|------|
+| 🚀 快速开始 | [快速开始指南](./docs/01-getting-started/quickstart.md) | 5-10 分钟快速上手 |
+| 📘 核心规范 | [系统流程规范](./docs/02-specifications/workflow.md) | 系统工作流程 |
+| 📘 核心规范 | [配置驱动规范](./docs/02-specifications/config-driven.md) | 配置化设计 |
+| 📘 核心规范 | [数据存储规范](./docs/02-specifications/storage-contract.md) | 数据与文件关系 |
+| 💻 开发指南 | [后端开发指南](./docs/04-development/backend-guide.md) | 后端开发规范 |
+| 💻 开发指南 | [前端开发指南](./docs/04-development/frontend-guide.md) | 前端开发规范 |
+| ✨ 功能文档 | [模型管理系统](./docs/05-features/model-management/overview.md) | AI 模型管理 |
+| 💼 产品商业 | [商业分析](./docs/07-business/business-analysis.md) | 商业模式分析 |
+| 📝 变更记录 | [实施计划](./docs/08-changelog/implementation-plan.md) | 项目实施计划 |
+| 📝 变更记录 | [进度跟踪](./docs/08-changelog/status-progress.md) | 当前进度 |
 
-| 文档 | 说明 |
-|------|------|
-| [docs/product-business-analysis.md](./docs/product-business-analysis.md) | 产品商业分析、用户分级、定价策略 |
-| [docs/plan-implementation.md](./docs/plan-implementation.md) | 技术架构设计、开发阶段规划 |
-| [docs/status-progress.md](./docs/status-progress.md) | 项目实施进度、已完成功能清单 |
-| [docs/log-2026-02-03-auth-integration.md](./docs/log-2026-02-03-auth-integration.md) | 认证系统集成开发日志 |
-| [docs/spec-document-policy.md](./docs/spec-document-policy.md) | 文档使用与更新策略（含命名规则） |
-| [docs/spec-document-versioning.md](./docs/spec-document-versioning.md) | 文档版本号规范 |
+### 文档编写规范
+
+**重要**: 所有文档编写必须遵循 [文档编写指南](./docs/DOCUMENTATION_GUIDE.md)
 
 ---
 

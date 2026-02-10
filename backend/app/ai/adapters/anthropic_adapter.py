@@ -6,9 +6,13 @@ from app.ai.adapters.base import BaseModelAdapter
 class AnthropicAdapter(BaseModelAdapter):
     """Anthropic Claude模型适配器"""
 
-    def __init__(self, api_key: str, model_name: str = "claude-3-opus-20240229", **kwargs):
+    def __init__(self, api_key: str, model_name: str = "claude-3-opus-20240229", base_url: str = None, **kwargs):
         super().__init__(api_key, model_name, **kwargs)
-        self.client = Anthropic(api_key=api_key)
+        # 如果提供了 base_url，使用自定义端点（如 MiniMax）
+        if base_url:
+            self.client = Anthropic(api_key=api_key, base_url=base_url)
+        else:
+            self.client = Anthropic(api_key=api_key)
 
     def generate(self, prompt: str, **kwargs) -> str:
         """生成文本"""

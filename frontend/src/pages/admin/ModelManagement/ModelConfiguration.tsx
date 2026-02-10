@@ -7,6 +7,8 @@ import { GlassCard } from '../../../components/ui/GlassCard';
 import { GlassInput } from '../../../components/ui/GlassInput';
 import { GlassSelect } from '../../../components/ui/GlassSelect';
 import { modelApi, providerApi, AIModel, AIModelCreate, AIModelUpdate, Provider } from '../../../services/modelManagementApi';
+import { extractArrayData } from '../../../utils/apiHelpers';
+import styles from './ModelConfiguration.module.css';
 
 const { TextArea } = Input;
 
@@ -25,7 +27,7 @@ const ModelConfiguration: React.FC = () => {
   const fetchProviders = async () => {
     try {
       const response = await providerApi.getProviders();
-      setProviders(response.data);
+      setProviders(extractArrayData<Provider>(response.data));
     } catch (error) {
       console.error('获取提供商列表失败:', error);
     }
@@ -36,7 +38,7 @@ const ModelConfiguration: React.FC = () => {
     setLoading(true);
     try {
       const response = await modelApi.getModels(selectedProviderId);
-      setModels(response.data);
+      setModels(extractArrayData<AIModel>(response.data));
     } catch (error) {
       console.error('获取模型列表失败:', error);
       message.error('获取模型列表失败');
@@ -300,7 +302,7 @@ const ModelConfiguration: React.FC = () => {
 
   // 渲染
   return (
-    <div style={{ padding: '24px' }}>
+    <div className={styles.container}>
       <GlassCard>
         <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Space>
@@ -350,160 +352,163 @@ const ModelConfiguration: React.FC = () => {
         width={700}
         okText="保存"
         cancelText="取消"
+        style={{ maxHeight: '90vh' }}
       >
-        <Form
-          form={form}
-          layout="vertical"
-          style={{ marginTop: 24 }}
-        >
-          <Form.Item
-            label="提供商"
-            name="provider_id"
-            rules={[{ required: true, message: '请选择提供商' }]}
+        <div className={styles.modalContent}>
+          <Form
+            form={form}
+            layout="vertical"
+            style={{ marginTop: 24 }}
           >
-            <GlassSelect
-              placeholder="选择提供商"
-              disabled={!!editingModel}
-              options={providers.map(p => ({
-                label: p.display_name,
-                value: p.id,
-              }))}
-            />
-          </Form.Item>
-
-          <Form.Item
-            label="模型标识"
-            name="model_key"
-            rules={[{ required: true, message: '请输入模型标识' }]}
-          >
-            <GlassInput
-              placeholder="例如: gpt-4-turbo-preview"
-              disabled={!!editingModel}
-            />
-          </Form.Item>
-
-          <Form.Item
-            label="显示名称"
-            name="display_name"
-            rules={[{ required: true, message: '请输入显示名称' }]}
-          >
-            <GlassInput placeholder="例如: GPT-4 Turbo" />
-          </Form.Item>
-
-          <Form.Item
-            label="模型类型"
-            name="model_type"
-          >
-            <GlassSelect
-              placeholder="选择类型"
-              options={[
-                { label: 'Chat', value: 'chat' },
-                { label: 'Completion', value: 'completion' },
-                { label: 'Embedding', value: 'embedding' },
-              ]}
-            />
-          </Form.Item>
-
-          <Space style={{ width: '100%' }} size="large">
             <Form.Item
-              label="最大 Token 数"
-              name="max_tokens"
-              style={{ flex: 1 }}
+              label="提供商"
+              name="provider_id"
+              rules={[{ required: true, message: '请选择提供商' }]}
             >
-              <InputNumber
-                placeholder="128000"
-                style={{ width: '100%' }}
-                min={0}
+              <GlassSelect
+                placeholder="选择提供商"
+                disabled={!!editingModel}
+                options={providers.map(p => ({
+                  label: p.display_name,
+                  value: p.id,
+                }))}
               />
             </Form.Item>
 
             <Form.Item
-              label="最大输入 Token"
-              name="max_input_tokens"
-              style={{ flex: 1 }}
+              label="模型标识"
+              name="model_key"
+              rules={[{ required: true, message: '请输入模型标识' }]}
             >
-              <InputNumber
-                placeholder="120000"
-                style={{ width: '100%' }}
-                min={0}
+              <GlassInput
+                placeholder="例如: gpt-4-turbo-preview"
+                disabled={!!editingModel}
               />
             </Form.Item>
 
             <Form.Item
-              label="最大输出 Token"
-              name="max_output_tokens"
-              style={{ flex: 1 }}
+              label="显示名称"
+              name="display_name"
+              rules={[{ required: true, message: '请输入显示名称' }]}
             >
-              <InputNumber
-                placeholder="4096"
-                style={{ width: '100%' }}
-                min={0}
-              />
+              <GlassInput placeholder="例如: GPT-4 Turbo" />
             </Form.Item>
-          </Space>
 
-          <Space style={{ width: '100%' }} size="large">
             <Form.Item
-              label="超时时间（秒）"
-              name="timeout_seconds"
-              style={{ flex: 1 }}
+              label="模型类型"
+              name="model_type"
             >
-              <InputNumber
-                placeholder="120"
-                style={{ width: '100%' }}
-                min={1}
+              <GlassSelect
+                placeholder="选择类型"
+                options={[
+                  { label: 'Chat', value: 'chat' },
+                  { label: 'Completion', value: 'completion' },
+                  { label: 'Embedding', value: 'embedding' },
+                ]}
               />
             </Form.Item>
 
+            <Space style={{ width: '100%' }} size="large">
+              <Form.Item
+                label="最大 Token 数"
+                name="max_tokens"
+                style={{ flex: 1 }}
+              >
+                <InputNumber
+                  placeholder="128000"
+                  style={{ width: '100%' }}
+                  min={0}
+                />
+              </Form.Item>
+
+              <Form.Item
+                label="最大输入 Token"
+                name="max_input_tokens"
+                style={{ flex: 1 }}
+              >
+                <InputNumber
+                  placeholder="120000"
+                  style={{ width: '100%' }}
+                  min={0}
+                />
+              </Form.Item>
+
+              <Form.Item
+                label="最大输出 Token"
+                name="max_output_tokens"
+                style={{ flex: 1 }}
+              >
+                <InputNumber
+                  placeholder="4096"
+                  style={{ width: '100%' }}
+                  min={0}
+                />
+              </Form.Item>
+            </Space>
+
+            <Space style={{ width: '100%' }} size="large">
+              <Form.Item
+                label="超时时间（秒）"
+                name="timeout_seconds"
+                style={{ flex: 1 }}
+              >
+                <InputNumber
+                  placeholder="120"
+                  style={{ width: '100%' }}
+                  min={1}
+                />
+              </Form.Item>
+
+              <Form.Item
+                label="默认温度"
+                name="temperature_default"
+                style={{ flex: 1 }}
+              >
+                <InputNumber
+                  placeholder="0.7"
+                  style={{ width: '100%' }}
+                  min={0}
+                  max={2}
+                  step={0.1}
+                />
+              </Form.Item>
+            </Space>
+
+            <Space style={{ width: '100%' }} size="large">
+              <Form.Item
+                label="支持流式输出"
+                name="supports_streaming"
+                valuePropName="checked"
+              >
+                <Switch />
+              </Form.Item>
+
+              <Form.Item
+                label="支持函数调用"
+                name="supports_function_calling"
+                valuePropName="checked"
+              >
+                <Switch />
+              </Form.Item>
+            </Space>
+
             <Form.Item
-              label="默认温度"
-              name="temperature_default"
-              style={{ flex: 1 }}
+              label="描述"
+              name="description"
             >
-              <InputNumber
-                placeholder="0.7"
-                style={{ width: '100%' }}
-                min={0}
-                max={2}
-                step={0.1}
+              <TextArea
+                rows={3}
+                placeholder="模型描述（可选）"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  borderRadius: '8px',
+                  color: '#fff',
+                }}
               />
             </Form.Item>
-          </Space>
-
-          <Space style={{ width: '100%' }} size="large">
-            <Form.Item
-              label="支持流式输出"
-              name="supports_streaming"
-              valuePropName="checked"
-            >
-              <Switch />
-            </Form.Item>
-
-            <Form.Item
-              label="支持函数调用"
-              name="supports_function_calling"
-              valuePropName="checked"
-            >
-              <Switch />
-            </Form.Item>
-          </Space>
-
-          <Form.Item
-            label="描述"
-            name="description"
-          >
-            <TextArea
-              rows={3}
-              placeholder="模型描述（可选）"
-              style={{
-                background: 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid rgba(255, 255, 255, 0.1)',
-                borderRadius: '8px',
-                color: '#fff',
-              }}
-            />
-          </Form.Item>
-        </Form>
+          </Form>
+        </div>
       </GlassModal>
     </div>
   );
