@@ -5,6 +5,7 @@ from app.api.v1.router import api_router
 from app.core.database import AsyncSessionLocal
 from app.core.init_skills import init_builtin_skills
 from app.core.init_pipeline import init_default_pipeline
+from app.core.init_simple_system import init_simple_system
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -31,6 +32,7 @@ async def startup_event():
     async with AsyncSessionLocal() as db:
         await init_builtin_skills(db)
         await init_default_pipeline(db)
+        await init_simple_system(db)  # 初始化简化系统
         print("应用启动完成")
 
 
