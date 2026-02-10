@@ -377,7 +377,57 @@ def _execute_breakdown_sync(
         task_id=task_id
     )
 
-    # 5. 保存拆解结果
+    # 5. 质量检查（可选）
+    qa_status = "pending"
+    qa_score = None
+    qa_report = None
+
+    # 检查是否启用质检
+    enable_qa = task_config.get("enable_qa", True)  # 默认启用
+
+    if enable_qa:
+        update_task_progress_sync(db, task_id, progress=88, current_step="质量检查中... (88%)")
+
+        # 构建拆解数据
+        breakdown_data = {
+            "conflicts": conflicts,
+            "plot_hooks": plot_hooks,
+            "characters": characters,
+            "scenes": scenes,
+            "emotions": emotions,
+            "episodes": episodes
+        }
+
+        # 获取改编方法论配置
+        adapt_method = _get_adapt_method_sync(db, task_config)
+
+        # 执行质检循环
+        qa_result = _run_qa_loop_sync(
+            db=db,
+            task_id=task_id,
+            breakdown_data=breakdown_data,
+            chapters=chapters,
+            adapt_method=adapt_method,
+            model_adapter=model_adapter,
+            log_publisher=log_publisher
+        )
+
+        # 更新质检结果
+        qa_status = qa_result.get("qa_status", "pending")
+        qa_score = qa_result.get("qa_score")
+        qa_report = qa_result.get("qa_report")
+
+        # 如果质检修改了数据，使用修改后的数据
+        if qa_result.get("modified_data"):
+            modified = qa_result["modified_data"]
+            conflicts = modified.get("conflicts", conflicts)
+            plot_hooks = modified.get("plot_hooks", plot_hooks)
+            characters = modified.get("characters", characters)
+            scenes = modified.get("scenes", scenes)
+            emotions = modified.get("emotions", emotions)
+            episodes = modified.get("episodes", episodes)
+
+    # 6. 保存拆解结果
     update_task_progress_sync(db, task_id, progress=90, current_step="保存拆解结果中... (90%)")
     
     breakdown = PlotBreakdown(
@@ -392,8 +442,9 @@ def _execute_breakdown_sync(
         consistency_status="pending",
         consistency_score=None,
         consistency_results=None,
-        qa_status="pending",
-        qa_report=None,
+        qa_status=qa_status,
+        qa_score=qa_score,
+        qa_report=qa_report,
         used_adapt_method_id=task_config.get("adapt_method_key")
     )
     
@@ -922,19 +973,158 @@ def _plan_episodes_sync(
         return []
 
 
+def _get_adapt_method_sync(db: Session, task_config: dict) -> dict:
+    """获取改编方法论配置（同步版本）
+
+    Args:
+        db: 数据库会话
+        task_config: 任务配置
+
+    Returns:
+        dict: 改编方法论配置
+    """
+    from app.models.adapt_method import AdaptMethod
+
+    adapt_method_id = task_config.get("adapt_method_key")
+
+    if not adapt_method_id:
+        # 返回默认配置
+        return {
+            "description": "标准网文适配漫画原则",
+            "rules": [
+                "确保内容连贯，冲突明显",
+                "每集包含完整的故事弧线",
+                "设置吸引人的剧情钩子"
+            ]
+        }
+
+    # 从数据库查询
+    adapt_method = db.query(AdaptMethod).filter(
+        AdaptMethod.id == adapt_method_id
+    ).first()
+
+    if not adapt_method:
+        return {
+            "description": "标准网文适配漫画原则",
+            "rules": []
+        }
+
+    return {
+        "description": adapt_method.description or "标准网文适配漫画原则",
+        "rules": adapt_method.rules or []
+    }
+
+
+def _run_qa_loop_sync(
+    db: Session,
+    task_id: str,
+    breakdown_data: dict,
+    chapters: list,
+    adapt_method: dict,
+    model_adapter,
+    log_publisher=None
+) -> dict:
+    """执行质检循环（同步版本）
+
+    Args:
+        db: 数据库会话
+        task_id: 任务 ID
+        breakdown_data: 拆解数据
+        chapters: 章节列表
+        adapt_method: 改编方法论配置
+        model_adapter: 模型适配器
+        log_publisher: 日志发布器
+
+    Returns:
+        dict: 质检结果
+    """
+    # 注意：QALoopHandler 是异步的，但我们在同步上下文中
+    # 这里我们需要使用同步方式调用
+
+    # 简化版本：直接调用 breakdown_aligner，不做循环重试
+    from app.ai.skills.breakdown_aligner_skill import BreakdownAlignerSkill
+    import asyncio
+
+    try:
+        # 格式化章节数据
+        chapters_data = [
+            {
+                "number": ch.chapter_number,
+                "title": ch.title or f"第 {ch.chapter_number} 章",
+                "content": ch.content or ""
+            }
+            for ch in chapters
+        ]
+
+        # 构建 context
+        context = {
+            "chapters": chapters_data,
+            "breakdown_data": breakdown_data,
+            "adapt_method": adapt_method,
+            "model_adapter": model_adapter
+        }
+
+        # 创建 skill 实例
+        aligner = BreakdownAlignerSkill()
+
+        # 在同步上下文中运行异步函数
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(aligner.execute(context))
+        finally:
+            loop.close()
+
+        # 发布质检结果
+        if log_publisher:
+            qa_status = result.get("qa_status", "UNKNOWN")
+            qa_score = result.get("qa_score", 0)
+
+            if qa_status == "PASS":
+                log_publisher.publish_success(
+                    task_id,
+                    f"✓ 质量检查通过！得分: {qa_score}"
+                )
+            else:
+                log_publisher.publish_warning(
+                    task_id,
+                    f"⚠ 质量检查未通过，得分: {qa_score}"
+                )
+
+        return result
+
+    except Exception as e:
+        print(f"质检执行失败: {e}")
+        if log_publisher:
+            log_publisher.publish_error(
+                task_id,
+                f"质检执行失败: {str(e)}",
+                error_code="QA_ERROR"
+            )
+
+        return {
+            "qa_status": "ERROR",
+            "qa_score": 0,
+            "qa_report": {
+                "error": str(e),
+                "status": "ERROR"
+            }
+        }
+
+
 def _parse_json_response_sync(response: str, default=None):
     """解析 JSON 响应"""
     import re
-    
+
     if default is None:
         default = []
-    
+
     try:
         # 尝试直接解析
         return json.loads(response)
     except json.JSONDecodeError:
         pass
-    
+
     # 尝试提取 JSON 代码块
     json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
     if json_match:
@@ -942,7 +1132,7 @@ def _parse_json_response_sync(response: str, default=None):
             return json.loads(json_match.group(1))
         except json.JSONDecodeError:
             pass
-    
+
     # 尝试提取任何 JSON 数组或对象
     json_match = re.search(r'(\[.*\]|\{.*\})', response, re.DOTALL)
     if json_match:
@@ -950,6 +1140,6 @@ def _parse_json_response_sync(response: str, default=None):
             return json.loads(json_match.group(1))
         except json.JSONDecodeError:
             pass
-    
+
     # 解析失败，返回默认值
     return default

@@ -1,0 +1,284 @@
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { Form, Input, Select, Button, Card, message, Space } from 'antd';
+import { SaveOutlined, ArrowLeftOutlined } from '@ant-design/icons';
+import axios from 'axios';
+import MonacoEditor from '@monaco-editor/react';
+
+const { TextArea } = Input;
+const { Option } = Select;
+
+interface SkillFormData {
+  name: string;
+  display_name: string;
+  description?: string;
+  category?: string;
+  prompt_template?: string;
+  input_schema?: any;
+  output_schema?: any;
+  model_config?: any;
+  example_input?: any;
+  example_output?: any;
+  visibility: string;
+}
+
+const SkillEditor: React.FC = () => {
+  const navigate = useNavigate();
+  const { skillId } = useParams<{ skillId: string }>();
+  const [form] = Form.useForm();
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [promptTemplate, setPromptTemplate] = useState('');
+  const [inputSchema, setInputSchema] = useState('{}');
+  const [outputSchema, setOutputSchema] = useState('{}');
+  const [modelConfig, setModelConfig] = useState('{"temperature": 0.7, "max_tokens": 2000}');
+  const [exampleInput, setExampleInput] = useState('{}');
+  const [exampleOutput, setExampleOutput] = useState('{}');
+
+  const isEditMode = skillId && skillId !== 'new';
+
+  // 加载 Skill 数据
+  useEffect(() => {
+    if (isEditMode) {
+      loadSkill();
+    }
+  }, [skillId]);
+
+  const loadSkill = async () => {
+    setLoading(true);
+    try {
+      const response = await axios.get(`/api/v1/skills/${skillId}`);
+      const skill = response.data;
+
+      form.setFieldsValue({
+        name: skill.name,
+        display_name: skill.display_name,
+        description: skill.description,
+        category: skill.category,
+        visibility: skill.visibility,
+      });
+
+      setPromptTemplate(skill.prompt_template || '');
+      setInputSchema(JSON.stringify(skill.input_schema || {}, null, 2));
+      setOutputSchema(JSON.stringify(skill.output_schema || {}, null, 2));
+      setModelConfig(JSON.stringify(skill.model_config || { temperature: 0.7, max_tokens: 2000 }, null, 2));
+      setExampleInput(JSON.stringify(skill.example_input || {}, null, 2));
+      setExampleOutput(JSON.stringify(skill.example_output || {}, null, 2));
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '加载失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 保存 Skill
+  const handleSave = async (values: any) => {
+    setSaving(true);
+    try {
+      // 解析 JSON 字段
+      const data: SkillFormData = {
+        ...values,
+        prompt_template: promptTemplate,
+        input_schema: JSON.parse(inputSchema),
+        output_schema: JSON.parse(outputSchema),
+        model_config: JSON.parse(modelConfig),
+        example_input: JSON.parse(exampleInput),
+        example_output: JSON.parse(exampleOutput),
+      };
+
+      if (isEditMode) {
+        await axios.put(`/api/v1/skills/${skillId}`, data);
+        message.success('保存成功');
+      } else {
+        await axios.post('/api/v1/skills', data);
+        message.success('创建成功');
+      }
+
+      navigate('/admin/skills');
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="p-6">
+      <Card>
+        <div className="mb-4 flex justify-between items-center">
+          <h1 className="text-2xl font-bold">
+            {isEditMode ? '编辑 Skill' : '新建 Skill'}
+          </h1>
+          <Button
+            icon={<ArrowLeftOutlined />}
+            onClick={() => navigate('/admin/skills')}
+          >
+            返回
+          </Button>
+        </div>
+
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={handleSave}
+          initialValues={{
+            visibility: 'public',
+            category: 'breakdown',
+          }}
+        >
+          <Form.Item
+            label="Skill 名称"
+            name="name"
+            rules={[{ required: true, message: '请输入 Skill 名称' }]}
+            extra="唯一标识，只能包含字母、数字和下划线"
+          >
+            <Input placeholder="例如：conflict_extraction" disabled={isEditMode} />
+          </Form.Item>
+
+          <Form.Item
+            label="显示名称"
+            name="display_name"
+            rules={[{ required: true, message: '请输入显示名称' }]}
+          >
+            <Input placeholder="例如：冲突提取" />
+          </Form.Item>
+
+          <Form.Item label="描述" name="description">
+            <TextArea rows={2} placeholder="简要描述此 Skill 的功能" />
+          </Form.Item>
+
+          <Form.Item label="分类" name="category">
+            <Select>
+              <Option value="breakdown">拆解</Option>
+              <Option value="qa">质检</Option>
+              <Option value="script">剧本</Option>
+            </Select>
+          </Form.Item>
+
+          <Form.Item label="可见性" name="visibility">
+            <Select>
+              <Option value="public">公共</Option>
+              <Option value="private">私有</Option>
+            </Select>
+          </Form.Item>
+
+          <Form.Item label="Prompt 模板" required>
+            <div className="border rounded">
+              <MonacoEditor
+                height="300px"
+                language="markdown"
+                value={promptTemplate}
+                onChange={(value) => setPromptTemplate(value || '')}
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 14,
+                  wordWrap: 'on',
+                }}
+              />
+            </div>
+            <div className="text-xs text-slate-500 mt-1">
+              使用 {'{变量名}'} 引用输入参数，例如：{'{chapters_text}'}
+            </div>
+          </Form.Item>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Form.Item label="输入 Schema (JSON)">
+              <div className="border rounded">
+                <MonacoEditor
+                  height="200px"
+                  language="json"
+                  value={inputSchema}
+                  onChange={(value) => setInputSchema(value || '{}')}
+                  options={{
+                    minimap: { enabled: false },
+                    fontSize: 14,
+                  }}
+                />
+              </div>
+            </Form.Item>
+
+            <Form.Item label="输出 Schema (JSON)">
+              <div className="border rounded">
+                <MonacoEditor
+                  height="200px"
+                  language="json"
+                  value={outputSchema}
+                  onChange={(value) => setOutputSchema(value || '{}')}
+                  options={{
+                    minimap: { enabled: false },
+                    fontSize: 14,
+                  }}
+                />
+              </div>
+            </Form.Item>
+          </div>
+
+          <Form.Item label="模型配置 (JSON)">
+            <div className="border rounded">
+              <MonacoEditor
+                height="150px"
+                language="json"
+                value={modelConfig}
+                onChange={(value) => setModelConfig(value || '{}')}
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 14,
+                }}
+              />
+            </div>
+          </Form.Item>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Form.Item label="示例输入 (JSON)">
+              <div className="border rounded">
+                <MonacoEditor
+                  height="200px"
+                  language="json"
+                  value={exampleInput}
+                  onChange={(value) => setExampleInput(value || '{}')}
+                  options={{
+                    minimap: { enabled: false },
+                    fontSize: 14,
+                  }}
+                />
+              </div>
+            </Form.Item>
+
+            <Form.Item label="示例输出 (JSON)">
+              <div className="border rounded">
+                <MonacoEditor
+                  height="200px"
+                  language="json"
+                  value={exampleOutput}
+                  onChange={(value) => setExampleOutput(value || '{}')}
+                  options={{
+                    minimap: { enabled: false },
+                    fontSize: 14,
+                  }}
+                />
+              </div>
+            </Form.Item>
+          </div>
+
+          <Form.Item>
+            <Space>
+              <Button
+                type="primary"
+                htmlType="submit"
+                icon={<SaveOutlined />}
+                loading={saving}
+              >
+                保存
+              </Button>
+              <Button onClick={() => navigate('/admin/skills')}>
+                取消
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Card>
+    </div>
+  );
+};
+
+export default SkillEditor;

@@ -216,7 +216,7 @@ class RedisLogPublisher:
         step_name: Optional[str] = None
     ) -> None:
         """发布进度更新消息
-        
+
         Args:
             task_id: 任务 ID
             progress: 进度百分比（0-100）
@@ -229,7 +229,7 @@ class RedisLogPublisher:
             "current_step": current_step,
             "total_steps": total_steps
         }
-        
+
         message = self._build_message(
             message_type="progress",
             task_id=task_id,
@@ -238,7 +238,112 @@ class RedisLogPublisher:
             metadata=metadata
         )
         self.publish_log(task_id, message)
-    
+
+    def publish_qa_check(
+        self,
+        task_id: str,
+        dimension: str,
+        status: str,
+        score: Optional[int] = None,
+        issues: Optional[list] = None,
+        suggestions: Optional[list] = None
+    ) -> None:
+        """发布质检维度检查结果
+
+        Args:
+            task_id: 任务 ID
+            dimension: 维度名称
+            status: 检查状态（pass/fail）
+            score: 得分（可选）
+            issues: 问题列表（可选）
+            suggestions: 建议列表（可选）
+        """
+        metadata = {
+            "dimension": dimension,
+            "status": status
+        }
+
+        if score is not None:
+            metadata["score"] = score
+
+        if issues:
+            metadata["issues"] = issues
+
+        if suggestions:
+            metadata["suggestions"] = suggestions
+
+        message = self._build_message(
+            message_type="qa_check",
+            task_id=task_id,
+            step_name="质量检查",
+            content=f"{dimension} - {status}",
+            metadata=metadata
+        )
+        self.publish_log(task_id, message)
+
+    def publish_info(
+        self,
+        task_id: str,
+        info_message: str,
+        step_name: Optional[str] = None
+    ) -> None:
+        """发布信息消息
+
+        Args:
+            task_id: 任务 ID
+            info_message: 信息内容
+            step_name: 步骤名称（可选）
+        """
+        message = self._build_message(
+            message_type="info",
+            task_id=task_id,
+            step_name=step_name,
+            content=info_message
+        )
+        self.publish_log(task_id, message)
+
+    def publish_warning(
+        self,
+        task_id: str,
+        warning_message: str,
+        step_name: Optional[str] = None
+    ) -> None:
+        """发布警告消息
+
+        Args:
+            task_id: 任务 ID
+            warning_message: 警告内容
+            step_name: 步骤名称（可选）
+        """
+        message = self._build_message(
+            message_type="warning",
+            task_id=task_id,
+            step_name=step_name,
+            content=warning_message
+        )
+        self.publish_log(task_id, message)
+
+    def publish_success(
+        self,
+        task_id: str,
+        success_message: str,
+        step_name: Optional[str] = None
+    ) -> None:
+        """发布成功消息
+
+        Args:
+            task_id: 任务 ID
+            success_message: 成功消息内容
+            step_name: 步骤名称（可选）
+        """
+        message = self._build_message(
+            message_type="success",
+            task_id=task_id,
+            step_name=step_name,
+            content=success_message
+        )
+        self.publish_log(task_id, message)
+
     def close(self) -> None:
         """关闭 Redis 连接"""
         if self._client:

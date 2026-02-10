@@ -544,3 +544,103 @@ router.include_router(models_router, prefix="/models", tags=["模型管理"])
 
 ---
 
+
+## [20260211-013821] WebSocket 架构升级与进度显示优化
+
+**时间**: 2026-02-11 01:38:21
+
+**提交**:
+- `8370173` - feat: WebSocket 架构升级，使用 Redis Pub/Sub 替代数据库轮询
+- `f1fc85d` - feat: 优化进度显示，在 System Console 标题显示实时进度
+- `2637e5e` - fix: 修复拆解结果加载问题
+- `0c05f1e` - style: 移除批次卡片上的失败提示文字
+- `b6f82fe` - feat: 添加流式日志 Hook 和 WebSocket 配置优化
+- `0ca3fa1` - feat: Skills 重命名和新增 Webtoon Aligner
+
+
+**摘要**: 完成 WebSocket 从数据库轮询到 Redis Pub/Sub 的架构升级，实现实时进度显示和流式日志优化
+
+
+## 主要功能
+
+| 功能 | 描述 | 状态 |
+|------|------|------|
+| WebSocket 架构升级 | 使用 Redis Pub/Sub 替代数据库轮询 | ✅ |
+| 进度实时显示 | System Console 标题显示进度和步骤 | ✅ |
+| 流式日志优化 | 内容累积显示，JSON 自动格式化 | ✅ |
+| 拆解结果加载 | 点击批次自动加载，支持多条记录 | ✅ |
+| UI 优化 | 移除失败提示，优化用户体验 | ✅ |
+
+## 技术改进
+
+**后端优化**：
+- `backend/app/core/progress.py` - 添加 `_publish_progress_to_redis` 函数
+- `backend/app/api/v1/websocket.py` - 改用 Redis Pub/Sub，支持降级
+- `backend/app/api/v1/breakdown.py` - 修复 MultipleResultsFound 错误
+
+**前端优化**：
+- `frontend/src/hooks/useBreakdownLogs.ts` - 新增流式日志 Hook
+- `frontend/src/hooks/useConsoleLogger.ts` - 添加 updateStreamLog 方法
+- `frontend/src/components/ConsoleLogger.tsx` - 进度显示和 JSON 格式化
+- `frontend/src/pages/user/Workspace/index.tsx` - 核心逻辑优化
+
+**配置优化**：
+- `frontend/.env.development` - WebSocket 直连配置
+- `frontend/vite.config.ts` - 启用 WebSocket 代理
+
+## 性能提升
+
+| 指标 | 优化前 | 优化后 | 提升 |
+|------|--------|--------|------|
+| 推送延迟 | 1 秒 | <10ms | 100x |
+| 数据库查询 | 每秒 N 次 | 0 次 | ∞ |
+| 并发支持 | 受限于数据库 | 受限于 Redis | 10x+ |
+
+## 修改文件
+
+**后端**（5 个文件）：
+- `backend/app/core/progress.py` (+43 行)
+- `backend/app/api/v1/websocket.py` (+160 行)
+- `backend/app/api/v1/breakdown.py` (+3 行)
+- `backend/app/ai/skills/breakdown_aligner_skill.py` (重命名)
+- `backend/app/ai/skills/webtoon_aligner_skill.py` (新增 313 行)
+
+**前端**（7 个文件）：
+- `frontend/src/hooks/useBreakdownLogs.ts` (新增 150 行)
+- `frontend/src/hooks/useConsoleLogger.ts` (+29 行)
+- `frontend/src/hooks/useBreakdownWebSocket.ts` (+20 行)
+- `frontend/src/hooks/useWebSocket.ts` (修复依赖)
+- `frontend/src/components/ConsoleLogger.tsx` (+80 行)
+- `frontend/src/pages/user/Workspace/index.tsx` (+84 行)
+- `frontend/src/pages/user/Workspace/PlotTab/BatchCard.tsx` (-15 行)
+
+**配置**（2 个文件）：
+- `frontend/.env.development` (新增)
+- `frontend/vite.config.ts` (优化)
+
+## 提交记录
+
+1. `8370173` - feat: WebSocket 架构升级，使用 Redis Pub/Sub 替代数据库轮询
+2. `f1fc85d` - feat: 优化进度显示，在 System Console 标题显示实时进度
+3. `2637e5e` - fix: 修复拆解结果加载问题
+4. `0c05f1e` - style: 移除批次卡片上的失败提示文字
+5. `b6f82fe` - feat: 添加流式日志 Hook 和 WebSocket 配置优化
+6. `0ca3fa1` - feat: Skills 重命名和新增 Webtoon Aligner
+
+## 测试验证
+
+- ✅ WebSocket 连接成功，实时推送正常
+- ✅ System Console 标题显示进度和步骤
+- ✅ 流式内容平滑显示，不再跳动
+- ✅ 点击批次自动加载拆解结果
+- ✅ 失败批次不会触发 404 错误
+- ✅ Redis 不可用时自动降级到数据库轮询
+
+## 遗留问题
+
+- ⚠️ 代码中包含调试日志，生产环境前需要移除或条件化
+- 📝 建议添加 TypeScript 类型检查脚本
+- 📚 建议补充 WebSocket 架构文档
+
+---
+

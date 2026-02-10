@@ -15,6 +15,9 @@ import AIConfiguration from './pages/admin/AIConfiguration';
 import AdminDashboard from './pages/admin/Dashboard';
 import UserManagement from './pages/admin/UserManagement';
 import ModelManagement from './pages/admin/ModelManagement';
+import SkillsPage from './pages/admin/Skills';
+import SkillEditor from './pages/admin/Skills/SkillEditor';
+import SkillTester from './pages/admin/Skills/SkillTester';
 import { UserTier } from './types';
 
 // 加载状态组件
@@ -71,6 +74,9 @@ const AppContent: React.FC = () => {
             <Route path="/admin/users" element={<UserManagement />} />
             <Route path="/admin/configurations" element={<AIConfiguration />} />
             <Route path="/admin/models" element={<ModelManagement />} />
+            <Route path="/admin/skills" element={<SkillsPage />} />
+            <Route path="/admin/skills/:skillId/edit" element={<SkillEditor />} />
+            <Route path="/admin/skills/:skillId/test" element={<SkillTester />} />
           </Route>
         </Route>
       </Route>

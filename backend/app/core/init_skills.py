@@ -106,6 +106,30 @@ async def init_builtin_skills(db: AsyncSession):
             "visibility": "public",
             "is_builtin": True,
             "is_active": True
+        },
+        {
+            "name": "breakdown_aligner",
+            "display_name": "拆解质检",
+            "description": "审核剧情拆解结果是否符合改编方法论要求",
+            "category": "qa",
+            "module_path": "app.ai.skills.breakdown_aligner_skill",
+            "class_name": "BreakdownAlignerSkill",
+            "owner_id": SYSTEM_OWNER_ID,
+            "visibility": "public",
+            "is_builtin": True,
+            "is_active": True
+        },
+        {
+            "name": "webtoon_aligner",
+            "display_name": "剧本质检",
+            "description": "检查网文改编漫剧内容的一致性和质量",
+            "category": "qa",
+            "module_path": "app.ai.skills.webtoon_aligner_skill",
+            "class_name": "WebtoonAlignerSkill",
+            "owner_id": SYSTEM_OWNER_ID,
+            "visibility": "public",
+            "is_builtin": True,
+            "is_active": True
         }
     ]
 

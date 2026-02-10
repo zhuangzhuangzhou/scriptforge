@@ -79,9 +79,14 @@ backend/
 - 业务逻辑异常应尽早在 Service 层捕获并转化为 HTTP 状态码。
 
 ## 5. AI 模块规范
+详见 [ai-skills.md](ai-skills.md)
 - **位置**: `app/ai/`
 - **架构**: 复杂的 AI 流程应封装为 **Skill** 或 **LangGraph 工作流**。
 - **调用**: API 层通过异步方式调用 AI 服务，长耗时操作应放入 Celery 任务队列。
+- **Skill 开发**: 文件名必须以 `_skill.py` 结尾才能被自动加载
+- **命名规范**: 类名使用 `PascalCase` + `Skill` 后缀
+- **错误处理**: 必须实现 JSON 解析容错逻辑
+- **温度参数**: 质检类使用 0.3，创作类使用 0.7
 
 ## 6. API 测试规范 (CRITICAL)
 

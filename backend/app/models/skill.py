@@ -32,8 +32,13 @@ class Skill(Base):
     # 模板配置 (用户可编辑Skill)
     is_template_based = Column(Boolean, default=False)  # 是否为模板驱动的Skill
     prompt_template = Column(Text)  # Prompt模板
-    output_schema = Column(JSON)  # 输出格式定义
-    input_variables = Column(JSON)  # 输入变量列表
+    input_schema = Column(JSON)  # 输入Schema定义 {"param_name": {"type": "string", "description": "..."}}
+    output_schema = Column(JSON)  # 输出Schema定义
+    model_config = Column(JSON)  # 模型配置 {"temperature": 0.7, "max_tokens": 2000}
+
+    # 示例数据（用于测试）
+    example_input = Column(JSON)  # 示例输入数据
+    example_output = Column(JSON)  # 示例输出数据
 
     # 元数据
     version = Column(String(20), default="1.0.0")
