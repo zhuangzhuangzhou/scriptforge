@@ -113,7 +113,19 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
   };
 
   useEffect(() => {
-    fetchProjects();
+    let isMounted = true;
+    
+    const loadProjects = async () => {
+      if (isMounted) {
+        await fetchProjects();
+      }
+    };
+    
+    loadProjects();
+    
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const handleCreateProject = () => {

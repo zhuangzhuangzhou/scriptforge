@@ -11,8 +11,13 @@ class BaseModelAdapter(ABC):
         self.config = kwargs
 
     @abstractmethod
-    def generate(self, prompt: str, **kwargs) -> str:
-        """生成文本"""
+    def generate(self, prompt: str, return_usage: bool = False, **kwargs) -> Any:
+        """
+        生成文本
+        :param prompt: 提示词
+        :param return_usage: 是否返回使用量信息
+        :return: 字符串（默认）或包含内容和使用量的字典
+        """
         pass
 
     @abstractmethod

@@ -7,6 +7,50 @@
 3. **可测试** - 编写可测试的代码
 4. **文档化** - 关键逻辑添加注释
 
+## ⚠️ 工作目录规范（重要）
+
+### 核心规则
+
+**所有 AI 编程工作必须在项目根目录执行，严禁切换到子目录**
+
+```bash
+# ✅ 正确做法
+pwd  # 确认在 /Users/zhouqiang/Data/jim
+vim backend/app/main.py
+vim frontend/src/App.tsx
+./.trellis/scripts/get-context.sh
+
+# ❌ 错误做法
+cd backend          # 禁止！
+cd frontend         # 禁止！
+cd backend/app      # 禁止！
+```
+
+### 为什么需要这个规则？
+
+1. **脚本依赖**: `.trellis/scripts/` 中的所有脚本都假设从根目录执行
+2. **路径一致性**: 避免相对路径混乱和文件定位错误
+3. **防止嵌套**: 曾出现 `backend/backend/` 错误嵌套结构的问题
+4. **工作流稳定**: 确保所有自动化工具能正常工作
+
+### 正确的文件操作方式
+
+| 操作 | 正确做法 | 错误做法 |
+|------|---------|---------|
+| 读取后端文件 | `Read backend/app/main.py` | `cd backend && Read app/main.py` |
+| 编辑前端文件 | `Edit frontend/src/App.tsx` | `cd frontend/src && Edit App.tsx` |
+| 执行脚本 | `./.trellis/scripts/task.sh` | `cd .trellis && ./scripts/task.sh` |
+| 运行测试 | `pytest backend/tests/` | `cd backend && pytest tests/` |
+
+### 历史问题案例
+
+**问题描述**: AI 在工作中频繁使用 `cd` 切换到 `/frontend` 或 `/backend`，导致：
+- `.trellis/scripts/` 脚本找不到（相对路径错误）
+- 创建了错误的嵌套目录 `backend/backend/`
+- 工作流中断，需要手动修复目录结构
+
+**解决方案**: 建立此规范，所有操作使用相对于根目录的路径
+
 ## Git 提交规范
 
 ```

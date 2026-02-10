@@ -349,9 +349,11 @@ async def test_credential(
     _: None = Depends(check_admin)
 ):
     """测试凭证有效性
-
-    注意：此端点为基础实现，实际测试逻辑需要根据提供商类型调用对应的 API
+    
+    根据提供商类型调用对应的 API 进行真实测试
     """
+    from app.utils.credential_tester import test_credential as test_cred
+    
     # 查询凭证及其提供商
     result = await db.execute(
         select(AIModelCredential, AIModelProvider)
@@ -365,11 +367,18 @@ async def test_credential(
 
     credential, provider = row
 
-    # TODO: 根据提供商类型调用对应的 API 进行测试
-    # 这里返回一个占位符响应
+    # 调用测试函数
+    success, message = await test_cred(
+        provider_type=provider.provider_type,
+        api_key=credential.api_key,
+        api_endpoint=provider.api_endpoint,
+        api_secret=credential.api_secret
+    )
+    
     return {
-        "success": True,
-        "message": "凭证测试功能待实现，需要根据提供商类型调用对应的 API",
+        "success": success,
+        "message": message,
         "provider_type": provider.provider_type,
+        "provider_name": provider.display_name,
         "credential_name": credential.credential_name
     }

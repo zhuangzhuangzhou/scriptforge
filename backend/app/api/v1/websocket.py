@@ -301,3 +301,168 @@ async def websocket_batch_simple(websocket: WebSocket, project_id: str):
         pass
     except Exception as e:
         print(f"批量进度WebSocket错误: {e}")
+
+
+@router.websocket("/ws/breakdown-logs/{task_id}")
+async def websocket_breakdown_logs(websocket: WebSocket, task_id: str):
+    """WebSocket端点：实时推送拆解日志
+    
+    功能：
+    - 订阅 Redis 频道 breakdown:logs:{task_id}
+    - 接收并转发所有日志消息到前端
+    - 检测任务完成状态并自动关闭连接
+    - 正确处理 WebSocket 断开和异常
+    
+    消息类型：
+    - step_start: 步骤开始
+    - stream_chunk: 流式内容片段
+    - step_end: 步骤结束
+    - error: 错误信息
+    - progress: 进度更新
+    
+    Requirements: 3.4.1, 3.4.3
+    """
+    await websocket.accept()
+    
+    redis_client = None
+    pubsub = None
+    
+    try:
+        # 获取 Redis 客户端
+        redis_client = await get_redis()
+        
+        if not redis_client:
+            # Redis 不可用
+            await websocket.send_json({
+                "type": "error",
+                "content": "Redis 服务不可用，无法提供实时日志",
+                "code": "REDIS_UNAVAILABLE"
+            })
+            await websocket.close()
+            return
+        
+        # 订阅 Redis 频道
+        channel_name = f"breakdown:logs:{task_id}"
+        pubsub = redis_client.pubsub()
+        await pubsub.subscribe(channel_name)
+        
+        # 发送连接成功消息
+        await websocket.send_json({
+            "type": "connected",
+            "task_id": task_id,
+            "message": f"已连接到任务日志流: {task_id}"
+        })
+        
+        # 主循环：接收 Redis 消息并转发
+        while True:
+            try:
+                # 从 Redis 获取消息（带超时）
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                
+                if message and message['type'] == 'message':
+                    try:
+                        # 解析消息
+                        data = json.loads(message['data'])
+                        
+                        # 转发到前端
+                        await websocket.send_json(data)
+                        
+                        # 检测任务完成状态
+                        # 如果收到 step_end 消息且 metadata 中包含 final=True，或者收到 error 消息
+                        if data.get('type') == 'step_end':
+                            metadata = data.get('metadata', {})
+                            if metadata.get('final', False):
+                                # 任务完成，发送完成消息后关闭
+                                await websocket.send_json({
+                                    "type": "task_complete",
+                                    "task_id": task_id,
+                                    "message": "任务执行完成"
+                                })
+                                break
+                        
+                        elif data.get('type') == 'error':
+                            # 发生错误，检查是否是致命错误
+                            metadata = data.get('metadata', {})
+                            if not metadata.get('retryable', True):
+                                # 不可重试的错误，关闭连接
+                                await websocket.send_json({
+                                    "type": "task_failed",
+                                    "task_id": task_id,
+                                    "message": "任务执行失败"
+                                })
+                                break
+                    
+                    except json.JSONDecodeError as e:
+                        # JSON 解析失败，记录但不中断
+                        print(f"[WebSocket] JSON 解析失败: {e}")
+                        continue
+                
+                # 定期检查任务状态（每秒一次）
+                # 这是为了处理任务在 WebSocket 连接之前就已经完成的情况
+                async with AsyncSessionLocal() as db:
+                    result = await db.execute(select(AITask).where(AITask.id == task_id))
+                    task = result.scalar_one_or_none()
+                    
+                    if task:
+                        if task.status in ["completed", "failed", "canceled"]:
+                            # 任务已结束，发送最终状态并关闭
+                            await websocket.send_json({
+                                "type": "task_complete" if task.status == "completed" else "task_failed",
+                                "task_id": task_id,
+                                "status": task.status,
+                                "message": f"任务已{task.status}"
+                            })
+                            break
+                
+                # 短暂等待，避免过度轮询
+                await asyncio.sleep(0.1)
+            
+            except asyncio.TimeoutError:
+                # 超时是正常的，继续循环
+                continue
+            
+            except WebSocketDisconnect:
+                # 客户端断开连接
+                print(f"[WebSocket] 客户端断开连接: {task_id}")
+                break
+            
+            except Exception as e:
+                # 其他异常
+                print(f"[WebSocket] 处理消息时出错: {e}")
+                try:
+                    await websocket.send_json({
+                        "type": "error",
+                        "content": f"内部错误: {str(e)}",
+                        "code": "INTERNAL_ERROR"
+                    })
+                except:
+                    pass
+                break
+    
+    except WebSocketDisconnect:
+        print(f"[WebSocket] 连接断开: {task_id}")
+    
+    except Exception as e:
+        print(f"[WebSocket] 错误: {e}")
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "content": f"连接错误: {str(e)}",
+                "code": "CONNECTION_ERROR"
+            })
+        except:
+            pass
+    
+    finally:
+        # 清理资源
+        if pubsub:
+            try:
+                await pubsub.unsubscribe(channel_name)
+                await pubsub.close()
+            except Exception as e:
+                print(f"[WebSocket] 清理 pubsub 失败: {e}")
+        
+        try:
+            await websocket.close()
+        except:
+            pass

@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Hash, Type, CheckCircle2, Activity, BookOpen, LayoutTemplate, FileEdit,
   Sliders, BrainCircuit, Cpu, Database, Upload, Loader2, SplitSquareVertical,
   RefreshCw, Trash2, Lightbulb, BookText
 } from 'lucide-react';
+import { modelsApi } from '../../../../services/api';
 
 interface ConfigTabProps {
   project: any;
@@ -51,6 +52,24 @@ const ConfigTab: React.FC<ConfigTabProps> = ({
   onSplit,
   getStatusText
 }) => {
+  const [models, setModels] = useState<any[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+
+  useEffect(() => {
+    const fetchModels = async () => {
+      setLoadingModels(true);
+      try {
+        const response = await modelsApi.getModels();
+        setModels(response.data || []);
+      } catch (error) {
+        console.error('Failed to fetch models:', error);
+      } finally {
+        setLoadingModels(false);
+      }
+    };
+    fetchModels();
+  }, []);
+
   return (
     <div className="flex flex-col lg:flex-row gap-6 h-full animate-in fade-in slide-in-from-bottom-4 duration-300">
       {/* 左侧内容 - 68% */}
@@ -154,14 +173,42 @@ const ConfigTab: React.FC<ConfigTabProps> = ({
             <h3 className="text-xs font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3 uppercase tracking-wider"><BrainCircuit size={14} className="text-purple-400"/> 剧情拆解模型</h3>
             <div className="space-y-2">
               <label className="text-[10px] text-slate-400 uppercase font-bold">Breakdown Model</label>
-              <select className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-cyan-500 outline-none"><option>DeepNarrative-Pro</option><option>GPT-4o</option></select>
+              <select
+                value={formData.breakdown_model}
+                onChange={(e) => onFormChange('breakdown_model', e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-cyan-500 outline-none"
+              >
+                {loadingModels ? (
+                  <option>加载中...</option>
+                ) : (
+                  models.map(model => (
+                    <option key={model.id} value={model.id}>
+                      {model.display_name} ({model.pricing?.input_credits_per_1k || 1} 积分/1k)
+                    </option>
+                  ))
+                )}
+              </select>
             </div>
           </div>
           <div className="bg-slate-900/50 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-4">
             <h3 className="text-xs font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-3 uppercase tracking-wider"><Cpu size={14} className="text-indigo-400"/> 剧集生成模型</h3>
             <div className="space-y-2">
               <label className="text-[10px] text-slate-400 uppercase font-bold">Script Model</label>
-              <select className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-cyan-500 outline-none"><option>Gemini-1.5-Pro</option><option>GPT-4o</option></select>
+              <select
+                value={formData.script_model}
+                onChange={(e) => onFormChange('script_model', e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-cyan-500 outline-none"
+              >
+                {loadingModels ? (
+                  <option>加载中...</option>
+                ) : (
+                  models.map(model => (
+                    <option key={model.id} value={model.id}>
+                      {model.display_name} ({model.pricing?.output_credits_per_1k || 1} 积分/1k)
+                    </option>
+                  ))
+                )}
+              </select>
             </div>
           </div>
         </div>

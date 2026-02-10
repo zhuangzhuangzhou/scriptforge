@@ -26,6 +26,10 @@ class Project(Base):
     batch_size = Column(Integer, nullable=False, default=5)
     chapter_split_rule = Column(JSONB)
 
+    # AI 模型配置
+    breakdown_model_id = Column(UUID(as_uuid=True), ForeignKey("ai_models.id", ondelete="SET NULL"), nullable=True)  # 剧情拆解模型
+    script_model_id = Column(UUID(as_uuid=True), ForeignKey("ai_models.id", ondelete="SET NULL"), nullable=True)  # 剧本生成模型
+
     # 统计信息
     total_chapters = Column(Integer, default=0)
     total_words = Column(Integer, default=0)

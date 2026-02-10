@@ -519,10 +519,54 @@ class PipelineExecutor:
         return "\n\n".join(parts)
 
     async def _generate(self, prompt: str) -> str:
-        result = self.model_adapter.generate(prompt)
-        if inspect.isawaitable(result):
-            return await result
-        return result
+        # 调用生成，请求返回使用量
+        gen_result = self.model_adapter.generate(prompt, return_usage=True)
+        if inspect.isawaitable(gen_result):
+            gen_result = await gen_result
+
+        # 如果返回了使用量信息，则进行计费
+        if isinstance(gen_result, dict) and "usage" in gen_result:
+            content = gen_result["content"]
+            usage = gen_result["usage"]
+
+            # 计费逻辑
+            if self.user_id:
+                try:
+                    from app.core.credits import CreditsService
+                    from app.models.ai_model import AIModel
+
+                    credits_service = CreditsService(self.db)
+
+                    # 获取 model_id (通过 model_name 查找)
+                    model_name = getattr(self.model_adapter, "model_name", None)
+                    model_id = None
+                    if model_name:
+                        stmt = select(AIModel.id).where(AIModel.model_key == model_name)
+                        model_res = await self.db.execute(stmt)
+                        model_id = model_res.scalar_one_or_none()
+
+                    # 计算积分
+                    amount = await credits_service.calculate_model_credits(
+                        input_tokens=usage.get("input_tokens", 0),
+                        output_tokens=usage.get("output_tokens", 0),
+                        model_id=str(model_id) if model_id else None
+                    )
+
+                    # 扣减积分
+                    if amount > 0:
+                        await credits_service.consume_credits(
+                            user_id=str(self.user_id),
+                            amount=amount,
+                            description=f"AI生成消耗 ({model_name or '未知模型'})",
+                            reference_id=self.task_config.get("batch_id")
+                        )
+                except Exception as e:
+                    # 计费失败不应中断主流程，实际生产中应记录日志
+                    pass
+
+            return content
+
+        return gen_result
 
     def _parse_validator_response(self, response: str) -> Dict[str, Any]:
         # 尝试解析 JSON

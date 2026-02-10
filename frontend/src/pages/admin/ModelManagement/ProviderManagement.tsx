@@ -7,6 +7,7 @@ import { GlassCard } from '../../../components/ui/GlassCard';
 import { GlassInput } from '../../../components/ui/GlassInput';
 import { GlassSelect } from '../../../components/ui/GlassSelect';
 import { providerApi, Provider, ProviderCreate, ProviderUpdate } from '../../../services/modelManagementApi';
+import { extractArrayData } from '../../../utils/apiHelpers';
 
 const { TextArea } = Input;
 
@@ -24,7 +25,7 @@ const ProviderManagement: React.FC = () => {
     setLoading(true);
     try {
       const response = await providerApi.getProviders();
-      setProviders(response.data);
+      setProviders(extractArrayData<Provider>(response.data));
     } catch (error) {
       console.error('获取提供商列表失败:', error);
       message.error('获取提供商列表失败');
@@ -287,6 +288,8 @@ const ProviderManagement: React.FC = () => {
               options={[
                 { label: 'OpenAI Compatible', value: 'openai_compatible' },
                 { label: 'Anthropic', value: 'anthropic' },
+                { label: 'Google Gemini', value: 'gemini' },
+                { label: 'Azure OpenAI', value: 'azure_openai' },
                 { label: 'Custom', value: 'custom' },
               ]}
             />

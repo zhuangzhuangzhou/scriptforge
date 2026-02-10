@@ -257,12 +257,12 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             setProject(res.data);
             setFormData({
                 name: res.data.name || '',
-                novel_type: res.data.type || '悬疑/惊悚',
+                novel_type: res.data.novel_type || '悬疑/惊悚',
                 description: res.data.description || '',
                 batch_size: res.data.batch_size || 5,
                 chapter_split_rule: 'auto',
-                breakdown_model: 'DeepNarrative-Pro',
-                script_model: 'Gemini-1.5-Pro'
+                breakdown_model: res.data.breakdown_model_id || '',  // 使用后端返回的模型 ID
+                script_model: res.data.script_model_id || ''  // 使用后端返回的模型 ID
             });
             setTotalChapters(res.data.total_chapters || 0);
         } catch (err) {
@@ -303,7 +303,9 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 name: formData.name,
                 novel_type: formData.novel_type,
                 description: formData.description,
-                batch_size: formData.batch_size
+                batch_size: formData.batch_size,
+                breakdown_model_id: formData.breakdown_model,  // 传递模型 ID
+                script_model_id: formData.script_model  // 传递模型 ID
             });
             message.success('保存成功');
             fetchProject();
@@ -337,7 +339,19 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
     // 初始化加载
     useEffect(() => {
-        fetchProject();
+        let isMounted = true;
+        
+        const loadProject = async () => {
+            if (isMounted && projectId) {
+                await fetchProject();
+            }
+        };
+        
+        loadProject();
+        
+        return () => {
+            isMounted = false;
+        };
     }, [projectId]);
 
     // 搜索监听
@@ -348,17 +362,14 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         }
     }, [keyword]);
 
-    // 监听 Tab 切换加载数据
+    // 监听 Tab 切换加载数据（合并后的唯一版本）
     useEffect(() => {
         if (activeTab === 'SOURCE') {
             fetchChapters();
         }
         if (activeTab === 'PLOT') {
-            // 直接获取批次列表，分批已在启动时异步触发
-            setBatchPage(1);
-            setBatchHasMore(true);
-            setBatches([]);
-            fetchBatches(1, false);
+            // 进入 PLOT 页面时，先创建批次（幂等），再获取批次列表
+            createBatchesAndFetch();
         }
     }, [activeTab, projectId]);
 
@@ -461,18 +472,6 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         link.click();
         URL.revokeObjectURL(url);
     };
-
-    // 监听 Tab 切换加载数据
-    useEffect(() => {
-        if (activeTab === 'SOURCE') {
-            fetchChapters();
-        }
-        if (activeTab === 'PLOT') {
-            // 进入 PLOT 页面时，先创建批次（幂等），再获取批次列表
-            createBatchesAndFetch();
-        }
-    }, [activeTab, projectId]);
-
 
     // 获取拆解结果
     const fetchBreakdownResults = async (batchId: string) => {
@@ -1357,11 +1356,12 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                         backgroundColor: '#0f172a',
                         borderBottom: '1px solid #1e293b',
                         padding: '16px 24px',
-                        borderRadius: '16px 16px 0 0'
+                        borderRadius: '16px 16px 0 0',
+                        marginBottom: '0'
                     },
                     body: {
                         backgroundColor: '#0f172a',
-                        padding: '20px 24px'
+                        padding: '24px'
                     },
                     footer: {
                         backgroundColor: '#0f172a',
@@ -1371,23 +1371,13 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     }
                 }}
                 okButtonProps={{
-                    style: {
-                        backgroundColor: '#0891b2',
-                        borderColor: '#0891b2',
-                        fontWeight: 600,
-                        boxShadow: '0 0 20px rgba(8, 145, 178, 0.3)'
-                    }
+                    className: "bg-cyan-600 hover:bg-cyan-500 border-cyan-600 hover:border-cyan-500 text-white font-semibold shadow-lg shadow-cyan-500/20"
                 }}
                 cancelButtonProps={{
-                    style: {
-                        backgroundColor: '#1e293b',
-                        borderColor: '#334155',
-                        color: '#94a3b8',
-                        fontWeight: 500
-                    }
+                    className: "bg-slate-800 hover:bg-slate-700 border-slate-700 hover:border-slate-600 text-slate-300 hover:text-white"
                 }}
             >
-                <div className="space-y-4">
+                <div className="space-y-5">
                     <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3 flex gap-3 items-start">
                         <div className="mt-0.5">
                             <Sparkles size={16} className="text-blue-400" />

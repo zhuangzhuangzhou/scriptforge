@@ -234,3 +234,24 @@ input:-webkit-autofill:active {
 ::-webkit-scrollbar-thumb:hover {
   background: #475569; /* slate-600 */
 }
+
+/* Custom Scrollbar Class for Components */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(30, 41, 59, 0.3); /* slate-800 with opacity */
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #475569; /* slate-600 */
+  border-radius: 3px;
+  transition: background 0.2s;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #64748b; /* slate-500 */
+}

@@ -29,10 +29,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let isMounted = true;
+    
     const initAuth = async () => {
       if (USE_MOCK) {
-        setUser(mockUser as any);
-        setLoading(false);
+        if (isMounted) {
+          setUser(mockUser as any);
+          setLoading(false);
+        }
         return;
       }
 
@@ -40,15 +44,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (storedToken) {
         try {
           const response = await api.get('/auth/me');
-          setUser(response.data);
+          if (isMounted) {
+            setUser(response.data);
+          }
         } catch {
-          localStorage.removeItem('token');
-          localStorage.removeItem('username');
+          if (isMounted) {
+            localStorage.removeItem('token');
+            localStorage.removeItem('username');
+          }
         }
       }
-      setLoading(false);
+      if (isMounted) {
+        setLoading(false);
+      }
     };
+    
     initAuth();
+    
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const login = async (username: string, password: string) => {
