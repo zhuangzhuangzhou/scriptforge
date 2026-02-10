@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 import uuid
 
 from app.core.database import get_db
-from app.core.auth import get_current_user
+from app.api.v1.auth import get_current_user
 from app.models.skill import Skill
 from app.models.user import User
 
