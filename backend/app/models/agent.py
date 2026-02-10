@@ -222,3 +222,65 @@ class AgentWorkflowExecution(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SimpleAgent(Base):
+    """简化的 Agent 模型 - 用于简化工作流系统
+
+    与 AgentDefinition 的区别：
+    - 更简单的工作流定义（只支持顺序执行 Skills）
+    - 不支持复杂的条件分支和触发规则
+    - 专注于 Skill 编排，而非复杂的智能体行为
+    """
+    __tablename__ = "simple_agents"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(100), unique=True, nullable=False, index=True)
+    display_name = Column(String(255), nullable=False)
+    description = Column(Text)
+    category = Column(String(50))  # breakdown, qa, script
+
+    # 工作流定义（简化版）
+    workflow = Column(JSON, nullable=False)
+    """
+    工作流结构示例：
+    {
+        "steps": [
+            {
+                "id": "step1",
+                "skill": "conflict_extraction",
+                "inputs": {
+                    "chapters_text": "${context.chapters_text}"
+                },
+                "output_key": "conflicts",
+                "on_fail": "stop",  # stop, skip, retry
+                "max_retries": 0
+            },
+            {
+                "id": "step2",
+                "skill": "episode_planning",
+                "inputs": {
+                    "conflicts": "${step1.conflicts}",
+                    "chapters_text": "${context.chapters_text}"
+                },
+                "output_key": "episodes"
+            }
+        ]
+    }
+    """
+
+    # 状态
+    is_active = Column(Boolean, default=True)
+    is_builtin = Column(Boolean, default=False)
+
+    # 权限控制
+    visibility = Column(String(20), default='public')  # public, private
+    owner_id = Column(UUID(as_uuid=True), nullable=False)
+
+    # 元数据
+    version = Column(String(20), default="1.0.0")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<SimpleAgent {self.name}>"
