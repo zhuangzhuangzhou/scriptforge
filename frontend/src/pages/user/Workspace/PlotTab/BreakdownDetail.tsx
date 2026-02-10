@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Layers, Play, Loader2, X, Activity, Swords, Lightbulb, Clock,
-  Film, ChevronDown, Users, MapPin, Heart
+  Film, ChevronDown, Users, MapPin, Heart, Table, Grid
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Batch, PlotBreakdown, Episode } from '../../../../types';
@@ -19,6 +19,70 @@ interface EpisodeCardProps {
   isExpanded: boolean;
   onToggle: () => void;
 }
+
+// 新增：表格行组件
+interface EpisodeTableRowProps {
+  episode: Episode;
+  status: 'used' | 'unused';
+  scriptLink?: string;
+  onStatusChange?: (episodeId: number, status: 'used' | 'unused') => void;
+}
+
+const EpisodeTableRow: React.FC<EpisodeTableRowProps> = ({
+  episode,
+  status,
+  scriptLink,
+  onStatusChange
+}) => {
+  return (
+    <tr className="border-b border-slate-700/50 hover:bg-slate-800/30 transition-colors">
+      <td className="px-4 py-3 text-center">
+        <span className="text-cyan-400 font-semibold">{episode.episode_number}</span>
+      </td>
+      <td className="px-4 py-3">
+        <span className="text-slate-300 text-sm">
+          第 {episode.chapter_range[0]}-{episode.chapter_range[1]} 章
+        </span>
+      </td>
+      <td className="px-4 py-3">
+        <div className="text-sm text-slate-300 line-clamp-2">
+          {episode.main_conflict}
+        </div>
+      </td>
+      <td className="px-4 py-3">
+        <div className="text-sm text-slate-300 line-clamp-2">
+          {episode.plot_hooks && episode.plot_hooks.length > 0
+            ? episode.plot_hooks[0].hook
+            : '-'}
+        </div>
+      </td>
+      <td className="px-4 py-3 text-center">
+        <button
+          onClick={() => onStatusChange?.(episode.episode_number, status === 'used' ? 'unused' : 'used')}
+          className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+            status === 'used'
+              ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+              : 'bg-slate-600/20 text-slate-400 border border-slate-600/30'
+          }`}
+        >
+          {status === 'used' ? '已用' : '未用'}
+        </button>
+      </td>
+      <td className="px-4 py-3 text-center">
+        {scriptLink ? (
+          <a
+            href={scriptLink}
+            className="text-cyan-400 hover:text-cyan-300 text-sm underline"
+          >
+            Episode-{String(episode.episode_number).padStart(3, '0')}
+          </a>
+        ) : (
+          <span className="text-slate-500 text-sm">未生成</span>
+        )}
+      </td>
+    </tr>
+  );
+};
 
 const EpisodeCard: React.FC<EpisodeCardProps> = ({ episode, isExpanded, onToggle }) => {
   return (
@@ -205,6 +269,8 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   onStartBreakdown
 }) => {
   const [expandedEpisodes, setExpandedEpisodes] = useState<Set<number>>(new Set([1])); // 默认展开第一集
+  const [viewMode, setViewMode] = useState<'card' | 'table'>('card'); // 视图模式
+  const [episodeStatus, setEpisodeStatus] = useState<Record<number, 'used' | 'unused'>>({}); // 剧集状态
 
   const toggleEpisode = (episodeNumber: number) => {
     setExpandedEpisodes(prev => {
@@ -216,6 +282,14 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
       }
       return newSet;
     });
+  };
+
+  const handleStatusChange = (episodeId: number, status: 'used' | 'unused') => {
+    setEpisodeStatus(prev => ({
+      ...prev,
+      [episodeId]: status
+    }));
+    // TODO: 调用 API 更新状态
   };
 
   // 未选择批次
@@ -319,6 +393,35 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   if (selectedBatch.breakdown_status === 'completed' && breakdownResult) {
     return (
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {/* 视图切换按钮 */}
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold text-slate-200">拆解结果</h2>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setViewMode('card')}
+              className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-2 transition-colors ${
+                viewMode === 'card'
+                  ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                  : 'bg-slate-800/50 text-slate-400 border border-slate-700/50 hover:bg-slate-700/50'
+              }`}
+            >
+              <Grid className="w-4 h-4" />
+              卡片视图
+            </button>
+            <button
+              onClick={() => setViewMode('table')}
+              className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-2 transition-colors ${
+                viewMode === 'table'
+                  ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                  : 'bg-slate-800/50 text-slate-400 border border-slate-700/50 hover:bg-slate-700/50'
+              }`}
+            >
+              <Table className="w-4 h-4" />
+              表格视图
+            </button>
+          </div>
+        </div>
+
         {/* 一致性评分卡片 */}
         {breakdownResult.consistency_score !== undefined && breakdownResult.consistency_score !== null && (
           <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
@@ -360,16 +463,65 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
           </div>
         )}
 
-        {/* 剧集详情卡片列表 */}
+        {/* 剧集详情 - 根据视图模式切换 */}
         {breakdownResult.episodes && breakdownResult.episodes.length > 0 ? (
-          breakdownResult.episodes.map((episode) => (
-            <EpisodeCard
-              key={episode.episode_number}
-              episode={episode}
-              isExpanded={expandedEpisodes.has(episode.episode_number)}
-              onToggle={() => toggleEpisode(episode.episode_number)}
-            />
-          ))
+          viewMode === 'card' ? (
+            // 卡片视图
+            breakdownResult.episodes.map((episode) => (
+              <EpisodeCard
+                key={episode.episode_number}
+                episode={episode}
+                isExpanded={expandedEpisodes.has(episode.episode_number)}
+                onToggle={() => toggleEpisode(episode.episode_number)}
+              />
+            ))
+          ) : (
+            // 表格视图
+            <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl overflow-hidden">
+              <table className="w-full">
+                <thead className="bg-slate-900/50">
+                  <tr className="border-b border-slate-700/50">
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                      ID
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                      原文章节
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                      核心冲突
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                      情绪钩子
+                    </th>
+                    <th className="px-4 py-3 text-center text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                      状态
+                    </th>
+                    <th className="px-4 py-3 text-center text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                      对应剧本
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {breakdownResult.episodes.map((episode) => (
+                    <EpisodeTableRow
+                      key={episode.episode_number}
+                      episode={episode}
+                      status={episodeStatus[episode.episode_number] || 'unused'}
+                      scriptLink={undefined} // TODO: 从后端获取剧本链接
+                      onStatusChange={handleStatusChange}
+                    />
+                  ))}
+                </tbody>
+              </table>
+
+              {/* 表格视图提示 */}
+              <div className="px-4 py-3 bg-slate-900/30 border-t border-slate-700/50">
+                <p className="text-xs text-slate-500">
+                  💡 提示：点击状态可以切换"已用/未用"标记。生成剧本后会自动显示链接。
+                </p>
+              </div>
+            </div>
+          )
         ) : (
           /* 无剧集规划时显示传统视图 */
           <>
