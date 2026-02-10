@@ -114,6 +114,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const importPosition = 'after' as const;
 
     const [activeTab, setActiveTab] = useState<Tab>('CONFIG');
+    const [hasAutoNavigated, setHasAutoNavigated] = useState(false); // 标记是否已自动跳转
     const [showConsole, setShowConsole] = useState(false);
     const [showCopilot, setShowCopilot] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -285,6 +286,10 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 setChapters(prev => [...prev, ...newItems]);
             } else {
                 setChapters(newItems);
+                // 如果是第一页且没有选中章节，自动选择第一章
+                if (pageNum === 1 && !selectedChapter && newItems.length > 0) {
+                    setSelectedChapter(newItems[0]);
+                }
             }
             setHasMore((pageNum * 20) < (res.data.total || 0));
             setTotalChapters(res.data.total || 0);
@@ -339,6 +344,25 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     useEffect(() => {
         fetchProject();
     }, [projectId]);
+
+    // 根据项目状态自动跳转到对应标签页（仅首次加载时）
+    useEffect(() => {
+        if (!project || hasAutoNavigated) return;
+
+        // 根据项目状态决定默认标签页
+        const statusTabMap: Record<string, Tab> = {
+            'draft': 'CONFIG',
+            'uploaded': 'CONFIG',
+            'ready': 'CONFIG',
+            'parsing': 'PLOT',
+            'scripting': 'SCRIPT',
+            'completed': 'SCRIPT'
+        };
+
+        const defaultTab = statusTabMap[project.status] || 'CONFIG';
+        setActiveTab(defaultTab);
+        setHasAutoNavigated(true); // 标记已完成自动跳转
+    }, [project?.status, hasAutoNavigated]);
 
     // 搜索监听
     useEffect(() => {
@@ -1044,14 +1068,25 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                     <button
                                         onClick={handleStart}
                                         disabled={project.status !== 'ready' || starting}
-                                        className={`flex items-center gap-2 px-6 py-1.5 text-xs font-bold rounded-lg shadow-lg transition-all ${
-                                            project.status === 'ready'
+                                        className={`flex items-center gap-2 px-6 py-1.5 text-xs font-bold rounded-lg shadow-lg transition-all relative overflow-hidden ${
+                                            project.status === 'parsing'
+                                            ? 'bg-slate-800 text-slate-400 border-2 border-cyan-500/50 cursor-not-allowed animate-pulse-border'
+                                            : project.status === 'ready'
                                             ? 'bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white shadow-cyan-500/20 hover:scale-105 cursor-pointer'
                                             : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
                                         }`}
                                     >
-                                        {starting ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}
-                                        {starting ? '启动中...' : (project.status === 'parsing' ? '正在运行' : '项目启动')}
+                                        {/* 流光效果 - 仅在 parsing 状态显示 */}
+                                        {project.status === 'parsing' && (
+                                            <>
+                                                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-cyan-500/30 to-transparent animate-shimmer" />
+                                                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-blue-500/30 to-transparent animate-shimmer-reverse" />
+                                            </>
+                                        )}
+                                        <span className="relative z-10 flex items-center gap-2">
+                                            {starting ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}
+                                            {starting ? '启动中...' : (project.status === 'parsing' ? '正在运行' : '项目启动')}
+                                        </span>
                                     </button>
                                 </>
                             ) : activeTab === 'PLOT' ? (

@@ -130,7 +130,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
       draft: { label: '草稿', color: 'text-slate-400', icon: FileText, bgColor: 'bg-slate-500/10', borderColor: 'border-slate-500/20' },
       uploaded: { label: '已上传', color: 'text-blue-400', icon: Upload, bgColor: 'bg-blue-500/10', borderColor: 'border-blue-500/20' },
       ready: { label: '已拆分', color: 'text-indigo-400', icon: CheckCircle2, bgColor: 'bg-indigo-500/10', borderColor: 'border-indigo-500/20' },
-      parsing: { label: '剧情分析中', color: 'text-purple-400', icon: Loader2, bgColor: 'bg-purple-500/10', borderColor: 'border-purple-500/20', animate: true },
+      parsing: { label: '剧情分析中', color: 'text-purple-400', icon: Sparkles, bgColor: 'bg-purple-500/10', borderColor: 'border-purple-500/20' },
       scripting: { label: '剧本生成中', color: 'text-pink-400', icon: Sparkles, bgColor: 'bg-pink-500/10', borderColor: 'border-pink-500/20', animate: true },
       completed: { label: '已完成', color: 'text-green-400', icon: CheckCheck, bgColor: 'bg-green-500/10', borderColor: 'border-green-500/20' },
     };
@@ -276,7 +276,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
                                     const StatusIcon = config.icon;
                                     return (
                                         <div className={`flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1 rounded-lg uppercase tracking-tighter border ${config.bgColor} ${config.color} ${config.borderColor}`}>
-                                            <StatusIcon size={12} className={config.animate ? 'animate-spin' : ''} />
+                                            <StatusIcon size={12} />
                                             {config.label}
                                         </div>
                                     );
