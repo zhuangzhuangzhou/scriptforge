@@ -21,6 +21,8 @@ router = APIRouter(prefix="/skills", tags=["skills"])
 
 class SkillBase(BaseModel):
     """Skill 基础信息"""
+    model_config = {"protected_namespaces": ()}  # 禁用保护的命名空间检查
+
     name: str = Field(..., description="Skill 唯一标识")
     display_name: str = Field(..., description="显示名称")
     description: Optional[str] = Field(None, description="描述")
@@ -31,7 +33,7 @@ class SkillBase(BaseModel):
     prompt_template: Optional[str] = Field(None, description="Prompt 模板")
     input_schema: Optional[dict] = Field(None, description="输入 Schema")
     output_schema: Optional[dict] = Field(None, description="输出 Schema")
-    model_config: Optional[dict] = Field(None, description="模型配置")
+    llm_config: Optional[dict] = Field(None, description="模型配置", alias="model_config")
 
     # 示例数据
     example_input: Optional[dict] = Field(None, description="示例输入")
@@ -48,13 +50,15 @@ class SkillCreate(SkillBase):
 
 class SkillUpdate(BaseModel):
     """更新 Skill（所有字段可选）"""
+    model_config = {"protected_namespaces": ()}  # 禁用保护的命名空间检查
+
     display_name: Optional[str] = None
     description: Optional[str] = None
     category: Optional[str] = None
     prompt_template: Optional[str] = None
     input_schema: Optional[dict] = None
     output_schema: Optional[dict] = None
-    model_config: Optional[dict] = None
+    llm_config: Optional[dict] = Field(None, alias="model_config")
     example_input: Optional[dict] = None
     example_output: Optional[dict] = None
     visibility: Optional[str] = None
@@ -76,8 +80,10 @@ class SkillResponse(SkillBase):
 
 class SkillTestRequest(BaseModel):
     """测试 Skill 请求"""
+    model_config = {"protected_namespaces": ()}  # 禁用保护的命名空间检查
+
     inputs: dict = Field(..., description="输入数据")
-    model_config_id: Optional[str] = Field(None, description="模型配置 ID")
+    llm_config_id: Optional[str] = Field(None, description="模型配置 ID", alias="model_config_id")
 
 
 class SkillTestResponse(BaseModel):
