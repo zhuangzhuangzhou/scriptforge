@@ -1,0 +1,149 @@
+import { useState, useCallback } from 'react';
+import { useWebSocket } from './useWebSocket';
+
+interface StreamMessage {
+  type: 'connected' | 'step_start' | 'stream_chunk' | 'step_end' | 'error' | 'progress' | 'task_complete' | 'task_failed';
+  task_id: string;
+  step_name?: string;
+  content?: string;
+  timestamp?: string;
+  metadata?: {
+    progress?: number;
+    current_step?: number;
+    total_steps?: number;
+    final?: boolean;
+    error_code?: string;
+    [key: string]: any;
+  };
+  status?: string;
+  message?: string;
+}
+
+interface UseBreakdownLogsOptions {
+  onStepStart?: (stepName: string, metadata?: any) => void;
+  onStreamChunk?: (stepName: string, chunk: string) => void;
+  onStepEnd?: (stepName: string, result?: any) => void;
+  onProgress?: (progress: number, currentStep: number, totalSteps: number) => void;
+  onError?: (error: string, errorCode?: string) => void;
+  onComplete?: () => void;
+}
+
+/**
+ * Breakdown 流式日志 WebSocket Hook
+ *
+ * 功能：
+ * - 实时接收大模型返回的流式数据
+ * - 支持步骤开始、流式内容、步骤结束等消息类型
+ * - 自动处理任务完成和错误状态
+ */
+export const useBreakdownLogs = (
+  taskId: string | null,
+  options: UseBreakdownLogsOptions = {}
+) => {
+  const {
+    onStepStart,
+    onStreamChunk,
+    onStepEnd,
+    onProgress,
+    onError,
+    onComplete
+  } = options;
+
+  const [isConnected, setIsConnected] = useState(false);
+  const [currentStep, setCurrentStep] = useState('');
+  const [streamContent, setStreamContent] = useState('');
+  const [progress, setProgress] = useState(0);
+
+  // 构建 WebSocket URL
+  const wsUrl = taskId ? `/api/v1/ws/breakdown-logs/${taskId}` : null;
+
+  const handleMessage = useCallback((data: StreamMessage) => {
+    console.log('[BreakdownLogs] 收到消息:', data.type, data);
+
+    switch (data.type) {
+      case 'connected':
+        setIsConnected(true);
+        console.log('[BreakdownLogs] 已连接到日志流');
+        break;
+
+      case 'step_start':
+        if (data.step_name) {
+          setCurrentStep(data.step_name);
+          setStreamContent(''); // 清空之前的流式内容
+          onStepStart?.(data.step_name, data.metadata);
+        }
+        break;
+
+      case 'stream_chunk':
+        if (data.content) {
+          setStreamContent(prev => prev + data.content);
+          onStreamChunk?.(data.step_name || '', data.content);
+        }
+        break;
+
+      case 'step_end':
+        if (data.step_name) {
+          onStepEnd?.(data.step_name, data.metadata);
+        }
+        break;
+
+      case 'progress':
+        if (data.metadata) {
+          const { progress: p, current_step, total_steps } = data.metadata;
+          if (p !== undefined) {
+            setProgress(p);
+          }
+          if (current_step !== undefined && total_steps !== undefined) {
+            onProgress?.(p || 0, current_step, total_steps);
+          }
+        }
+        break;
+
+      case 'error':
+        const errorMsg = data.content || '任务执行出错';
+        const errorCode = data.metadata?.error_code;
+        onError?.(errorMsg, errorCode);
+        break;
+
+      case 'task_complete':
+        console.log('[BreakdownLogs] 任务完成');
+        onComplete?.();
+        break;
+
+      case 'task_failed':
+        console.log('[BreakdownLogs] 任务失败');
+        onError?.(data.message || '任务执行失败');
+        break;
+
+      default:
+        console.warn('[BreakdownLogs] 未知消息类型:', data.type);
+    }
+  }, [onStepStart, onStreamChunk, onStepEnd, onProgress, onError, onComplete]);
+
+  const { isConnected: wsConnected, lastMessage } = useWebSocket(wsUrl, {
+    onMessage: handleMessage,
+    onError: (error) => {
+      console.error('[BreakdownLogs] WebSocket 错误:', error);
+      setIsConnected(false);
+    },
+    onClose: () => {
+      console.log('[BreakdownLogs] WebSocket 关闭');
+      setIsConnected(false);
+    },
+    onOpen: () => {
+      console.log('[BreakdownLogs] WebSocket 打开');
+      setIsConnected(true);
+    },
+    reconnect: true,
+    reconnectInterval: 3000,
+    maxReconnectAttempts: 3
+  });
+
+  return {
+    isConnected: isConnected && wsConnected,
+    currentStep,
+    streamContent,
+    progress,
+    lastMessage
+  };
+};

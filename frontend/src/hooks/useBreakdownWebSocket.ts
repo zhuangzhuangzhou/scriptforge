@@ -54,6 +54,8 @@ export const useBreakdownWebSocket = (
     onMessage: (data) => {
       const message = data as BreakdownWebSocketMessage;
 
+      console.log('[useBreakdownWebSocket] 收到消息:', message);
+
       // 处理任务进度消息
       if (message.task_id) {
         const progressData: BreakdownProgress = {
@@ -64,6 +66,12 @@ export const useBreakdownWebSocket = (
           error_message: message.error_message,
           retry_count: 0
         };
+
+        console.log('[useBreakdownWebSocket] 更新进度:', {
+          progress: progressData.progress,
+          currentStep: progressData.current_step,
+          status: progressData.status
+        });
 
         setProgress(progressData.progress);
         setCurrentStep(progressData.current_step);
