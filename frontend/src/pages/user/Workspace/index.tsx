@@ -18,6 +18,7 @@ import { projectApi, breakdownApi } from '../../../services/api';
 import { message, Modal, Upload } from 'antd';
 import { useConsoleLogger } from '../../../hooks/useConsoleLogger';
 import { useBreakdownWebSocket } from '../../../hooks/useBreakdownWebSocket';
+import { parseErrorMessage } from '../../../utils/errorParser';
 import ConfigTab from './ConfigTab';
 import SourceTab from './SourceTab';
 import PlotTab from './PlotTab';
@@ -205,6 +206,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     // 使用 WebSocket Hook 监听任务进度（优先使用 WebSocket，失败时降级到轮询）
     const lastStepRef = useRef<string>('');
     const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const pollIntervalTimeRef = useRef<number>(2000); // 动态轮询间隔
 
     const { isConnected: wsConnected, progress: wsProgress, currentStep: wsCurrentStep, usePolling } = useBreakdownWebSocket(
         breakdownTaskId,
@@ -228,20 +230,8 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             },
             onError: (error) => {
                 setBreakdownTaskId(null);
-
-                // 解析错误信息
-                try {
-                    const errorData = typeof error === 'string' ? JSON.parse(error) : error;
-                    showError({
-                        code: errorData.code || 'UNKNOWN_ERROR',
-                        message: errorData.message || error
-                    });
-                } catch {
-                    showError({
-                        code: 'UNKNOWN_ERROR',
-                        message: error
-                    });
-                }
+                const parsedError = parseErrorMessage(error);
+                showError(parsedError);
             },
             fallbackToPolling: true
         }
@@ -256,7 +246,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
         return () => {
             if (pollingIntervalRef.current) {
-                clearInterval(pollingIntervalRef.current);
+                clearTimeout(pollingIntervalRef.current);
                 pollingIntervalRef.current = null;
             }
         };
@@ -264,8 +254,6 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
     // 优化的轮询机制（动态间隔 + 去重日志）
     const startOptimizedPolling = (taskId: string, batchId: string) => {
-        let pollInterval = 2000; // 初始间隔 2 秒
-
         const poll = async () => {
             try {
                 const res = await breakdownApi.getTaskStatus(taskId);
@@ -281,17 +269,17 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
                 // 根据状态动态调整轮询间隔
                 if (status === 'queued') {
-                    pollInterval = 3000; // 排队中，降低频率
+                    pollIntervalTimeRef.current = 3000; // 排队中，降低频率
                 } else if (status === 'running' || status === 'processing') {
-                    pollInterval = 1500; // 运行中，提高频率
+                    pollIntervalTimeRef.current = 1500; // 运行中，提高频率
                 } else if (status === 'retrying') {
-                    pollInterval = 5000; // 重试中，降低频率
+                    pollIntervalTimeRef.current = 5000; // 重试中，降低频率
                 }
 
                 // 任务完成
                 if (status === 'completed') {
                     if (pollingIntervalRef.current) {
-                        clearInterval(pollingIntervalRef.current);
+                        clearTimeout(pollingIntervalRef.current);
                         pollingIntervalRef.current = null;
                     }
                     setBreakdownTaskId(null);
@@ -304,37 +292,24 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 // 任务失败
                 if (status === 'failed') {
                     if (pollingIntervalRef.current) {
-                        clearInterval(pollingIntervalRef.current);
+                        clearTimeout(pollingIntervalRef.current);
                         pollingIntervalRef.current = null;
                     }
                     setBreakdownTaskId(null);
 
                     const errorMsg = res.data.error_message || '拆解失败';
-                    try {
-                        const errorData = typeof errorMsg === 'string' ? JSON.parse(errorMsg) : errorMsg;
-                        showError({
-                            code: errorData.code || 'UNKNOWN_ERROR',
-                            message: errorData.message || errorMsg
-                        });
-                    } catch {
-                        showError({
-                            code: 'UNKNOWN_ERROR',
-                            message: errorMsg
-                        });
-                    }
+                    const parsedError = parseErrorMessage(errorMsg);
+                    showError(parsedError);
                     return;
                 }
 
                 // 调度下一次轮询
-                if (pollingIntervalRef.current) {
-                    clearInterval(pollingIntervalRef.current);
-                }
-                pollingIntervalRef.current = setTimeout(poll, pollInterval);
+                pollingIntervalRef.current = setTimeout(poll, pollIntervalTimeRef.current);
 
             } catch (err) {
                 console.error('[Polling] 轮询失败:', err);
                 if (pollingIntervalRef.current) {
-                    clearInterval(pollingIntervalRef.current);
+                    clearTimeout(pollingIntervalRef.current);
                     pollingIntervalRef.current = null;
                 }
             }
@@ -616,26 +591,27 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     }, [activeTab, projectId]);
 
 
-    // 获取拆解结果（带重试机制）
+    // 获取拆解结果（带重试机制和指数退避）
     const fetchBreakdownResults = async (batchId: string, retryCount = 0) => {
-        setBreakdownLoading(true);
+        if (retryCount === 0) {
+            setBreakdownLoading(true);
+        }
+
         try {
             const res = await breakdownApi.getBreakdownResults(batchId);
             setBreakdownResult(res.data);
+            setBreakdownLoading(false);
         } catch (err: any) {
             // 如果是 404 且批次状态为 completed，可能是时序问题，自动重试
             if (err.response?.status === 404 && retryCount < 3) {
-                console.log(`拆解结果未找到，${2}秒后重试 (${retryCount + 1}/3)...`);
+                const retryDelay = Math.pow(2, retryCount) * 1000; // 指数退避：1s, 2s, 4s
+                console.log(`拆解结果未找到，${retryDelay / 1000}秒后重试 (${retryCount + 1}/3)...`);
                 setTimeout(() => {
                     fetchBreakdownResults(batchId, retryCount + 1);
-                }, 2000);
+                }, retryDelay);
             } else {
                 console.error('获取拆解结果失败:', err);
                 setBreakdownResult(null);
-                setBreakdownLoading(false);
-            }
-        } finally {
-            if (retryCount === 0) {
                 setBreakdownLoading(false);
             }
         }

@@ -94,8 +94,13 @@ export const useBreakdownWebSocket = (
       // 处理错误消息
       if (message.error) {
         console.error('[WebSocket] 错误:', message.error);
-        if (fallbackToPolling && message.code === 'TASK_NOT_FOUND') {
-          console.log('[WebSocket] 任务未找到，降级到轮询模式');
+        // 更广泛的降级条件：任务未找到、连接超时等
+        if (fallbackToPolling && (
+          message.code === 'TASK_NOT_FOUND' ||
+          message.code === 'CONNECTION_TIMEOUT' ||
+          message.code === 'INTERNAL_ERROR'
+        )) {
+          console.log(`[WebSocket] 错误 (${message.code})，降级到轮询模式`);
           setUsePolling(true);
         }
       }
@@ -109,6 +114,11 @@ export const useBreakdownWebSocket = (
     },
     onClose: () => {
       console.log('[WebSocket] 连接关闭');
+      // 连接异常关闭时也考虑降级
+      if (fallbackToPolling && !isConnected) {
+        console.log('[WebSocket] 连接异常关闭，降级到轮询模式');
+        setUsePolling(true);
+      }
     },
     reconnect: true,
     reconnectInterval: 3000,
