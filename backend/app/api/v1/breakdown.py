@@ -793,14 +793,14 @@ async def get_breakdown_results(
     """获取拆解结果"""
     from app.models.plot_breakdown import PlotBreakdown
 
-    # 验证批次属于当前用户
+    # 验证批次属于当前用户，并获取最新的拆解结果
     result = await db.execute(
         select(PlotBreakdown).join(Batch).join(Project).where(
             PlotBreakdown.batch_id == batch_id,
             Project.user_id == current_user.id
-        )
+        ).order_by(PlotBreakdown.created_at.desc())  # 按创建时间降序，获取最新的
     )
-    breakdown = result.scalar_one_or_none()
+    breakdown = result.scalars().first()  # 使用 first() 而不是 scalar_one_or_none()
 
     if not breakdown:
         raise HTTPException(
