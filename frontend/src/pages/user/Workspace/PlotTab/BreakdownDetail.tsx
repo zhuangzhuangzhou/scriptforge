@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Layers, Play, Loader2, X, Activity, Swords, Lightbulb, Clock,
-  Film, ChevronDown, Users, MapPin, Heart, Table, Grid
+  Film, ChevronDown, Users, MapPin, Heart, Table as TableIcon, Grid
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Batch, PlotBreakdown, Episode } from '../../../../types';
@@ -416,7 +416,7 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
                   : 'bg-slate-800/50 text-slate-400 border border-slate-700/50 hover:bg-slate-700/50'
               }`}
             >
-              <Table className="w-4 h-4" />
+              <TableIcon className="w-4 h-4" />
               表格视图
             </button>
           </div>
