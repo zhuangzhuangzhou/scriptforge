@@ -398,6 +398,7 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
           <h2 className="text-xl font-bold text-slate-200">拆解结果</h2>
           <div className="flex gap-2">
             <button
+              type="button"
               onClick={() => setViewMode('card')}
               className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-2 transition-colors ${
                 viewMode === 'card'
@@ -409,6 +410,7 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
               卡片视图
             </button>
             <button
+              type="button"
               onClick={() => setViewMode('table')}
               className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-2 transition-colors ${
                 viewMode === 'table'

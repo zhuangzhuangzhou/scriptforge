@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Table, Button, Input, Select, Tag, Space, message, Modal, Card } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, PlayCircleOutlined, SearchOutlined } from '@ant-design/icons';
-import axios from 'axios';
-
-const { Search } = Input;
-const { Option } = Select;
+import { Button, Tag, Space, message, Modal } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, PlayCircleOutlined } from '@ant-design/icons';
+import api from '../../../services/api';
+import { GlassCard } from '../../../components/ui/GlassCard';
+import { GlassTable } from '../../../components/ui/GlassTable';
+import { GlassInput } from '../../../components/ui/GlassInput';
+import { GlassSelect } from '../../../components/ui/GlassSelect';
 
 interface Agent {
   id: string;
@@ -33,7 +34,7 @@ const AgentsPage: React.FC = () => {
       if (searchText) params.search = searchText;
       if (categoryFilter) params.category = categoryFilter;
 
-      const response = await axios.get('/api/v1/simple-agents', { params });
+      const response = await api.get('/simple-agents', { params });
       setAgents(response.data);
     } catch (error: any) {
       message.error(error.response?.data?.detail || '加载失败');
@@ -55,7 +56,7 @@ const AgentsPage: React.FC = () => {
       cancelText: '取消',
       onOk: async () => {
         try {
-          await axios.delete(`/api/v1/simple-agents/${agent.id}`);
+          await api.delete(`/simple-agents/${agent.id}`);
           message.success('删除成功');
           loadAgents();
         } catch (error: any) {
@@ -147,10 +148,10 @@ const AgentsPage: React.FC = () => {
   ];
 
   return (
-    <div className="p-6">
-      <Card>
+    <div className="p-6 min-h-screen bg-slate-950">
+      <GlassCard>
         <div className="mb-4 flex justify-between items-center">
-          <h1 className="text-2xl font-bold">Agent 管理</h1>
+          <h1 className="text-2xl font-bold text-slate-100">Agent 管理</h1>
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -161,26 +162,27 @@ const AgentsPage: React.FC = () => {
         </div>
 
         <div className="mb-4 flex gap-4">
-          <Search
+          <GlassInput
             placeholder="搜索 Agent 名称或描述"
             allowClear
             style={{ width: 300 }}
-            onSearch={setSearchText}
+            onPressEnter={(e) => setSearchText((e.target as HTMLInputElement).value)}
             onChange={(e) => !e.target.value && setSearchText('')}
           />
-          <Select
+          <GlassSelect
             placeholder="选择分类"
             allowClear
             style={{ width: 150 }}
             onChange={setCategoryFilter}
-          >
-            <Option value="breakdown">拆解</Option>
-            <Option value="qa">质检</Option>
-            <Option value="script">剧本</Option>
-          </Select>
+            options={[
+              { value: 'breakdown', label: '拆解' },
+              { value: 'qa', label: '质检' },
+              { value: 'script', label: '剧本' },
+            ]}
+          />
         </div>
 
-        <Table
+        <GlassTable
           columns={columns}
           dataSource={agents}
           rowKey="id"
@@ -191,7 +193,7 @@ const AgentsPage: React.FC = () => {
             showTotal: (total) => `共 ${total} 个 Agent`,
           }}
         />
-      </Card>
+      </GlassCard>
     </div>
   );
 };
