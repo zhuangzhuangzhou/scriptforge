@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Button, message, Spin, Alert } from 'antd';
 import { PlayCircleOutlined } from '@ant-design/icons';
-import axios from 'axios';
 import MonacoEditor from '@monaco-editor/react';
+import api from '../../../services/api';
 
 interface Skill {
   id: string;
@@ -33,7 +33,7 @@ const SkillTester: React.FC<SkillTesterProps> = ({ skillId }) => {
   const loadSkill = async () => {
     setLoading(true);
     try {
-      const response = await axios.get(`/api/v1/skills/${skillId}`);
+      const response = await api.get(`/skills/${skillId}`);
       const skillData = response.data;
       setSkill(skillData);
 
@@ -55,7 +55,7 @@ const SkillTester: React.FC<SkillTesterProps> = ({ skillId }) => {
 
     try {
       const inputs = JSON.parse(inputData);
-      const response = await axios.post(`/api/v1/skills/${skillId}/test`, {
+      const response = await api.post(`/skills/${skillId}/test`, {
         inputs,
       });
 

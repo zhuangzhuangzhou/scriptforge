@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Form, Input, Select, Button, message, Space, Spin } from 'antd';
 import { SaveOutlined } from '@ant-design/icons';
-import axios from 'axios';
 import MonacoEditor from '@monaco-editor/react';
+import api from '../../../services/api';
 
 const { TextArea } = Input;
 const { Option } = Select;
@@ -57,7 +57,7 @@ const SkillEditor: React.FC<SkillEditorProps> = ({ skillId, onSaved, onCancel })
   const loadSkill = async () => {
     setLoading(true);
     try {
-      const response = await axios.get(`/api/v1/skills/${skillId}`);
+      const response = await api.get(`/skills/${skillId}`);
       const skill = response.data;
 
       form.setFieldsValue({
@@ -95,10 +95,10 @@ const SkillEditor: React.FC<SkillEditorProps> = ({ skillId, onSaved, onCancel })
       };
 
       if (isEditMode) {
-        await axios.put(`/api/v1/skills/${skillId}`, data);
+        await api.put(`/skills/${skillId}`, data);
         message.success('保存成功');
       } else {
-        await axios.post('/api/v1/skills', data);
+        await api.post('/skills', data);
         message.success('创建成功');
       }
 

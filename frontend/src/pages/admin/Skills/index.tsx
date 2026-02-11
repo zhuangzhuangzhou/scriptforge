@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Button, Tag, Space, message, Modal } from 'antd';
+import { Button, Tag, Space, message, Modal, Switch } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, PlayCircleOutlined, CopyOutlined } from '@ant-design/icons';
 import api from '../../../services/api';
 import { GlassCard } from '../../../components/ui/GlassCard';
@@ -94,6 +94,16 @@ const SkillsPage: React.FC = () => {
     });
   };
 
+  const handleToggleActive = async (skill: Skill) => {
+    try {
+      await api.put(`/skills/${skill.id}`, { is_active: !skill.is_active });
+      message.success(skill.is_active ? '已禁用' : '已启用');
+      loadSkills();
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '操作失败');
+    }
+  };
+
   const handleEdit = (skillId: string | null) => {
     setEditingSkillId(skillId);
     setEditorVisible(true);
@@ -176,9 +186,14 @@ const SkillsPage: React.FC = () => {
     {
       title: '状态',
       key: 'status',
-      width: 120,
+      width: 150,
       render: (_: any, record: Skill) => (
         <Space>
+          <Switch
+            size="small"
+            checked={record.is_active}
+            onChange={() => handleToggleActive(record)}
+          />
           {record.is_builtin && <Tag color="gold">内置</Tag>}
           {record.visibility === 'private' && <Tag>私有</Tag>}
         </Space>
@@ -198,7 +213,15 @@ const SkillsPage: React.FC = () => {
           >
             测试
           </Button>
-          {record.is_builtin ? (
+          <Button
+            type="link"
+            size="small"
+            icon={<EditOutlined />}
+            onClick={() => handleEdit(record.id)}
+          >
+            编辑
+          </Button>
+          {record.is_builtin && (
             <Button
               type="link"
               size="small"
@@ -207,27 +230,16 @@ const SkillsPage: React.FC = () => {
             >
               复制
             </Button>
-          ) : (
-            <Button
-              type="link"
-              size="small"
-              icon={<EditOutlined />}
-              onClick={() => handleEdit(record.id)}
-            >
-              编辑
-            </Button>
           )}
-          {!record.is_builtin && (
-            <Button
-              type="link"
-              size="small"
-              danger
-              icon={<DeleteOutlined />}
-              onClick={() => handleDelete(record)}
-            >
-              删除
-            </Button>
-          )}
+          <Button
+            type="link"
+            size="small"
+            danger
+            icon={<DeleteOutlined />}
+            onClick={() => handleDelete(record)}
+          >
+            删除
+          </Button>
         </Space>
       ),
     },
