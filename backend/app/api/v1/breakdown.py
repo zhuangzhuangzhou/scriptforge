@@ -9,6 +9,7 @@ from app.models.user import User
 from app.models.batch import Batch
 from app.models.project import Project
 from app.models.ai_task import AITask
+from app.models.ai_resource import AIResource
 from app.api.v1.auth import get_current_user
 from app.tasks.breakdown_tasks import run_breakdown_task
 from app.core.quota import QuotaService
@@ -22,10 +23,15 @@ class BreakdownStartRequest(BaseModel):
     # model_config_id 不再需要，从项目配置读取
     selected_skills: Optional[List[str]] = None
     pipeline_id: Optional[str] = None
-    # 配置选择
-    adapt_method_key: Optional[str] = "adapt_method_default"
-    quality_rule_key: Optional[str] = "qa_breakdown_default"
-    output_style_key: Optional[str] = "output_style_default"
+    # AI 资源 ID（可选，默认使用系统内置）
+    adapt_method_id: Optional[str] = None  # 改编方法论 ID
+    output_style_id: Optional[str] = None  # 输出风格 ID
+    template_id: Optional[str] = None  # 模板 ID
+    example_id: Optional[str] = None  # 示例 ID
+    # 旧配置 key（已废弃，保留兼容）
+    adapt_method_key: Optional[str] = None
+    quality_rule_key: Optional[str] = None
+    output_style_key: Optional[str] = None
 
 
 class BatchStartRequest(BaseModel):
@@ -42,6 +48,11 @@ class BatchStartRequest(BaseModel):
 class TaskRetryRequest(BaseModel):
     """任务重试请求"""
     new_config: Optional[dict] = None
+
+
+class PlotPointStatusUpdate(BaseModel):
+    """剧情点状态更新请求"""
+    status: str = Field(..., regex="^(used|unused)$")
 
 
 @router.post("/start")
@@ -138,6 +149,31 @@ async def start_breakdown(
     # 消耗剧集配额（预扣）
     await quota_service.consume_episode_quota(locked_user)
 
+    # 构建任务配置
+    task_config = {
+        "model_config_id": str(project.breakdown_model_id),  # 从项目配置读取
+        "selected_skills": request.selected_skills or [],
+        "pipeline_id": request.pipeline_id,
+    }
+
+    # 添加 AI 资源 ID（如果用户指定了）
+    if request.adapt_method_id:
+        task_config["adapt_method_id"] = request.adapt_method_id
+    if request.output_style_id:
+        task_config["output_style_id"] = request.output_style_id
+    if request.template_id:
+        task_config["template_id"] = request.template_id
+    if request.example_id:
+        task_config["example_id"] = request.example_id
+
+    # 兼容旧配置 key
+    if request.adapt_method_key:
+        task_config["adapt_method_key"] = request.adapt_method_key
+    if request.quality_rule_key:
+        task_config["quality_rule_key"] = request.quality_rule_key
+    if request.output_style_key:
+        task_config["output_style_key"] = request.output_style_key
+
     # 创建AI任务
     task = AITask(
         project_id=batch.project_id,
@@ -145,14 +181,7 @@ async def start_breakdown(
         task_type="breakdown",
         status="queued",
         depends_on=[],
-        config={
-            "model_config_id": str(project.breakdown_model_id),  # 从项目配置读取
-            "selected_skills": request.selected_skills or [],
-            "pipeline_id": request.pipeline_id,
-            "adapt_method_key": request.adapt_method_key,
-            "quality_rule_key": request.quality_rule_key,
-            "output_style_key": request.output_style_key
-        }
+        config=task_config
     )
     db.add(task)
     await db.flush()  # 获取 task.id
@@ -790,7 +819,12 @@ async def get_breakdown_results(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取拆解结果"""
+    """获取拆解结果
+
+    根据 format_version 返回不同结构：
+    - format_version == 2: 返回 plot_points（新统一格式）
+    - format_version == 1: 返回 6 个字段（旧格式）
+    """
     from app.models.plot_breakdown import PlotBreakdown
 
     # 验证批次属于当前用户，并获取最新的拆解结果
@@ -808,19 +842,168 @@ async def get_breakdown_results(
             detail="拆解结果不存在"
         )
 
+    # 根据 format_version 返回不同结构
+    if breakdown.format_version == 2:
+        # 新格式：返回 plot_points
+        return {
+            "id": str(breakdown.id),
+            "batch_id": str(breakdown.batch_id),
+            "format_version": 2,
+            "plot_points": breakdown.plot_points,
+            "qa_status": breakdown.qa_status,
+            "qa_score": breakdown.qa_score,
+            "qa_report": breakdown.qa_report,
+            "qa_retry_count": breakdown.qa_retry_count,
+            "used_adapt_method_id": breakdown.used_adapt_method_id,
+            "created_at": breakdown.created_at.isoformat() if breakdown.created_at else None
+        }
+    else:
+        # 旧格式：返回 6 个字段
+        return {
+            "id": str(breakdown.id),
+            "batch_id": str(breakdown.batch_id),
+            "format_version": 1,
+            "conflicts": breakdown.conflicts,
+            "plot_hooks": breakdown.plot_hooks,
+            "characters": breakdown.characters,
+            "scenes": breakdown.scenes,
+            "emotions": breakdown.emotions,
+            "episodes": breakdown.episodes,
+            "consistency_status": breakdown.consistency_status,
+            "consistency_score": breakdown.consistency_score,
+            "qa_status": breakdown.qa_status,
+            "qa_report": breakdown.qa_report,
+            "created_at": breakdown.created_at.isoformat() if breakdown.created_at else None
+        }
+
+
+@router.patch("/results/{batch_id}/plot-points/{point_id}/status")
+async def update_plot_point_status(
+    batch_id: str,
+    point_id: int,
+    request: PlotPointStatusUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """更新剧情点状态（used/unused）
+
+    仅适用于 format_version == 2 的拆解结果。
+    """
+    from app.models.plot_breakdown import PlotBreakdown
+
+    # 验证批次属于当前用户
+    result = await db.execute(
+        select(PlotBreakdown).join(Batch).join(Project).where(
+            PlotBreakdown.batch_id == batch_id,
+            Project.user_id == current_user.id
+        ).order_by(PlotBreakdown.created_at.desc())
+    )
+    breakdown = result.scalars().first()
+
+    if not breakdown:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="拆解结果不存在"
+        )
+
+    # 检查是否为新格式
+    if breakdown.format_version != 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="此操作仅适用于 format_version == 2 的拆解结果"
+        )
+
+    # 检查 plot_points 是否存在
+    if not breakdown.plot_points or not isinstance(breakdown.plot_points, list):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="拆解结果中不存在剧情点"
+        )
+
+    # 查找并更新对应的剧情点
+    updated = False
+    updated_points = []
+    for point in breakdown.plot_points:
+        if point.get("id") == point_id:
+            new_point = {**point, "status": request.status}
+            updated_points.append(new_point)
+            updated = True
+        else:
+            updated_points.append(point)
+
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"未找到 id 为 {point_id} 的剧情点"
+        )
+
+    # 更新 plot_points
+    breakdown.plot_points = updated_points
+    await db.commit()
+    await db.refresh(breakdown)
+
     return {
-        "batch_id": str(breakdown.batch_id),
-        "conflicts": breakdown.conflicts,
-        "plot_hooks": breakdown.plot_hooks,
-        "characters": breakdown.characters,
-        "scenes": breakdown.scenes,
-        "emotions": breakdown.emotions,
-        "consistency_status": breakdown.consistency_status,
-        "consistency_score": breakdown.consistency_score,
-        "consistency_results": breakdown.consistency_results,
-        "qa_status": breakdown.qa_status,
-        "qa_report": breakdown.qa_report,
-        "used_adapt_method_id": breakdown.used_adapt_method_id
+        "message": "剧情点状态更新成功",
+        "point_id": point_id,
+        "status": request.status
+    }
+
+
+@router.get("/results/{batch_id}/adapt-methods")
+async def get_adapt_methods(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取可用的改编方法论列表
+
+    查询 ai_resources 表中 category='adapt_method' 且 is_active=True 的资源。
+    返回公共资源和用户自己的资源。
+    """
+    from sqlalchemy import or_
+
+    # 验证批次归属（只需要验证用户有权限访问该项目）
+    batch_result = await db.execute(
+        select(Batch).join(Project).where(
+            Batch.id == batch_id,
+            Project.user_id == current_user.id
+        )
+    )
+    batch = batch_result.scalar_one_or_none()
+
+    if not batch:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="批次不存在或无权访问"
+        )
+
+    # 查询可用的改编方法论
+    result = await db.execute(
+        select(AIResource).where(
+            AIResource.category == "adapt_method",
+            AIResource.is_active == True,
+            or_(
+                AIResource.visibility == "public",
+                AIResource.owner_id == current_user.id
+            )
+        ).order_by(AIResource.is_builtin.desc(), AIResource.name)
+    )
+    resources = result.scalars().all()
+
+    return {
+        "adapt_methods": [
+            {
+                "id": str(r.id),
+                "name": r.name,
+                "display_name": r.display_name,
+                "description": r.description,
+                "is_builtin": r.is_builtin,
+                "is_custom": r.owner_id is not None,
+                "version": r.version
+            }
+            for r in resources
+        ],
+        "total": len(resources)
     }
 
 

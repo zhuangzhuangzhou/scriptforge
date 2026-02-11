@@ -22,6 +22,12 @@ class PlotBreakdown(Base):
     emotions = Column(JSONB)
     episodes = Column(JSONB)  # 剧集规划结果
 
+    # 统一剧情点格式
+    plot_points = Column(JSONB)  # 统一格式的剧情点列表
+    format_version = Column(Integer, default=1)  # 1=旧6字段格式, 2=新统一格式
+    qa_score = Column(Integer)  # 质检分数
+    qa_retry_count = Column(Integer, default=0)  # 质检重试次数
+
     # 一致性检查
     consistency_status = Column(String(50), default="pending", index=True)
     consistency_score = Column(Integer)

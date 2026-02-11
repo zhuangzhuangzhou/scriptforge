@@ -17,6 +17,8 @@ import UserManagement from './pages/admin/UserManagement';
 import ModelManagement from './pages/admin/ModelManagement';
 import SkillsPage from './pages/admin/Skills';
 import AgentsPage from './pages/admin/Agents';
+import ResourcesPage from './pages/admin/Resources';
+import ResourceEditor from './pages/admin/Resources/ResourceEditor';
 import { UserTier } from './types';
 
 // 加载状态组件
@@ -75,6 +77,9 @@ const AppContent: React.FC = () => {
             <Route path="/admin/models" element={<ModelManagement />} />
             <Route path="/admin/skills" element={<SkillsPage />} />
             <Route path="/admin/agents" element={<AgentsPage />} />
+            <Route path="/admin/resources" element={<ResourcesPage />} />
+            <Route path="/admin/resources/new" element={<ResourceEditor />} />
+            <Route path="/admin/resources/:resourceId/edit" element={<ResourceEditor />} />
           </Route>
         </Route>
       </Route>

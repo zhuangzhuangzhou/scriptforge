@@ -20,6 +20,7 @@ from app.models.ai_model import AIModel
 from app.models.ai_model_credential import AIModelCredential
 from app.models.ai_model_pricing import AIModelPricing
 from app.models.system_model_config import SystemModelConfig
+from app.models.ai_resource import AIResource
 
 __all__ = [
     "User",
@@ -49,4 +50,5 @@ __all__ = [
     "AIModelCredential",
     "AIModelPricing",
     "SystemModelConfig",
+    "AIResource",
 ]

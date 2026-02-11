@@ -472,6 +472,15 @@ export const breakdownApi = {
         output_style_key: newConfig.outputStyleKey
       } : undefined
     });
+  },
+
+  // 更新剧情点状态（v2 新格式）
+  updatePlotPointStatus: async (batchId: string, pointId: number, status: 'used' | 'unused') => {
+    if (USE_MOCK) {
+      await delay(300);
+      return { data: { success: true, point_id: pointId, status } };
+    }
+    return api.patch(`/breakdown/results/${batchId}/plot-points/${pointId}`, { status });
   }
 };
 
@@ -494,6 +503,16 @@ export const skillsApi = {
     }
     return api.get('/skills/available', { params: { category } });
   }
+};
+
+// AI 资源文档 API
+export const aiResourceApi = {
+  list: (params?: any) => api.get('/ai-resources', { params }),
+  get: (id: string) => api.get(`/ai-resources/${id}`),
+  create: (data: any) => api.post('/ai-resources', data),
+  update: (id: string, data: any) => api.put(`/ai-resources/${id}`, data),
+  delete: (id: string) => api.delete(`/ai-resources/${id}`),
+  clone: (id: string) => api.post(`/ai-resources/${id}/clone`),
 };
 
 export const adminApi = {

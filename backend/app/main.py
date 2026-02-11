@@ -6,6 +6,7 @@ from app.core.database import AsyncSessionLocal
 from app.core.init_skills import init_builtin_skills
 from app.core.init_pipeline import init_default_pipeline
 from app.core.init_simple_system import init_simple_system
+from app.core.init_ai_resources import init_builtin_resources
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -33,6 +34,7 @@ async def startup_event():
         await init_builtin_skills(db)
         await init_default_pipeline(db)
         await init_simple_system(db)  # 初始化简化系统
+        await init_builtin_resources(db)  # 初始化内置 AI 资源文档
         print("应用启动完成")
 
 

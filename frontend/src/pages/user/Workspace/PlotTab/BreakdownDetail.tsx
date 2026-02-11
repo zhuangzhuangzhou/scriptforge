@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import {
   Layers, Play, Loader2, X, Activity, Swords, Lightbulb, Clock,
-  Film, ChevronDown, Users, MapPin, Heart, Table as TableIcon, Grid
+  Film, ChevronDown, Users, MapPin, Heart, Table as TableIcon, Grid,
+  CheckCircle, AlertTriangle, XCircle, BarChart3, List
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Batch, PlotBreakdown, Episode } from '../../../../types';
+import { Batch, PlotBreakdown, Episode, PlotPoint, QAReport } from '../../../../types';
+import { breakdownApi } from '../../../../services/api';
 
 interface BreakdownDetailProps {
   selectedBatch: Batch | null;
@@ -20,13 +22,194 @@ interface EpisodeCardProps {
   onToggle: () => void;
 }
 
-// 新增：表格行组件
+// 剧集表格行组件
 interface EpisodeTableRowProps {
   episode: Episode;
   status: 'used' | 'unused';
   scriptLink?: string;
   onStatusChange?: (episodeId: number, status: 'used' | 'unused') => void;
 }
+
+// 剧情点表格行组件（v2 格式）
+interface PlotPointTableRowProps {
+  point: PlotPoint;
+  onStatusChange?: (pointId: number, status: 'used' | 'unused') => void;
+}
+
+// 质检报告弹窗组件
+interface QAReportModalProps {
+  report: QAReport | null | undefined;
+  onClose: () => void;
+}
+
+const QAReportModal: React.FC<QAReportModalProps> = ({ report, onClose }) => {
+  if (!report) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden shadow-2xl"
+      >
+        {/* 头部 */}
+        <div className="flex items-center justify-between p-6 border-b border-slate-700">
+          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+            <BarChart3 className="w-5 h-5 text-cyan-400" />
+            质检报告详情
+          </h3>
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-slate-800 rounded-lg transition-colors"
+          >
+            <X className="w-5 h-5 text-slate-400" />
+          </button>
+        </div>
+
+        {/* 内容 */}
+        <div className="p-6 overflow-y-auto max-h-[60vh] space-y-6">
+          {/* 整体评分 */}
+          <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${
+                  report.status === 'PASS'
+                    ? 'bg-green-500/20 text-green-400'
+                    : 'bg-red-500/20 text-red-400'
+                }`}>
+                  <span className="text-2xl font-black">{report.score}</span>
+                </div>
+                <div>
+                  <p className="text-sm text-slate-400">质检总分</p>
+                  <p className="text-xs text-slate-500">满分 100 分</p>
+                </div>
+              </div>
+              <div className={`px-4 py-2 rounded-full text-sm font-medium ${
+                report.status === 'PASS'
+                  ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                  : 'bg-red-500/20 text-red-400 border border-red-500/30'
+              }`}>
+                {report.status === 'PASS' ? '质检通过' : '质检未通过'}
+              </div>
+            </div>
+          </div>
+
+          {/* 各维度得分 */}
+          {report.dimensions && Object.keys(report.dimensions).length > 0 && (
+            <div className="space-y-4">
+              <h4 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                <BarChart3 className="w-4 h-4" />
+                各维度评分
+              </h4>
+              <div className="grid gap-4">
+                {Object.entries(report.dimensions).map(([key, dimension]) => (
+                  <div key={key} className="bg-slate-800/30 border border-slate-700/50 rounded-xl p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-sm font-medium text-slate-200">{key}</span>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs px-2 py-1 rounded-full ${
+                          dimension.pass
+                            ? 'bg-green-500/20 text-green-400'
+                            : 'bg-red-500/20 text-red-400'
+                        }`}>
+                          {dimension.pass ? '通过' : '未通过'}
+                        </span>
+                        <span className="text-lg font-bold text-cyan-400">{dimension.score}</span>
+                        <span className="text-xs text-slate-500">/ 100</span>
+                      </div>
+                    </div>
+                    {/* 进度条 */}
+                    <div className="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          dimension.score >= 80
+                            ? 'bg-green-500'
+                            : dimension.score >= 60
+                            ? 'bg-yellow-500'
+                            : 'bg-red-500'
+                        }`}
+                        style={{ width: `${dimension.score}%` }}
+                      />
+                    </div>
+                    {/* 问题列表 */}
+                    {dimension.issues && dimension.issues.length > 0 && (
+                      <div className="mt-3 space-y-2">
+                        {dimension.issues.map((issue, idx) => (
+                          <div key={idx} className="flex items-start gap-2 text-xs text-red-300 bg-red-500/10 border border-red-500/20 rounded-lg p-2">
+                            <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                            <span>{issue}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 问题列表 */}
+          {report.issues && report.issues.length > 0 && (
+            <div className="space-y-3">
+              <h4 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                <XCircle className="w-4 h-4 text-red-400" />
+                问题列表
+              </h4>
+              <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 space-y-2">
+                {report.issues.map((issue, idx) => (
+                  <div key={idx} className="flex items-start gap-2 text-sm text-red-300">
+                    <span className="text-red-500 font-mono text-xs mt-0.5">{idx + 1}.</span>
+                    <span>{issue}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 改进建议 */}
+          {report.suggestions && report.suggestions.length > 0 && (
+            <div className="space-y-3">
+              <h4 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                <Lightbulb className="w-4 h-4 text-amber-400" />
+                改进建议
+              </h4>
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 space-y-2">
+                {report.suggestions.map((suggestion, idx) => (
+                  <div key={idx} className="flex items-start gap-2 text-sm text-amber-300">
+                    <span className="text-amber-500 font-mono text-xs mt-0.5">{idx + 1}.</span>
+                    <span>{suggestion}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 修复指引 */}
+          {report.fix_instructions && (
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4">
+              <h4 className="text-sm font-semibold text-blue-400 flex items-center gap-2 mb-2">
+                <CheckCircle className="w-4 h-4" />
+                修复指引
+              </h4>
+              <p className="text-sm text-blue-300 leading-relaxed">{report.fix_instructions}</p>
+            </div>
+          )}
+        </div>
+
+        {/* 底部 */}
+        <div className="flex justify-end gap-3 p-6 border-t border-slate-700 bg-slate-900/50">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-medium rounded-lg border border-slate-700 transition-colors"
+          >
+            关闭
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
 
 const EpisodeTableRow: React.FC<EpisodeTableRowProps> = ({
   episode,
@@ -79,6 +262,62 @@ const EpisodeTableRow: React.FC<EpisodeTableRowProps> = ({
         ) : (
           <span className="text-slate-500 text-sm">未生成</span>
         )}
+      </td>
+    </tr>
+  );
+};
+
+// 剧情点表格行组件（v2 格式）
+const PlotPointTableRow: React.FC<PlotPointTableRowProps> = ({
+  point,
+  onStatusChange
+}) => {
+  return (
+    <tr className="border-b border-slate-700/50 hover:bg-slate-800/30 transition-colors">
+      <td className="px-4 py-3 text-center">
+        <span className="text-cyan-400 font-semibold">{point.id}</span>
+      </td>
+      <td className="px-4 py-3">
+        <span className="text-sm text-slate-300 line-clamp-2">{point.scene}</span>
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex flex-wrap gap-1 max-w-[150px]">
+          {point.characters && point.characters.length > 0 ? (
+            point.characters.map((char, idx) => (
+              <span key={idx} className="text-xs px-2 py-0.5 bg-cyan-500/20 text-cyan-300 rounded border border-cyan-500/30 truncate max-w-[80px]" title={char}>
+                {char}
+              </span>
+            ))
+          ) : (
+            <span className="text-slate-500 text-sm">-</span>
+          )}
+        </div>
+      </td>
+      <td className="px-4 py-3">
+        <span className="text-sm text-slate-300 line-clamp-2">{point.event}</span>
+      </td>
+      <td className="px-4 py-3">
+        <span className="text-xs px-2 py-1 bg-amber-500/20 text-amber-300 rounded border border-amber-500/30">
+          {point.hook_type}
+        </span>
+      </td>
+      <td className="px-4 py-3 text-center">
+        <span className="text-sm text-slate-300">第 {point.episode} 集</span>
+      </td>
+      <td className="px-4 py-3 text-center">
+        <button
+          onClick={() => onStatusChange?.(point.id, point.status === 'used' ? 'unused' : 'used')}
+          className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+            point.status === 'used'
+              ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+              : 'bg-slate-600/20 text-slate-400 border border-slate-600/30'
+          }`}
+        >
+          {point.status === 'used' ? '已用' : '未用'}
+        </button>
+      </td>
+      <td className="px-4 py-3 text-center">
+        <span className="text-slate-500 text-sm">待接入</span>
       </td>
     </tr>
   );
@@ -271,6 +510,8 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   const [expandedEpisodes, setExpandedEpisodes] = useState<Set<number>>(new Set([1])); // 默认展开第一集
   const [viewMode, setViewMode] = useState<'card' | 'table'>('card'); // 视图模式
   const [episodeStatus, setEpisodeStatus] = useState<Record<number, 'used' | 'unused'>>({}); // 剧集状态
+  const [plotPointStatus, setPlotPointStatus] = useState<Record<number, 'used' | 'unused'>>({}); // 剧情点状态
+  const [qaReportModalOpen, setQaReportModalOpen] = useState(false); // 质检报告弹窗
 
   const toggleEpisode = (episodeNumber: number) => {
     setExpandedEpisodes(prev => {
@@ -284,13 +525,37 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
     });
   };
 
-  const handleStatusChange = (episodeId: number, status: 'used' | 'unused') => {
+  // 更新剧集状态
+  const handleEpisodeStatusChange = (episodeId: number, status: 'used' | 'unused') => {
     setEpisodeStatus(prev => ({
       ...prev,
       [episodeId]: status
     }));
     // TODO: 调用 API 更新状态
   };
+
+  // 更新剧情点状态（v2 格式）
+  const handlePlotPointStatusChange = async (pointId: number, status: 'used' | 'unused') => {
+    // 先乐观更新本地状态
+    setPlotPointStatus(prev => ({
+      ...prev,
+      [pointId]: status
+    }));
+
+    try {
+      await breakdownApi.updatePlotPointStatus(selectedBatch!.id, pointId, status);
+    } catch (error) {
+      console.error('更新剧情点状态失败:', error);
+      // 回滚本地状态
+      setPlotPointStatus(prev => ({
+        ...prev,
+        [pointId]: status === 'used' ? 'unused' : 'used'
+      }));
+    }
+  };
+
+  // 判断是否为 v2 格式
+  const isV2Format = breakdownResult?.format_version === 2;
 
   // 未选择批次
   if (!selectedBatch) {
@@ -389,7 +654,184 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
     );
   }
 
-  // 拆解完成且有结果
+  // V2 格式（剧情点表格视图）
+  if (isV2Format && breakdownResult?.plot_points) {
+    return (
+      <>
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {/* 标题栏 */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-bold text-slate-200">剧情拆解结果</h2>
+              <p className="text-xs text-slate-500 mt-1">V2 统一剧情点格式</p>
+            </div>
+          </div>
+
+          {/* 一致性评分卡片 */}
+          {breakdownResult.consistency_score !== undefined && breakdownResult.consistency_score !== null && (
+            <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-emerald-400 flex items-center gap-2">
+                  <Activity className="w-5 h-5" />
+                  一致性评分
+                </h3>
+                <div className="text-2xl font-black text-emerald-400">
+                  {breakdownResult.consistency_score}
+                  <span className="text-sm text-slate-500 ml-1">/ 100</span>
+                </div>
+              </div>
+              <div className="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-emerald-500 to-cyan-500"
+                  style={{ width: `${breakdownResult.consistency_score}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* 质检信息卡片 */}
+          {breakdownResult.qa_status && (
+            <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-purple-400 flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5" />
+                  质检结果
+                </h3>
+                <div className="flex items-center gap-3">
+                  {/* 质检分数 */}
+                  {breakdownResult.qa_score !== undefined && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-slate-400">分数:</span>
+                      <span className={`text-lg font-black ${
+                        breakdownResult.qa_score >= 80
+                          ? 'text-green-400'
+                          : breakdownResult.qa_score >= 60
+                          ? 'text-yellow-400'
+                          : 'text-red-400'
+                      }`}>
+                        {breakdownResult.qa_score}
+                      </span>
+                    </div>
+                  )}
+                  {/* 质检状态 */}
+                  <div className={`px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 ${
+                    breakdownResult.qa_status === 'PASS'
+                      ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                      : breakdownResult.qa_status === 'FAIL'
+                      ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                      : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+                  }`}>
+                    {breakdownResult.qa_status === 'PASS' && <CheckCircle className="w-3.5 h-3.5" />}
+                    {breakdownResult.qa_status === 'FAIL' && <XCircle className="w-3.5 h-3.5" />}
+                    {breakdownResult.qa_status === 'pending' && <Clock className="w-3.5 h-3.5" />}
+                    {breakdownResult.qa_status === 'PASS' ? '质检通过' : breakdownResult.qa_status === 'FAIL' ? '质检未通过' : '待质检'}
+                  </div>
+                  {/* 查看报告按钮 */}
+                  {breakdownResult.qa_report && (
+                    <button
+                      onClick={() => setQaReportModalOpen(true)}
+                      className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded-lg border border-slate-600 transition-colors"
+                    >
+                      查看报告
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 剧情点统计 */}
+          <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-cyan-400 flex items-center gap-2">
+                <List className="w-5 h-5" />
+                剧情点列表
+              </h3>
+              <div className="flex items-center gap-4 text-sm">
+                <span className="text-slate-400">
+                  共 <span className="text-cyan-400 font-semibold">{breakdownResult.plot_points.length}</span> 个剧情点
+                </span>
+                <span className="text-slate-500">|</span>
+                <span className="text-slate-400">
+                  已用 <span className="text-green-400 font-semibold">
+                    {breakdownResult.plot_points.filter(p => p.status === 'used').length}
+                  </span>
+                </span>
+                <span className="text-slate-500">|</span>
+                <span className="text-slate-400">
+                  未用 <span className="text-slate-400 font-semibold">
+                    {breakdownResult.plot_points.filter(p => p.status === 'unused').length}
+                  </span>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* 剧情点表格 */}
+          <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-slate-900/50">
+                <tr className="border-b border-slate-700/50">
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-slate-400 uppercase tracking-wider w-16">
+                    ID
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider w-40">
+                    场景
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider w-32">
+                    角色
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                    事件
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider w-28">
+                    钩子类型
+                  </th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-slate-400 uppercase tracking-wider w-24">
+                    集数
+                  </th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-slate-400 uppercase tracking-wider w-20">
+                    状态
+                  </th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-slate-400 uppercase tracking-wider w-20">
+                    剧本
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {breakdownResult.plot_points.map((point) => (
+                  <PlotPointTableRow
+                    key={point.id}
+                    point={{ ...point, status: plotPointStatus[point.id] || point.status }}
+                    onStatusChange={handlePlotPointStatusChange}
+                  />
+                ))}
+              </tbody>
+            </table>
+
+            {/* 表格底部提示 */}
+            <div className="px-4 py-3 bg-slate-900/30 border-t border-slate-700/50">
+              <p className="text-xs text-slate-500">
+                提示：点击状态可以切换"已用/未用"标记，用于标记该剧情点是否已被剧本使用。
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* 质检报告弹窗 */}
+        <AnimatePresence>
+          {qaReportModalOpen && (
+            <QAReportModal
+              report={breakdownResult.qa_report || null}
+              onClose={() => setQaReportModalOpen(false)}
+            />
+          )}
+        </AnimatePresence>
+      </>
+    );
+  }
+
+  // V1 格式（原有逻辑）
   if (selectedBatch.breakdown_status === 'completed' && breakdownResult) {
     return (
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -509,8 +951,8 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
                       key={episode.episode_number}
                       episode={episode}
                       status={episodeStatus[episode.episode_number] || 'unused'}
-                      scriptLink={undefined} // TODO: 从后端获取剧本链接
-                      onStatusChange={handleStatusChange}
+                      scriptLink={undefined}
+                      onStatusChange={handleEpisodeStatusChange}
                     />
                   ))}
                 </tbody>
@@ -519,7 +961,7 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
               {/* 表格视图提示 */}
               <div className="px-4 py-3 bg-slate-900/30 border-t border-slate-700/50">
                 <p className="text-xs text-slate-500">
-                  💡 提示：点击状态可以切换"已用/未用"标记。生成剧本后会自动显示链接。
+                  提示：点击状态可以切换"已用/未用"标记。生成剧本后会自动显示链接。
                 </p>
               </div>
             </div>
