@@ -265,7 +265,7 @@ const AIConfigurationPage: React.FC = () => {
   ];
 
   return (
-    <Layout className="bg-transparent min-h-screen">
+    <Layout className="bg-transparent h-full overflow-y-auto">
       <Content style={{ padding: '24px' }}>
         <motion.div
           initial={{ opacity: 0, y: 20 }}

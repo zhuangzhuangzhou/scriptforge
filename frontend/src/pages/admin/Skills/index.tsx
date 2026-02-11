@@ -240,7 +240,7 @@ const SkillsPage: React.FC = () => {
   ];
 
   return (
-    <div className="p-6 min-h-screen bg-slate-950">
+    <div className="p-6 h-full overflow-y-auto bg-slate-950">
       <GlassCard>
         <div className="mb-4 flex justify-between items-center">
           <h1 className="text-2xl font-bold text-slate-100">Skill 管理</h1>
