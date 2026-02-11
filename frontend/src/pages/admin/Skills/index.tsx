@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Table, Button, Input, Select, Tag, Space, message, Modal, Card, Tabs } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, PlayCircleOutlined, SearchOutlined, CopyOutlined } from '@ant-design/icons';
-import axios from 'axios';
-
-const { Search } = Input;
-const { Option } = Select;
-const { TabPane } = Tabs;
+import { Button, Tag, Space, message, Modal } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, PlayCircleOutlined, CopyOutlined } from '@ant-design/icons';
+import api from '../../../services/api';
+import { GlassCard } from '../../../components/ui/GlassCard';
+import { GlassTable } from '../../../components/ui/GlassTable';
+import { GlassInput } from '../../../components/ui/GlassInput';
+import { GlassSelect } from '../../../components/ui/GlassSelect';
+import { GlassTabs } from '../../../components/ui/GlassTabs';
 
 interface Skill {
   id: string;
@@ -38,7 +39,7 @@ const SkillsPage: React.FC = () => {
       if (searchText) params.search = searchText;
       if (categoryFilter) params.category = categoryFilter;
 
-      const response = await axios.get('/api/v1/skills', { params });
+      const response = await api.get('/skills', { params });
       setSkills(response.data);
     } catch (error: any) {
       message.error(error.response?.data?.detail || '加载失败');
@@ -54,7 +55,7 @@ const SkillsPage: React.FC = () => {
   // 复制 Skill
   const handleClone = async (skill: Skill) => {
     try {
-      const response = await axios.post(`/api/v1/skills/${skill.id}/clone`);
+      const response = await api.post(`/skills/${skill.id}/clone`);
       message.success('复制成功！您现在可以编辑自己的版本');
       loadSkills();
       // 跳转到编辑页面
@@ -74,7 +75,7 @@ const SkillsPage: React.FC = () => {
       cancelText: '取消',
       onOk: async () => {
         try {
-          await axios.delete(`/api/v1/skills/${skill.id}`);
+          await api.delete(`/skills/${skill.id}`);
           message.success('删除成功');
           loadSkills();
         } catch (error: any) {
@@ -195,11 +196,17 @@ const SkillsPage: React.FC = () => {
     },
   ];
 
+  const tabItems = [
+    { key: 'all', label: '全部' },
+    { key: 'builtin', label: '系统内置' },
+    { key: 'mine', label: '我的 Skills' },
+  ];
+
   return (
-    <div className="p-6">
-      <Card>
+    <div className="p-6 min-h-screen bg-slate-950">
+      <GlassCard>
         <div className="mb-4 flex justify-between items-center">
-          <h1 className="text-2xl font-bold">Skill 管理</h1>
+          <h1 className="text-2xl font-bold text-slate-100">Skill 管理</h1>
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -210,32 +217,29 @@ const SkillsPage: React.FC = () => {
         </div>
 
         <div className="mb-4 flex gap-4">
-          <Search
+          <GlassInput
             placeholder="搜索 Skill 名称或描述"
             allowClear
             style={{ width: 300 }}
-            onSearch={setSearchText}
+            onPressEnter={(e) => setSearchText((e.target as HTMLInputElement).value)}
             onChange={(e) => !e.target.value && setSearchText('')}
           />
-          <Select
+          <GlassSelect
             placeholder="选择分类"
             allowClear
             style={{ width: 150 }}
             onChange={setCategoryFilter}
-          >
-            <Option value="breakdown">拆解</Option>
-            <Option value="qa">质检</Option>
-            <Option value="script">剧本</Option>
-          </Select>
+            options={[
+              { value: 'breakdown', label: '拆解' },
+              { value: 'qa', label: '质检' },
+              { value: 'script', label: '剧本' },
+            ]}
+          />
         </div>
 
-        <Tabs activeKey={activeTab} onChange={setActiveTab}>
-          <TabPane tab="全部" key="all" />
-          <TabPane tab="系统内置" key="builtin" />
-          <TabPane tab="我的 Skills" key="mine" />
-        </Tabs>
+        <GlassTabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
 
-        <Table
+        <GlassTable
           columns={columns}
           dataSource={filteredSkills}
           rowKey="id"
@@ -248,13 +252,13 @@ const SkillsPage: React.FC = () => {
         />
 
         {activeTab === 'builtin' && (
-          <div className="mt-4 p-4 bg-blue-50 rounded">
-            <p className="text-sm text-blue-700">
+          <div className="mt-4 p-4 bg-cyan-500/10 border border-cyan-500/20 rounded-lg">
+            <p className="text-sm text-cyan-400">
               💡 提示：系统内置的 Skills 不能直接编辑。如果您想修改 Prompt，请点击"复制"按钮创建自己的版本。
             </p>
           </div>
         )}
-      </Card>
+      </GlassCard>
     </div>
   );
 };
