@@ -161,7 +161,7 @@ const UserManagement: React.FC = () => {
   ];
 
   return (
-    <div className="p-6 min-h-screen bg-slate-950">
+    <div className="p-6 h-full overflow-y-auto bg-slate-950">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}

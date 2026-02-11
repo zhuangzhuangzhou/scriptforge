@@ -90,13 +90,13 @@ const ModelManagement: React.FC = () => {
 
   // 渲染
   return (
-    <div style={{ height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column' }}>
-      <GlassCard style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ marginBottom: 24 }}>
-          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 600 }}>
+    <div className="p-6 h-full overflow-y-auto">
+      <GlassCard>
+        <div className="mb-6">
+          <h1 className="m-0 text-2xl font-semibold text-white">
             模型管理中心
           </h1>
-          <p style={{ margin: '8px 0 0 0', color: 'rgba(255, 255, 255, 0.6)' }}>
+          <p className="mt-2 mb-0 text-slate-400">
             管理 AI 模型提供商、模型配置、API 凭证、计费规则和系统配置
           </p>
         </div>
@@ -108,7 +108,7 @@ const ModelManagement: React.FC = () => {
         />
 
         {/* 懒加载标签页内容，并用错误边界包裹 */}
-        <div style={{ marginTop: 16, flex: 1, overflow: 'auto' }}>
+        <div className="mt-4">
           <ErrorBoundary key={activeTab}>
             {renderTabContent()}
           </ErrorBoundary>

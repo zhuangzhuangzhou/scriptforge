@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Button, Tag, Space, message, Modal } from 'antd';
+import { Button, Tag, Space, message, Modal, Switch } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, PlayCircleOutlined } from '@ant-design/icons';
 import api from '../../../services/api';
 import { GlassCard } from '../../../components/ui/GlassCard';
 import { GlassTable } from '../../../components/ui/GlassTable';
 import { GlassInput } from '../../../components/ui/GlassInput';
 import { GlassSelect } from '../../../components/ui/GlassSelect';
+import { GlassModal } from '../../../components/ui/GlassModal';
+import AgentEditor from './AgentEditor';
+import AgentTester from './AgentTester';
 
 interface Agent {
   id: string;
@@ -21,11 +23,17 @@ interface Agent {
 }
 
 const AgentsPage: React.FC = () => {
-  const navigate = useNavigate();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string | undefined>(undefined);
+
+  // 弹窗状态
+  const [editorVisible, setEditorVisible] = useState(false);
+  const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
+  const [testerVisible, setTesterVisible] = useState(false);
+  const [testingAgentId, setTestingAgentId] = useState<string | null>(null);
+  const [testingAgentName, setTestingAgentName] = useState('');
 
   const loadAgents = async () => {
     setLoading(true);
@@ -66,6 +74,44 @@ const AgentsPage: React.FC = () => {
     });
   };
 
+  const handleToggleActive = async (agent: Agent) => {
+    try {
+      await api.put(`/simple-agents/${agent.id}`, { is_active: !agent.is_active });
+      message.success(agent.is_active ? '已禁用' : '已启用');
+      loadAgents();
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '操作失败');
+    }
+  };
+
+  const handleEdit = (agentId: string | null) => {
+    setEditingAgentId(agentId);
+    setEditorVisible(true);
+  };
+
+  const handleTest = (agent: Agent) => {
+    setTestingAgentId(agent.id);
+    setTestingAgentName(agent.display_name);
+    setTesterVisible(true);
+  };
+
+  const handleEditorSaved = () => {
+    setEditorVisible(false);
+    setEditingAgentId(null);
+    loadAgents();
+  };
+
+  const handleEditorCancel = () => {
+    setEditorVisible(false);
+    setEditingAgentId(null);
+  };
+
+  const handleTesterClose = () => {
+    setTesterVisible(false);
+    setTestingAgentId(null);
+    setTestingAgentName('');
+  };
+
   const columns = [
     {
       title: '名称',
@@ -101,9 +147,14 @@ const AgentsPage: React.FC = () => {
     {
       title: '状态',
       key: 'status',
-      width: 120,
+      width: 150,
       render: (_: any, record: Agent) => (
         <Space>
+          <Switch
+            size="small"
+            checked={record.is_active}
+            onChange={() => handleToggleActive(record)}
+          />
           {record.is_builtin && <Tag color="gold">内置</Tag>}
           {record.visibility === 'private' && <Tag>私有</Tag>}
         </Space>
@@ -119,7 +170,7 @@ const AgentsPage: React.FC = () => {
             type="link"
             size="small"
             icon={<PlayCircleOutlined />}
-            onClick={() => navigate(`/admin/agents/${record.id}/test`)}
+            onClick={() => handleTest(record)}
           >
             测试
           </Button>
@@ -127,7 +178,7 @@ const AgentsPage: React.FC = () => {
             type="link"
             size="small"
             icon={<EditOutlined />}
-            onClick={() => navigate(`/admin/agents/${record.id}/edit`)}
+            onClick={() => handleEdit(record.id)}
             disabled={record.is_builtin}
           >
             编辑
@@ -148,14 +199,14 @@ const AgentsPage: React.FC = () => {
   ];
 
   return (
-    <div className="p-6 min-h-screen bg-slate-950">
+    <div className="p-6 h-full overflow-y-auto bg-slate-950">
       <GlassCard>
         <div className="mb-4 flex justify-between items-center">
           <h1 className="text-2xl font-bold text-slate-100">Agent 管理</h1>
           <Button
             type="primary"
             icon={<PlusOutlined />}
-            onClick={() => navigate('/admin/agents/new')}
+            onClick={() => handleEdit(null)}
           >
             新建 Agent
           </Button>
@@ -194,6 +245,38 @@ const AgentsPage: React.FC = () => {
           }}
         />
       </GlassCard>
+
+      {/* 编辑/新建弹窗 */}
+      <GlassModal
+        title={editingAgentId ? '编辑 Agent' : '新建 Agent'}
+        open={editorVisible}
+        onCancel={handleEditorCancel}
+        footer={null}
+        width={800}
+        destroyOnClose
+      >
+        <AgentEditor
+          agentId={editingAgentId}
+          onSaved={handleEditorSaved}
+          onCancel={handleEditorCancel}
+        />
+      </GlassModal>
+
+      {/* 测试弹窗 */}
+      <GlassModal
+        title={`测试 Agent: ${testingAgentName}`}
+        open={testerVisible}
+        onCancel={handleTesterClose}
+        footer={null}
+        width={1000}
+        destroyOnClose
+      >
+        {testingAgentId && (
+          <AgentTester
+            agentId={testingAgentId}
+          />
+        )}
+      </GlassModal>
     </div>
   );
 };

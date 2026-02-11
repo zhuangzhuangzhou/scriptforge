@@ -117,14 +117,17 @@ async def list_skills(
 ):
     """获取 Skill 列表"""
 
-    # 构建查询条件
-    conditions = [Skill.is_active == True]
+    # 构建查询条件：admin 可以看到所有 Skill（包括已禁用的）
+    conditions = []
+    if current_user.role != "admin":
+        conditions.append(Skill.is_active == True)
 
-    # 权限过滤：只显示公共的、自己创建的、或共享给自己的
-    conditions.append(
-        (Skill.visibility == "public") |
-        (Skill.owner_id == current_user.id)
-    )
+    # 权限过滤：admin 可以看到所有 Skill
+    if current_user.role != "admin":
+        conditions.append(
+            (Skill.visibility == "public") |
+            (Skill.owner_id == current_user.id)
+        )
 
     if category:
         conditions.append(Skill.category == category)
@@ -140,8 +143,11 @@ async def list_skills(
         )
 
     # 执行查询
+    query = select(Skill)
+    if conditions:
+        query = query.where(and_(*conditions))
     result = await db.execute(
-        select(Skill).where(and_(*conditions)).order_by(Skill.created_at.desc())
+        query.order_by(Skill.created_at.desc())
     )
     skills = result.scalars().all()
 
@@ -186,8 +192,8 @@ async def get_skill(
     if not skill:
         raise HTTPException(status_code=404, detail="Skill 不存在")
 
-    # 权限检查
-    if skill.visibility == "private" and skill.owner_id != current_user.id:
+    # 权限检查：admin 可以查看所有 Skill
+    if skill.visibility == "private" and skill.owner_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="无权访问此 Skill")
 
     return SkillResponse(
@@ -295,12 +301,12 @@ async def update_skill(
     if not skill:
         raise HTTPException(status_code=404, detail="Skill 不存在")
 
-    # 权限检查：只有创建者可以编辑
-    if skill.owner_id != current_user.id:
+    # 权限检查：admin 可以编辑所有 Skill
+    if skill.owner_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="无权编辑此 Skill")
 
-    # 内置 Skill 不可编辑
-    if skill.is_builtin:
+    # 内置 Skill 仅 admin 可编辑
+    if skill.is_builtin and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="内置 Skill 不可编辑")
 
     # 更新字段
@@ -349,12 +355,12 @@ async def delete_skill(
     if not skill:
         raise HTTPException(status_code=404, detail="Skill 不存在")
 
-    # 权限检查
-    if skill.owner_id != current_user.id:
+    # 权限检查：admin 可以删除所有 Skill
+    if skill.owner_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="无权删除此 Skill")
 
-    # 内置 Skill 不可删除
-    if skill.is_builtin:
+    # 内置 Skill 仅 admin 可删除
+    if skill.is_builtin and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="内置 Skill 不可删除")
 
     # 软删除
@@ -386,8 +392,8 @@ async def test_skill(
     if not skill:
         raise HTTPException(status_code=404, detail="Skill 不存在")
 
-    # 权限检查
-    if skill.visibility == "private" and skill.owner_id != current_user.id:
+    # 权限检查：admin 可以测试所有 Skill
+    if skill.visibility == "private" and skill.owner_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="无权测试此 Skill")
 
     # 获取模型配置
