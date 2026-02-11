@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { Card, Button, message, Spin, Alert } from 'antd';
-import { ArrowLeftOutlined, PlayCircleOutlined } from '@ant-design/icons';
+import { Button, message, Spin, Alert } from 'antd';
+import { PlayCircleOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import MonacoEditor from '@monaco-editor/react';
 
@@ -14,9 +13,11 @@ interface Skill {
   example_output: any;
 }
 
-const SkillTester: React.FC = () => {
-  const navigate = useNavigate();
-  const { skillId } = useParams<{ skillId: string }>();
+interface SkillTesterProps {
+  skillId: string;
+}
+
+const SkillTester: React.FC<SkillTesterProps> = ({ skillId }) => {
   const [skill, setSkill] = useState<Skill | null>(null);
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -25,7 +26,6 @@ const SkillTester: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [executionTime, setExecutionTime] = useState<number | null>(null);
 
-  // 加载 Skill 数据
   useEffect(() => {
     loadSkill();
   }, [skillId]);
@@ -37,7 +37,6 @@ const SkillTester: React.FC = () => {
       const skillData = response.data;
       setSkill(skillData);
 
-      // 使用示例输入
       if (skillData.example_input) {
         setInputData(JSON.stringify(skillData.example_input, null, 2));
       }
@@ -48,7 +47,6 @@ const SkillTester: React.FC = () => {
     }
   };
 
-  // 执行测试
   const handleTest = async () => {
     setTesting(true);
     setResult(null);
@@ -79,112 +77,76 @@ const SkillTester: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="p-6 flex justify-center items-center h-screen">
+      <div className="flex justify-center items-center py-12">
         <Spin size="large" />
       </div>
     );
   }
 
   if (!skill) {
-    return (
-      <div className="p-6">
-        <Alert message="Skill 不存在" type="error" />
-      </div>
-    );
+    return <Alert message="Skill 不存在" type="error" />;
   }
 
   return (
-    <div className="p-6">
-      <Card>
-        <div className="mb-4 flex justify-between items-center">
-          <div>
-            <h1 className="text-2xl font-bold">{skill.display_name}</h1>
-            <p className="text-slate-500">{skill.description}</p>
+    <div>
+      <div className="mb-4">
+        <p className="text-slate-400">{skill.description}</p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        {/* 输入区域 */}
+        <div>
+          <div className="mb-2 flex justify-between items-center">
+            <h3 className="font-semibold text-slate-200">输入数据 (JSON)</h3>
+            <Button
+              type="primary"
+              icon={<PlayCircleOutlined />}
+              onClick={handleTest}
+              loading={testing}
+            >
+              执行测试
+            </Button>
           </div>
-          <Button
-            icon={<ArrowLeftOutlined />}
-            onClick={() => navigate('/admin/skills')}
-          >
-            返回
-          </Button>
+          <div className="border border-slate-700 rounded">
+            <MonacoEditor
+              height="350px"
+              language="json"
+              theme="vs-dark"
+              value={inputData}
+              onChange={(value) => setInputData(value || '{}')}
+              options={{
+                minimap: { enabled: false },
+                fontSize: 14,
+              }}
+            />
+          </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          {/* 输入区域 */}
-          <div>
-            <div className="mb-2 flex justify-between items-center">
-              <h3 className="font-semibold">输入数据 (JSON)</h3>
-              <Button
-                type="primary"
-                icon={<PlayCircleOutlined />}
-                onClick={handleTest}
-                loading={testing}
-              >
-                执行测试
-              </Button>
-            </div>
-            <div className="border rounded">
-              <MonacoEditor
-                height="400px"
-                language="json"
-                value={inputData}
-                onChange={(value) => setInputData(value || '{}')}
-                options={{
-                  minimap: { enabled: false },
-                  fontSize: 14,
-                }}
-              />
-            </div>
-          </div>
-
-          {/* 输出区域 */}
-          <div>
-            <div className="mb-2 flex justify-between items-center">
-              <h3 className="font-semibold">执行结果</h3>
-              {executionTime !== null && (
-                <span className="text-sm text-slate-500">
-                  耗时: {executionTime.toFixed(2)}s
-                </span>
-              )}
-            </div>
-
-            {error ? (
-              <Alert
-                message="执行失败"
-                description={error}
-                type="error"
-                showIcon
-              />
-            ) : result ? (
-              <div className="border rounded">
-                <MonacoEditor
-                  height="400px"
-                  language="json"
-                  value={JSON.stringify(result, null, 2)}
-                  options={{
-                    readOnly: true,
-                    minimap: { enabled: false },
-                    fontSize: 14,
-                  }}
-                />
-              </div>
-            ) : (
-              <div className="border rounded p-4 h-[400px] flex items-center justify-center text-slate-400">
-                点击"执行测试"查看结果
-              </div>
+        {/* 输出区域 */}
+        <div>
+          <div className="mb-2 flex justify-between items-center">
+            <h3 className="font-semibold text-slate-200">执行结果</h3>
+            {executionTime !== null && (
+              <span className="text-sm text-slate-500">
+                耗时: {executionTime.toFixed(2)}s
+              </span>
             )}
           </div>
-        </div>
 
-        {/* 示例输出 */}
-        {skill.example_output && (
-          <div className="mt-4">
-            <h3 className="font-semibold mb-2">预期输出示例</h3>
-            <div className="border rounded">
+          {error ? (
+            <Alert
+              message="执行失败"
+              description={error}
+              type="error"
+              showIcon
+            />
+          ) : result ? (
+            <div className="border border-slate-700 rounded">
               <MonacoEditor
-                height="200px"
+                height="350px"
                 language="json"
-                value={JSON.stringify(skill.example_output, null, 2)}
+                theme="vs-dark"
+                value={JSON.stringify(result, null, 2)}
                 options={{
                   readOnly: true,
                   minimap: { enabled: false },
@@ -192,9 +154,33 @@ const SkillTester: React.FC = () => {
                 }}
               />
             </div>
+          ) : (
+            <div className="border border-slate-700 rounded p-4 h-[350px] flex items-center justify-center text-slate-400">
+              点击"执行测试"查看结果
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 示例输出 */}
+      {skill.example_output && (
+        <div className="mt-4">
+          <h3 className="font-semibold mb-2 text-slate-200">预期输出示例</h3>
+          <div className="border border-slate-700 rounded">
+            <MonacoEditor
+              height="150px"
+              language="json"
+              theme="vs-dark"
+              value={JSON.stringify(skill.example_output, null, 2)}
+              options={{
+                readOnly: true,
+                minimap: { enabled: false },
+                fontSize: 14,
+              }}
+            />
           </div>
-        )}
-      </Card>
+        </div>
+      )}
     </div>
   );
 };

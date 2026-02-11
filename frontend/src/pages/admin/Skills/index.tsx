@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Button, Tag, Space, message, Modal } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, PlayCircleOutlined, CopyOutlined } from '@ant-design/icons';
 import api from '../../../services/api';
@@ -8,6 +7,9 @@ import { GlassTable } from '../../../components/ui/GlassTable';
 import { GlassInput } from '../../../components/ui/GlassInput';
 import { GlassSelect } from '../../../components/ui/GlassSelect';
 import { GlassTabs } from '../../../components/ui/GlassTabs';
+import { GlassModal } from '../../../components/ui/GlassModal';
+import SkillEditor from './SkillEditor';
+import SkillTester from './SkillTester';
 
 interface Skill {
   id: string;
@@ -24,12 +26,18 @@ interface Skill {
 }
 
 const SkillsPage: React.FC = () => {
-  const navigate = useNavigate();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string | undefined>(undefined);
   const [activeTab, setActiveTab] = useState('all');
+
+  // 弹窗状态
+  const [editorVisible, setEditorVisible] = useState(false);
+  const [editingSkillId, setEditingSkillId] = useState<string | null>(null);
+  const [testerVisible, setTesterVisible] = useState(false);
+  const [testingSkillId, setTestingSkillId] = useState<string | null>(null);
+  const [testingSkillName, setTestingSkillName] = useState('');
 
   // 加载 Skills 列表
   const loadSkills = async () => {
@@ -58,8 +66,9 @@ const SkillsPage: React.FC = () => {
       const response = await api.post(`/skills/${skill.id}/clone`);
       message.success('复制成功！您现在可以编辑自己的版本');
       loadSkills();
-      // 跳转到编辑页面
-      navigate(`/admin/skills/${response.data.id}/edit`);
+      // 打开编辑弹窗
+      setEditingSkillId(response.data.id);
+      setEditorVisible(true);
     } catch (error: any) {
       message.error(error.response?.data?.detail || '复制失败');
     }
@@ -83,6 +92,34 @@ const SkillsPage: React.FC = () => {
         }
       },
     });
+  };
+
+  const handleEdit = (skillId: string | null) => {
+    setEditingSkillId(skillId);
+    setEditorVisible(true);
+  };
+
+  const handleTest = (skill: Skill) => {
+    setTestingSkillId(skill.id);
+    setTestingSkillName(skill.display_name);
+    setTesterVisible(true);
+  };
+
+  const handleEditorSaved = () => {
+    setEditorVisible(false);
+    setEditingSkillId(null);
+    loadSkills();
+  };
+
+  const handleEditorCancel = () => {
+    setEditorVisible(false);
+    setEditingSkillId(null);
+  };
+
+  const handleTesterClose = () => {
+    setTesterVisible(false);
+    setTestingSkillId(null);
+    setTestingSkillName('');
   };
 
   // 根据标签页筛选
@@ -157,7 +194,7 @@ const SkillsPage: React.FC = () => {
             type="link"
             size="small"
             icon={<PlayCircleOutlined />}
-            onClick={() => navigate(`/admin/skills/${record.id}/test`)}
+            onClick={() => handleTest(record)}
           >
             测试
           </Button>
@@ -175,7 +212,7 @@ const SkillsPage: React.FC = () => {
               type="link"
               size="small"
               icon={<EditOutlined />}
-              onClick={() => navigate(`/admin/skills/${record.id}/edit`)}
+              onClick={() => handleEdit(record.id)}
             >
               编辑
             </Button>
@@ -210,7 +247,7 @@ const SkillsPage: React.FC = () => {
           <Button
             type="primary"
             icon={<PlusOutlined />}
-            onClick={() => navigate('/admin/skills/new')}
+            onClick={() => handleEdit(null)}
           >
             新建 Skill
           </Button>
@@ -259,6 +296,38 @@ const SkillsPage: React.FC = () => {
           </div>
         )}
       </GlassCard>
+
+      {/* 编辑/新建弹窗 */}
+      <GlassModal
+        title={editingSkillId ? '编辑 Skill' : '新建 Skill'}
+        open={editorVisible}
+        onCancel={handleEditorCancel}
+        footer={null}
+        width={900}
+        destroyOnClose
+      >
+        <SkillEditor
+          skillId={editingSkillId}
+          onSaved={handleEditorSaved}
+          onCancel={handleEditorCancel}
+        />
+      </GlassModal>
+
+      {/* 测试弹窗 */}
+      <GlassModal
+        title={`测试 Skill: ${testingSkillName}`}
+        open={testerVisible}
+        onCancel={handleTesterClose}
+        footer={null}
+        width={1000}
+        destroyOnClose
+      >
+        {testingSkillId && (
+          <SkillTester
+            skillId={testingSkillId}
+          />
+        )}
+      </GlassModal>
     </div>
   );
 };
