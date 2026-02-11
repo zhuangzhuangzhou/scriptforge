@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Form, Input, Select, Button, message, Space, Spin } from 'antd';
 import { SaveOutlined } from '@ant-design/icons';
-import MonacoEditor from '@monaco-editor/react';
 import api from '../../../services/api';
+import WorkflowEditor, { WorkflowConfig, SkillInfo } from '../../../components/WorkflowEditor';
 
 const { TextArea } = Input;
 const { Option } = Select;
@@ -18,26 +18,46 @@ interface AgentFormData {
   display_name: string;
   description?: string;
   category?: string;
-  workflow: any;
+  workflow: WorkflowConfig;
   visibility: string;
 }
+
+const defaultWorkflow: WorkflowConfig = {
+  type: 'sequential',
+  steps: [],
+};
 
 const AgentEditor: React.FC<AgentEditorProps> = ({ agentId, onSaved, onCancel }) => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [workflow, setWorkflow] = useState('{\n  "steps": []\n}');
+  const [workflow, setWorkflow] = useState<WorkflowConfig>(defaultWorkflow);
+  const [availableSkills, setAvailableSkills] = useState<SkillInfo[]>([]);
 
   const isEditMode = !!agentId;
+
+  // 加载可用 Skills
+  useEffect(() => {
+    loadSkills();
+  }, []);
 
   useEffect(() => {
     if (isEditMode) {
       loadAgent();
     } else {
       form.resetFields();
-      setWorkflow('{\n  "steps": []\n}');
+      setWorkflow(defaultWorkflow);
     }
   }, [agentId]);
+
+  const loadSkills = async () => {
+    try {
+      const response = await api.get('/skills/available');
+      setAvailableSkills(response.data || []);
+    } catch (error) {
+      console.error('加载 Skills 失败:', error);
+    }
+  };
 
   const loadAgent = async () => {
     setLoading(true);
@@ -53,7 +73,14 @@ const AgentEditor: React.FC<AgentEditorProps> = ({ agentId, onSaved, onCancel })
         visibility: agent.visibility,
       });
 
-      setWorkflow(JSON.stringify(agent.workflow, null, 2));
+      // 解析工作流配置
+      const wf = agent.workflow || defaultWorkflow;
+      setWorkflow({
+        type: wf.type || 'sequential',
+        max_iterations: wf.max_iterations,
+        exit_condition: wf.exit_condition,
+        steps: Array.isArray(wf.steps) ? wf.steps : [],
+      });
     } catch (error: any) {
       message.error(error.response?.data?.detail || '加载失败');
     } finally {
@@ -62,11 +89,23 @@ const AgentEditor: React.FC<AgentEditorProps> = ({ agentId, onSaved, onCancel })
   };
 
   const handleSave = async (values: any) => {
+    // 验证工作流
+    if (workflow.steps.length === 0) {
+      message.warning('请至少添加一个工作流步骤');
+      return;
+    }
+
+    const hasEmptySkill = workflow.steps.some((s) => !s.skill);
+    if (hasEmptySkill) {
+      message.warning('请为所有步骤选择 Skill');
+      return;
+    }
+
     setSaving(true);
     try {
       const data: AgentFormData = {
         ...values,
-        workflow: JSON.parse(workflow),
+        workflow,
       };
 
       if (isEditMode) {
@@ -103,71 +142,53 @@ const AgentEditor: React.FC<AgentEditorProps> = ({ agentId, onSaved, onCancel })
         category: 'breakdown',
       }}
     >
-      <Form.Item
-        label="Agent 名称"
-        name="name"
-        rules={[{ required: true, message: '请输入 Agent 名称' }]}
-        extra="唯一标识，只能包含字母、数字和下划线"
-      >
-        <Input placeholder="例如：breakdown_agent" disabled={isEditMode} />
-      </Form.Item>
+      <div className="grid grid-cols-2 gap-4">
+        <Form.Item
+          label="Agent 名称"
+          name="name"
+          rules={[{ required: true, message: '请输入 Agent 名称' }]}
+          extra="唯一标识，只能包含字母、数字和下划线"
+        >
+          <Input placeholder="例如：breakdown_agent" disabled={isEditMode} />
+        </Form.Item>
 
-      <Form.Item
-        label="显示名称"
-        name="display_name"
-        rules={[{ required: true, message: '请输入显示名称' }]}
-      >
-        <Input placeholder="例如：剧情拆解 Agent" />
-      </Form.Item>
+        <Form.Item
+          label="显示名称"
+          name="display_name"
+          rules={[{ required: true, message: '请输入显示名称' }]}
+        >
+          <Input placeholder="例如：剧情拆解 Agent" />
+        </Form.Item>
+      </div>
 
       <Form.Item label="描述" name="description">
         <TextArea rows={2} placeholder="简要描述此 Agent 的功能" />
       </Form.Item>
 
-      <Form.Item label="分类" name="category">
-        <Select>
-          <Option value="breakdown">拆解</Option>
-          <Option value="qa">质检</Option>
-          <Option value="script">剧本</Option>
-        </Select>
-      </Form.Item>
+      <div className="grid grid-cols-2 gap-4">
+        <Form.Item label="分类" name="category">
+          <Select>
+            <Option value="breakdown">拆解</Option>
+            <Option value="qa">质检</Option>
+            <Option value="script">剧本</Option>
+          </Select>
+        </Form.Item>
 
-      <Form.Item label="可见性" name="visibility">
-        <Select>
-          <Option value="public">公共</Option>
-          <Option value="private">私有</Option>
-        </Select>
-      </Form.Item>
+        <Form.Item label="可见性" name="visibility">
+          <Select>
+            <Option value="public">公共</Option>
+            <Option value="private">私有</Option>
+          </Select>
+        </Form.Item>
+      </div>
 
-      <Form.Item label="工作流配置 (JSON)" required>
-        <div className="border rounded">
-          <MonacoEditor
-            height="300px"
-            language="json"
+      <Form.Item label="工作流配置" required>
+        <div className="h-[500px]">
+          <WorkflowEditor
             value={workflow}
-            onChange={(value) => setWorkflow(value || '{}')}
-            options={{
-              minimap: { enabled: false },
-              fontSize: 14,
-            }}
+            onChange={setWorkflow}
+            availableSkills={availableSkills}
           />
-        </div>
-        <div className="text-xs text-slate-500 mt-2">
-          <p>工作流示例：</p>
-          <pre className="bg-slate-800/50 p-2 rounded mt-1 text-slate-400">
-{`{
-  "steps": [
-    {
-      "id": "step1",
-      "skill": "conflict_extraction",
-      "inputs": {
-        "chapters_text": "\${context.chapters_text}"
-      },
-      "output_key": "conflicts"
-    }
-  ]
-}`}
-          </pre>
         </div>
       </Form.Item>
 
