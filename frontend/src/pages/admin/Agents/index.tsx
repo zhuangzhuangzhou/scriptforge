@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Button, Tag, Space, message, Modal } from 'antd';
+import { Button, Tag, Space, message, Modal, Switch } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, PlayCircleOutlined } from '@ant-design/icons';
 import api from '../../../services/api';
 import { GlassCard } from '../../../components/ui/GlassCard';
@@ -74,6 +74,16 @@ const AgentsPage: React.FC = () => {
     });
   };
 
+  const handleToggleActive = async (agent: Agent) => {
+    try {
+      await api.put(`/simple-agents/${agent.id}`, { is_active: !agent.is_active });
+      message.success(agent.is_active ? '已禁用' : '已启用');
+      loadAgents();
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '操作失败');
+    }
+  };
+
   const handleEdit = (agentId: string | null) => {
     setEditingAgentId(agentId);
     setEditorVisible(true);
@@ -137,9 +147,14 @@ const AgentsPage: React.FC = () => {
     {
       title: '状态',
       key: 'status',
-      width: 120,
+      width: 150,
       render: (_: any, record: Agent) => (
         <Space>
+          <Switch
+            size="small"
+            checked={record.is_active}
+            onChange={() => handleToggleActive(record)}
+          />
           {record.is_builtin && <Tag color="gold">内置</Tag>}
           {record.visibility === 'private' && <Tag>私有</Tag>}
         </Space>

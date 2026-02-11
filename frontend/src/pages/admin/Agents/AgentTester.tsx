@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Button, message, Spin, Alert, Timeline } from 'antd';
 import { PlayCircleOutlined, CheckCircleOutlined } from '@ant-design/icons';
-import axios from 'axios';
+import api from '../../../services/api';
 import MonacoEditor from '@monaco-editor/react';
 
 interface Agent {
@@ -32,7 +32,7 @@ const AgentTester: React.FC<AgentTesterProps> = ({ agentId }) => {
   const loadAgent = async () => {
     setLoading(true);
     try {
-      const response = await axios.get(`/api/v1/simple-agents/${agentId}`);
+      const response = await api.get(`/simple-agents/${agentId}`);
       setAgent(response.data);
     } catch (error: any) {
       message.error(error.response?.data?.detail || '加载失败');
@@ -49,7 +49,7 @@ const AgentTester: React.FC<AgentTesterProps> = ({ agentId }) => {
 
     try {
       const context = JSON.parse(contextData);
-      const response = await axios.post(`/api/v1/simple-agents/${agentId}/execute`, {
+      const response = await api.post(`/simple-agents/${agentId}/execute`, {
         context,
       });
 

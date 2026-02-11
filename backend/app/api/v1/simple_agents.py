@@ -83,14 +83,17 @@ async def list_agents(
 ):
     """获取 Agent 列表"""
 
-    # 构建查询条件
-    conditions = [SimpleAgent.is_active == True]
+    # 构建查询条件：admin 可以看到所有 Agent（包括已禁用的）
+    conditions = []
+    if current_user.role != "admin":
+        conditions.append(SimpleAgent.is_active == True)
 
-    # 权限过滤
-    conditions.append(
-        (SimpleAgent.visibility == "public") |
-        (SimpleAgent.owner_id == current_user.id)
-    )
+    # 权限过滤：admin 可以看到所有 Agent
+    if current_user.role != "admin":
+        conditions.append(
+            (SimpleAgent.visibility == "public") |
+            (SimpleAgent.owner_id == current_user.id)
+        )
 
     if category:
         conditions.append(SimpleAgent.category == category)
@@ -103,8 +106,11 @@ async def list_agents(
         )
 
     # 执行查询
+    query = select(SimpleAgent)
+    if conditions:
+        query = query.where(and_(*conditions))
     result = await db.execute(
-        select(SimpleAgent).where(and_(*conditions)).order_by(SimpleAgent.created_at.desc())
+        query.order_by(SimpleAgent.created_at.desc())
     )
     agents = result.scalars().all()
 
@@ -144,8 +150,8 @@ async def get_agent(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
 
-    # 权限检查
-    if agent.visibility == "private" and agent.owner_id != current_user.id:
+    # 权限检查：admin 可以查看所有 Agent
+    if agent.visibility == "private" and agent.owner_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="无权访问此 Agent")
 
     return AgentResponse(
@@ -234,12 +240,12 @@ async def update_agent(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
 
-    # 权限检查
-    if agent.owner_id != current_user.id:
+    # 权限检查：admin 可以编辑所有 Agent
+    if agent.owner_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="无权编辑此 Agent")
 
-    # 内置 Agent 不可编辑
-    if agent.is_builtin:
+    # 内置 Agent 仅 admin 可编辑
+    if agent.is_builtin and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="内置 Agent 不可编辑")
 
     # 更新字段
@@ -283,12 +289,12 @@ async def delete_agent(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
 
-    # 权限检查
-    if agent.owner_id != current_user.id:
+    # 权限检查：admin 可以删除所有 Agent
+    if agent.owner_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="无权删除此 Agent")
 
-    # 内置 Agent 不可删除
-    if agent.is_builtin:
+    # 内置 Agent 仅 admin 可删除
+    if agent.is_builtin and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="内置 Agent 不可删除")
 
     # 软删除
@@ -319,8 +325,8 @@ async def execute_agent(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent 不存在")
 
-    # 权限检查
-    if agent.visibility == "private" and agent.owner_id != current_user.id:
+    # 权限检查：admin 可以执行所有 Agent
+    if agent.visibility == "private" and agent.owner_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="无权执行此 Agent")
 
     # 获取模型配置

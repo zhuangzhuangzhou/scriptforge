@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Form, Input, Select, Button, message, Space, Spin } from 'antd';
 import { SaveOutlined } from '@ant-design/icons';
-import axios from 'axios';
 import MonacoEditor from '@monaco-editor/react';
+import api from '../../../services/api';
 
 const { TextArea } = Input;
 const { Option } = Select;
@@ -42,7 +42,7 @@ const AgentEditor: React.FC<AgentEditorProps> = ({ agentId, onSaved, onCancel })
   const loadAgent = async () => {
     setLoading(true);
     try {
-      const response = await axios.get(`/api/v1/simple-agents/${agentId}`);
+      const response = await api.get(`/simple-agents/${agentId}`);
       const agent = response.data;
 
       form.setFieldsValue({
@@ -70,10 +70,10 @@ const AgentEditor: React.FC<AgentEditorProps> = ({ agentId, onSaved, onCancel })
       };
 
       if (isEditMode) {
-        await axios.put(`/api/v1/simple-agents/${agentId}`, data);
+        await api.put(`/simple-agents/${agentId}`, data);
         message.success('保存成功');
       } else {
-        await axios.post('/api/v1/simple-agents', data);
+        await api.post('/simple-agents', data);
         message.success('创建成功');
       }
 
