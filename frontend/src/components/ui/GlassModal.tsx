@@ -21,6 +21,8 @@ export const GlassModal: React.FC<ModalProps> = (props) => {
       <Modal
         {...props}
         centered
+        closable={props.closable !== false}
+        wrapClassName={`dark-glass-modal ${props.wrapClassName || ''}`}
       />
     </ConfigProvider>
   );
