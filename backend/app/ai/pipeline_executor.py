@@ -626,43 +626,52 @@ class PipelineExecutor:
     def _looks_like_uuid(value: str) -> bool:
         return bool(re.match(r"^[0-9a-fA-F-]{36}$", value))
 
-    async def get_adapt_method(self) -> dict:
-        """获取适配方法配置（优先用户自定义）"""
+    async def get_adapt_method(self) -> str:
+        """获取适配方法配置（返回 Markdown 内容）"""
         if self._adapt_method is None:
             key = self.task_config.get("adapt_method_key", "adapt_method_default")
-            config = await self._load_config(key)
-            self._adapt_method = config.value if config else {}
+            resource = await self._load_resource(key, "methodology")
+            self._adapt_method = resource.content if resource else ""
         return self._adapt_method
 
-    async def get_quality_rule(self) -> dict:
-        """获取质检规则配置"""
+    async def get_quality_rule(self) -> str:
+        """获取质检规则配置（返回 Markdown 内容）"""
         if self._quality_rule is None:
             key = self.task_config.get("quality_rule_key", "qa_breakdown_default")
-            config = await self._load_config(key)
-            self._quality_rule = config.value if config else {}
+            resource = await self._load_resource(key, "qa_rules")
+            self._quality_rule = resource.content if resource else ""
         return self._quality_rule
 
-    async def get_output_style(self) -> dict:
-        """获取输出风格配置"""
+    async def get_output_style(self) -> str:
+        """获取输出风格配置（返回 Markdown 内容）"""
         if self._output_style is None:
             key = self.task_config.get("output_style_key", "output_style_default")
-            config = await self._load_config(key)
-            self._output_style = config.value if config else {}
+            resource = await self._load_resource(key, "output_style")
+            self._output_style = resource.content if resource else ""
         return self._output_style
 
-    async def _load_config(self, key: str):
-        """加载配置（用户自定义优先）"""
-        from app.models.ai_configuration import AIConfiguration
+    async def _load_resource(self, key: str, category: str):
+        """加载 AI 资源（按 name 或 id 查找）"""
+        from app.models.ai_resource import AIResource
 
+        # 先尝试按 name 查找
         result = await self.db.execute(
-            select(AIConfiguration)
-            .where(AIConfiguration.key == key)
-            .where((AIConfiguration.user_id == self.user_id) | (AIConfiguration.user_id.is_(None)))
-            .order_by(AIConfiguration.user_id.desc().nulls_last())
+            select(AIResource)
+            .where(AIResource.name == key)
+            .where(AIResource.category == category)
+            .where(AIResource.is_active == True)
             .limit(1)
         )
-        config = result.scalar_one_or_none()
-        if not config:
-            # 如果配置不存在，返回 None（调用方会使用空字典）
-            return None
-        return config
+        resource = result.scalar_one_or_none()
+
+        # 如果按 name 找不到，尝试按 id 查找（兼容传入 UUID 的情况）
+        if not resource and self._looks_like_uuid(key):
+            result = await self.db.execute(
+                select(AIResource)
+                .where(AIResource.id == key)
+                .where(AIResource.is_active == True)
+                .limit(1)
+            )
+            resource = result.scalar_one_or_none()
+
+        return resource

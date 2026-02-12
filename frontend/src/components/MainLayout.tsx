@@ -3,7 +3,6 @@ import { Film, Bell, LogOut, ChevronLeft, Settings, Shield, Gem, User, Lock, Bot
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { message, Dropdown } from 'antd';
 import GlobalSettingsModal from './modals/GlobalSettingsModal';
-import AIConfigurationModal from './modals/AIConfigurationModal';
 import RechargeModal from './modals/RechargeModal';
 import BillingModal from './modals/BillingModal';
 import TierComparisonModal from './modals/TierComparisonModal';
@@ -19,7 +18,6 @@ interface MainLayoutProps {
 
 const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, setUserTier }) => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isAIConfigOpen, setIsAIConfigOpen] = useState(false);
   const [isRechargeOpen, setIsRechargeOpen] = useState(false);
   const [isBillingOpen, setIsBillingOpen] = useState(false);
   const [isTierComparisonOpen, setIsTierComparisonOpen] = useState(false);
@@ -100,14 +98,16 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
             </button>
           )}
 
-          {/* AI Settings */}
-          <button
-            onClick={() => setIsAIConfigOpen(true)}
-            className="h-10 px-3 bg-slate-900/50 rounded-full flex items-center justify-center cursor-pointer hover:border-cyan-500/50 hover:bg-slate-800/80 transition-all text-slate-400 hover:text-white"
-            title="AI 系统配置"
-          >
-            <Bot size={19} />
-          </button>
+          {/* AI Settings - 跳转到资源管理页面 */}
+          {user?.role === 'admin' && (
+            <button
+              onClick={() => navigate('/admin/resources')}
+              className="h-10 px-3 bg-slate-900/50 rounded-full flex items-center justify-center cursor-pointer hover:border-cyan-500/50 hover:bg-slate-800/80 transition-all text-slate-400 hover:text-white"
+              title="AI 资源管理"
+            >
+              <Bot size={19} />
+            </button>
+          )}
 
           <button
             onClick={() => setIsSettingsOpen(true)}
@@ -194,11 +194,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
       {/* Global Settings Modal */}
       {isSettingsOpen && (
         <GlobalSettingsModal onClose={() => setIsSettingsOpen(false)} userTier={userTier} />
-      )}
-
-      {/* AI Configuration Modal */}
-      {isAIConfigOpen && (
-        <AIConfigurationModal onClose={() => setIsAIConfigOpen(false)} />
       )}
 
       {/* Recharge/Subscription Modal */}

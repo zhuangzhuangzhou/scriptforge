@@ -81,6 +81,16 @@ async def get_current_user(
     return user
 
 
+async def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    """要求管理员权限"""
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="需要管理员权限"
+        )
+    return current_user
+
+
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(user_data: UserRegister, db: AsyncSession = Depends(get_db)):
     """用户注册"""

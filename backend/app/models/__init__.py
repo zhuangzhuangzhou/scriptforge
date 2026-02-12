@@ -14,7 +14,6 @@ from app.models.agent import AgentDefinition, AgentExecution, PipelineNodeAgent
 from app.models.consistency_check import ConsistencyCheck
 from app.models.billing import BillingRecord, Subscription
 
-from app.models.ai_configuration import AIConfiguration
 from app.models.ai_model_provider import AIModelProvider
 from app.models.ai_model import AIModel
 from app.models.ai_model_credential import AIModelCredential
@@ -44,7 +43,6 @@ __all__ = [
     "ConsistencyCheck",
     "BillingRecord",
     "Subscription",
-    "AIConfiguration",
     "AIModelProvider",
     "AIModel",
     "AIModelCredential",

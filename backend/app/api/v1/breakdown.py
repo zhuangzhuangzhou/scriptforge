@@ -23,11 +23,15 @@ class BreakdownStartRequest(BaseModel):
     # model_config_id 不再需要，从项目配置读取
     selected_skills: Optional[List[str]] = None
     pipeline_id: Optional[str] = None
-    # AI 资源 ID（可选，默认使用系统内置）
-    adapt_method_id: Optional[str] = None  # 改编方法论 ID
-    output_style_id: Optional[str] = None  # 输出风格 ID
-    template_id: Optional[str] = None  # 模板 ID
-    example_id: Optional[str] = None  # 示例 ID
+    # 小说类型（用于加载类型专属文档）
+    novel_type: Optional[str] = None
+    # 新版：资源 ID 列表（支持多选）
+    resource_ids: Optional[List[str]] = None
+    # 旧版：单个资源 ID（保留兼容）
+    adapt_method_id: Optional[str] = None
+    output_style_id: Optional[str] = None
+    template_id: Optional[str] = None
+    example_id: Optional[str] = None
     # 旧配置 key（已废弃，保留兼容）
     adapt_method_key: Optional[str] = None
     quality_rule_key: Optional[str] = None
@@ -37,7 +41,13 @@ class BreakdownStartRequest(BaseModel):
 class BatchStartRequest(BaseModel):
     """批量启动拆解请求"""
     project_id: str
-    # 可选配置参数
+    # 新版：资源 ID 列表（支持多选）
+    resource_ids: Optional[List[str]] = None
+    # 旧版：单个资源 ID（保留兼容）
+    adapt_method_id: Optional[str] = None
+    output_style_id: Optional[str] = None
+    template_id: Optional[str] = None
+    # 旧配置 key（已废弃，保留兼容）
     adapt_method_key: Optional[str] = "adapt_method_default"
     quality_rule_key: Optional[str] = "qa_breakdown_default"
     output_style_key: Optional[str] = "output_style_default"
@@ -52,7 +62,7 @@ class TaskRetryRequest(BaseModel):
 
 class PlotPointStatusUpdate(BaseModel):
     """剧情点状态更新请求"""
-    status: str = Field(..., regex="^(used|unused)$")
+    status: str = Field(..., pattern="^(used|unused)$")
 
 
 @router.post("/start")
@@ -131,23 +141,23 @@ async def start_breakdown(
         # 注意：不删除失败任务记录，保留用于历史追溯
         # 只是允许创建新任务
 
-    # 锁定用户记录，防止并发请求导致配额超支
+    # 锁定用户记录，防止并发请求导致积分超支
     user_result = await db.execute(
         select(User).where(User.id == current_user.id).with_for_update()
     )
     locked_user = user_result.scalar_one()
-    
-    # 检查剧集配额（在锁内检查）
+
+    # 检查积分（纯积分制）
     quota_service = QuotaService(db)
-    quota = await quota_service.check_episode_quota(locked_user)
-    if not quota["allowed"]:
+    credits_check = await quota_service.check_credits(locked_user, "breakdown")
+    if not credits_check["allowed"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"剧集配额已用尽，本月已使用 {quota['used']}/{quota['limit']} 集"
+            detail=f"积分不足: 需要 {credits_check['cost']}，余额 {credits_check['balance']}"
         )
 
-    # 消耗剧集配额（预扣）
-    await quota_service.consume_episode_quota(locked_user)
+    # 消耗积分（预扣）
+    await quota_service.consume_credits(locked_user, "breakdown", "剧情拆解")
 
     # 构建任务配置
     task_config = {
@@ -156,7 +166,16 @@ async def start_breakdown(
         "pipeline_id": request.pipeline_id,
     }
 
-    # 添加 AI 资源 ID（如果用户指定了）
+    # 添加小说类型（优先使用请求参数，否则从项目配置读取）
+    novel_type = request.novel_type or project.novel_type
+    if novel_type:
+        task_config["novel_type"] = novel_type
+
+    # 新版：资源 ID 列表（优先使用）
+    if request.resource_ids:
+        task_config["resource_ids"] = request.resource_ids
+
+    # 旧版：单个资源 ID（保留兼容）
     if request.adapt_method_id:
         task_config["adapt_method_id"] = request.adapt_method_id
     if request.output_style_id:
@@ -540,22 +559,22 @@ async def start_all_breakdowns(
     )
     locked_user = user_result.scalar_one()
 
-    # 检查剧集配额
+    # 检查积分（纯积分制）
     quota_service = QuotaService(db)
-    required_quota = len(batches)
-    quota = await quota_service.check_episode_quota(locked_user)
+    required_credits = len(batches) * 100  # breakdown 每次 100 积分
+    credits_check = await quota_service.check_credits(locked_user, "breakdown")
 
-    if not quota["allowed"]:
+    if not credits_check["allowed"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"剧集配额已用尽，本月已使用 {quota['used']}/{quota['limit']} 集"
+            detail=f"积分不足: 需要 {credits_check['cost']}，余额 {credits_check['balance']}"
         )
 
-    # 检查配额是否足够
-    if quota["remaining"] != -1 and quota["remaining"] < required_quota:
+    # 检查积分是否足够批量任务
+    if credits_check["balance"] < required_credits:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"配额不足：需要 {required_quota} 集，剩余 {quota['remaining']} 集"
+            detail=f"积分不足: 需要 {required_credits}，余额 {credits_check['balance']}"
         )
 
     task_ids = []
@@ -563,8 +582,8 @@ async def start_all_breakdowns(
 
     for batch in batches:
         try:
-            # 消耗剧集配额（预扣）
-            await quota_service.consume_episode_quota(locked_user)
+            # 消耗积分（预扣）
+            await quota_service.consume_credits(locked_user, "breakdown", "剧情拆解")
 
             # 创建AI任务
             task = AITask(
@@ -702,17 +721,17 @@ async def start_continue_breakdown(
     )
     locked_user = user_result.scalar_one()
 
-    # 检查剧集配额
+    # 检查积分（纯积分制）
     quota_service = QuotaService(db)
-    quota = await quota_service.check_episode_quota(locked_user)
-    if not quota["allowed"]:
+    credits_check = await quota_service.check_credits(locked_user, "breakdown")
+    if not credits_check["allowed"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"剧集配额已用尽，本月已使用 {quota['used']}/{quota['limit']} 集"
+            detail=f"积分不足: 需要 {credits_check['cost']}，余额 {credits_check['balance']}"
         )
 
-    # 消耗剧集配额（预扣）
-    await quota_service.consume_episode_quota(locked_user)
+    # 消耗积分（预扣）
+    await quota_service.consume_credits(locked_user, "breakdown", "剧情拆解")
 
     # 创建AI任务
     task = AITask(
@@ -763,47 +782,36 @@ async def get_available_configs(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取拆解可用的配置列表"""
-    from app.models.ai_configuration import AIConfiguration
+    """获取拆解可用的配置列表（从 AIResource 读取）"""
+    from app.models.ai_resource import AIResource
 
-    # 获取所有配置（用户自定义 + 系统默认）
+    # 从 AIResource 获取配置，按 category 分组
     result = await db.execute(
-        select(AIConfiguration).where(
-            (AIConfiguration.user_id == current_user.id) | (AIConfiguration.user_id.is_(None)),
-            AIConfiguration.is_active == True,
-            AIConfiguration.category.in_(['adapt_method', 'quality_rule', 'prompt_template'])
-        ).order_by(AIConfiguration.category, AIConfiguration.user_id.desc().nulls_last())
+        select(AIResource).where(
+            AIResource.is_active == True,
+            AIResource.category.in_(['methodology', 'qa_rules', 'output_style'])
+        ).order_by(AIResource.category, AIResource.name)
     )
-    all_configs = result.scalars().all()
+    all_resources = result.scalars().all()
 
-    # 按分类分组（用户配置优先）
+    # 按分类分组
     adapt_methods = []
     quality_rules = []
     output_styles = []
 
-    seen_keys = {
-        'adapt_method': set(),
-        'quality_rule': set(),
-        'prompt_template': set()
-    }
-
-    for config in all_configs:
-        # 跳过已见过的 key（用户配置优先于系统默认）
-        if config.key in seen_keys[config.category]:
-            continue
-        seen_keys[config.category].add(config.key)
-
+    for resource in all_resources:
         config_info = {
-            "key": config.key,
-            "description": config.description,
-            "is_custom": config.user_id is not None
+            "key": resource.name,
+            "description": resource.description or resource.name,
+            "is_custom": False,
+            "resource_id": str(resource.id)
         }
 
-        if config.category == "adapt_method":
+        if resource.category == "methodology":
             adapt_methods.append(config_info)
-        elif config.category == "quality_rule":
+        elif resource.category == "qa_rules":
             quality_rules.append(config_info)
-        elif config.category == "prompt_template" and "output_style" in config.key:
+        elif resource.category == "output_style":
             output_styles.append(config_info)
 
     return {
@@ -1077,11 +1085,27 @@ async def start_batch_breakdown(
         )
 
     # 构建任务配置
-    task_config = {
-        "adapt_method_key": request.adapt_method_key,
-        "quality_rule_key": request.quality_rule_key,
-        "output_style_key": request.output_style_key
-    }
+    task_config = {}
+
+    # 新版：资源 ID 列表（优先使用）
+    if request.resource_ids:
+        task_config["resource_ids"] = request.resource_ids
+
+    # 旧版：单个资源 ID（保留兼容）
+    if request.adapt_method_id:
+        task_config["adapt_method_id"] = request.adapt_method_id
+    if request.output_style_id:
+        task_config["output_style_id"] = request.output_style_id
+    if request.template_id:
+        task_config["template_id"] = request.template_id
+
+    # 兼容旧版 key
+    if request.adapt_method_key:
+        task_config["adapt_method_key"] = request.adapt_method_key
+    if request.quality_rule_key:
+        task_config["quality_rule_key"] = request.quality_rule_key
+    if request.output_style_key:
+        task_config["output_style_key"] = request.output_style_key
 
     # 锁定用户记录
     user_result = await db.execute(
@@ -1089,15 +1113,15 @@ async def start_batch_breakdown(
     )
     locked_user = user_result.scalar_one()
 
-    # 配额预检查
-    required_quota = len(batches)
+    # 积分预检查（纯积分制）
+    required_credits = len(batches) * 100  # breakdown 每次 100 积分
     quota_service = QuotaService(db)
-    quota = await quota_service.check_episode_quota(locked_user)
+    credits_check = await quota_service.check_credits(locked_user, "breakdown")
 
-    if quota["remaining"] != -1 and quota["remaining"] < required_quota:
+    if credits_check["balance"] < required_credits:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"配额不足：需要 {required_quota} 集，剩余 {quota['remaining']} 集"
+            detail=f"积分不足: 需要 {required_credits}，余额 {credits_check['balance']}"
         )
 
     task_ids = []
@@ -1105,8 +1129,8 @@ async def start_batch_breakdown(
 
     for batch in batches:
         try:
-            # 消耗剧集配额（预扣）
-            await quota_service.consume_episode_quota(locked_user)
+            # 消耗积分（预扣）
+            await quota_service.consume_credits(locked_user, "breakdown", "剧情拆解")
 
             # 创建AI任务
             task = AITask(
@@ -1321,13 +1345,13 @@ async def retry_failed_task(
             detail="任务已重试3次，无法继续重试"
         )
 
-    # 检查配额
+    # 检查积分（纯积分制，重试半价）
     quota_service = QuotaService(db)
-    quota = await quota_service.check_episode_quota(current_user)
-    if not quota["allowed"]:
+    credits_check = await quota_service.check_credits(current_user, "retry")
+    if not credits_check["allowed"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="剧集配额已用尽，无法重试"
+            detail=f"积分不足: 需要 {credits_check['cost']}，余额 {credits_check['balance']}"
         )
 
     # 确定配置（使用新配置或原配置）
@@ -1339,8 +1363,8 @@ async def retry_failed_task(
     try:
         # 使用事务保证原子性
         async with db.begin_nested():
-            # 先消耗剧集配额（预扣）
-            await quota_service.consume_episode_quota(current_user)
+            # 先消耗积分（预扣，重试半价）
+            await quota_service.consume_credits(current_user, "retry", "任务重试")
 
             # 创建新任务记录
             new_task = AITask(
