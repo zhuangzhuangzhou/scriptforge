@@ -240,23 +240,38 @@ export const breakdownApi = {
     modelConfigId?: string;
     selectedSkills?: string[];
     pipelineId?: string;
+    // 新版：资源 ID 列表（支持多选）
+    resourceIds?: string[];
+    // 旧版：单个资源 ID（保留兼容）
+    adaptMethodId?: string;
+    outputStyleId?: string;
+    templateId?: string;
     adaptMethodKey?: string;
     qualityRuleKey?: string;
     outputStyleKey?: string;
+    novelType?: string;
   }) => {
     if (USE_MOCK) {
       await delay(500);
       return { data: { task_id: 'mock-task-1', status: 'queued' } };
     }
-    return api.post('/breakdown/start', {
+    // 构建请求参数，只传有值的字段
+    const params: Record<string, any> = {
       batch_id: batchId,
-      model_config_id: options?.modelConfigId,
-      selected_skills: options?.selectedSkills,
-      pipeline_id: options?.pipelineId,
-      adapt_method_key: options?.adaptMethodKey,
-      quality_rule_key: options?.qualityRuleKey,
-      output_style_key: options?.outputStyleKey
-    });
+    };
+    if (options?.modelConfigId) params.model_config_id = options.modelConfigId;
+    if (options?.selectedSkills?.length) params.selected_skills = options.selectedSkills;
+    if (options?.pipelineId) params.pipeline_id = options.pipelineId;
+    if (options?.resourceIds?.length) params.resource_ids = options.resourceIds;
+    if (options?.adaptMethodId) params.adapt_method_id = options.adaptMethodId;
+    if (options?.outputStyleId) params.output_style_id = options.outputStyleId;
+    if (options?.templateId) params.template_id = options.templateId;
+    if (options?.adaptMethodKey) params.adapt_method_key = options.adaptMethodKey;
+    if (options?.qualityRuleKey) params.quality_rule_key = options.qualityRuleKey;
+    if (options?.outputStyleKey) params.output_style_key = options.outputStyleKey;
+    if (options?.novelType) params.novel_type = options.novelType;
+
+    return api.post('/breakdown/start', params);
   },
 
   // 批量启动所有 pending 批次拆解
@@ -274,7 +289,7 @@ export const breakdownApi = {
       await delay(500);
       return { data: { task_id: 'mock-task-1', batch_id: 'mock-batch-1', status: 'queued' } };
     }
-    return api.post('/breakdown/start-continue', null, { params: { project_id: projectId } });
+    return api.post(`/breakdown/continue/${projectId}`);
   },
 
   // 获取任务状态
@@ -386,6 +401,11 @@ export const breakdownApi = {
   // 批量启动拆解（增强版）
   startBatchBreakdown: async (options: {
     projectId: string;
+    // 新版：资源 ID 列表（支持多选）
+    resourceIds?: string[];
+    // 旧版：单个资源 ID（保留兼容）
+    adaptMethodId?: string;
+    outputStyleId?: string;
     adaptMethodKey?: string;
     qualityRuleKey?: string;
     outputStyleKey?: string;
@@ -400,21 +420,25 @@ export const breakdownApi = {
           total,
           project_id: options.projectId,
           config: {
-            adapt_method_key: options.adaptMethodKey,
-            quality_rule_key: options.qualityRuleKey,
-            output_style_key: options.outputStyleKey
+            resource_ids: options.resourceIds
           },
           message: `已启动 ${total} 个拆解任务`
         }
       };
     }
-    return api.post('/breakdown/start-batch', {
+    // 构建请求参数，只传有值的字段
+    const params: Record<string, any> = {
       project_id: options.projectId,
-      adapt_method_key: options.adaptMethodKey,
-      quality_rule_key: options.qualityRuleKey,
-      output_style_key: options.outputStyleKey,
-      concurrent_limit: options.concurrentLimit
-    });
+    };
+    if (options.resourceIds?.length) params.resource_ids = options.resourceIds;
+    if (options.adaptMethodId) params.adapt_method_id = options.adaptMethodId;
+    if (options.outputStyleId) params.output_style_id = options.outputStyleId;
+    if (options.adaptMethodKey) params.adapt_method_key = options.adaptMethodKey;
+    if (options.qualityRuleKey) params.quality_rule_key = options.qualityRuleKey;
+    if (options.outputStyleKey) params.output_style_key = options.outputStyleKey;
+    if (options.concurrentLimit) params.concurrent_limit = options.concurrentLimit;
+
+    return api.post('/breakdown/batch-start', params);
   },
 
   // 获取批量拆解进度
@@ -515,6 +539,117 @@ export const aiResourceApi = {
   clone: (id: string) => api.post(`/ai-resources/${id}/clone`),
 };
 
+// 单集剧本 API
+export const scriptApi = {
+  // 启动单集剧本生成
+  startEpisodeScript: async (breakdownId: string, episodeNumber: number, options?: {
+    modelConfigId?: string;
+    novelType?: string;
+  }) => {
+    if (USE_MOCK) {
+      await delay(500);
+      return { data: { task_id: 'mock-script-task-1', status: 'queued' } };
+    }
+    return api.post('/scripts/episode/start', {
+      breakdown_id: breakdownId,
+      episode_number: episodeNumber,
+      model_config_id: options?.modelConfigId,
+      novel_type: options?.novelType
+    });
+  },
+
+  // 获取剧本任务状态
+  getTaskStatus: async (taskId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return { data: { task_id: taskId, status: 'completed', progress: 100 } };
+    }
+    return api.get(`/scripts/tasks/${taskId}`);
+  },
+
+  // 获取单集剧本结果
+  getEpisodeScript: async (breakdownId: string, episodeNumber: number) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return {
+        data: {
+          episode_number: episodeNumber,
+          title: `第 ${episodeNumber} 集`,
+          word_count: 650,
+          structure: {
+            opening: { content: '【起】示例开场内容...', word_count: 120 },
+            development: { content: '【承】示例发展内容...', word_count: 180 },
+            climax: { content: '【转】示例高潮内容...', word_count: 230 },
+            hook: { content: '【钩】示例悬念内容...\n【卡黑】', word_count: 120 }
+          },
+          full_script: '完整剧本内容...',
+          scenes: ['场景1', '场景2'],
+          characters: ['角色A', '角色B'],
+          hook_type: '悬念类型'
+        }
+      };
+    }
+    return api.get(`/scripts/episode/${breakdownId}/${episodeNumber}`);
+  },
+
+  // 获取拆解下所有剧本列表
+  getEpisodeScripts: async (breakdownId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return { data: { items: [], total: 0 } };
+    }
+    return api.get(`/scripts/episodes/${breakdownId}`);
+  },
+
+  // 批量生成剧本
+  startBatchScripts: async (breakdownId: string, episodeNumbers: number[], options?: {
+    modelConfigId?: string;
+    novelType?: string;
+  }) => {
+    if (USE_MOCK) {
+      await delay(500);
+      return { data: { task_ids: [], total: episodeNumbers.length } };
+    }
+    return api.post('/scripts/batch/start', {
+      breakdown_id: breakdownId,
+      episode_numbers: episodeNumbers,
+      model_config_id: options?.modelConfigId,
+      novel_type: options?.novelType
+    });
+  },
+
+  // 更新剧本
+  updateScript: async (scriptId: string, data: { title?: string; content?: any; full_script?: string }) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return { data: { message: '更新成功' } };
+    }
+    return api.put(`/scripts/${scriptId}`, data);
+  },
+
+  // 审核通过
+  approveScript: async (scriptId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return { data: { message: '审核通过', status: 'approved' } };
+    }
+    return api.post(`/scripts/${scriptId}/approve`);
+  }
+};
+
+// 导出 API
+export const exportApi = {
+  // 导出单集
+  exportSingle: async (scriptId: string, format: 'pdf' | 'docx' = 'pdf') => {
+    return api.post('/export/single', { script_id: scriptId, format }, { responseType: 'blob' });
+  },
+
+  // 批量导出
+  exportBatch: async (projectId: string, format: 'pdf' | 'docx' = 'pdf') => {
+    return api.post('/export/batch', { project_id: projectId, format }, { responseType: 'blob' });
+  }
+};
+
 export const adminApi = {
   getStats: async () => {
     if (USE_MOCK) {
@@ -563,6 +698,75 @@ export const adminApi = {
       return { data: { success: true } };
     }
     return api.put(`/admin/users/${userId}`, data);
+  }
+};
+
+// 积分与账单 API
+export const billingApi = {
+  // 获取积分余额
+  getBalance: async () => {
+    if (USE_MOCK) {
+      await delay(200);
+      return { data: { credits: 2450 } };
+    }
+    return api.get('/billing/balance');
+  },
+
+  // 获取积分详情（含定价）
+  getCreditsInfo: async () => {
+    if (USE_MOCK) {
+      await delay(200);
+      return {
+        data: {
+          balance: 2450,
+          monthly_granted: 3000,
+          monthly_credits: 3000,
+          next_grant_at: '2026-03-01T00:00:00Z',
+          tier: 'creator',
+          tier_display: '创作者版',
+          pricing: {
+            base: { breakdown: 100, script: 50, qa: 30, retry: 50 },
+            token: { enabled: false, input_per_1k: 1, output_per_1k: 2 }
+          }
+        }
+      };
+    }
+    return api.get('/billing/credits');
+  },
+
+  // 获取账单记录
+  getRecords: async (limit = 20, offset = 0) => {
+    if (USE_MOCK) {
+      await delay(200);
+      return {
+        data: {
+          records: [
+            { id: '1', type: 'consume', credits: -100, balance_after: 2450, description: '剧情拆解（基础费）', created_at: '2026-02-12T10:30:00Z' },
+            { id: '2', type: 'consume', credits: -50, balance_after: 2550, description: '剧本生成（基础费）', created_at: '2026-02-12T09:15:00Z' },
+            { id: '3', type: 'grant', credits: 3000, balance_after: 2600, description: '月度积分赠送 (创作者版)', created_at: '2026-02-01T00:00:00Z' },
+          ],
+          limit,
+          offset
+        }
+      };
+    }
+    return api.get('/billing/records', { params: { limit, offset } });
+  },
+
+  // 充值积分
+  recharge: async (amount: number, paymentMethod: string) => {
+    if (USE_MOCK) {
+      await delay(500);
+      return {
+        data: {
+          success: true,
+          balance: 2450 + amount * 100,
+          credits_added: amount * 100,
+          message: '充值成功'
+        }
+      };
+    }
+    return api.post('/billing/recharge', { amount, payment_method: paymentMethod });
   }
 };
 

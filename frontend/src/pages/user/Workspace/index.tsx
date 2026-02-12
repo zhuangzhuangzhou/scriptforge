@@ -33,48 +33,6 @@ interface ProjectWorkspaceProps {
 
 type Tab = 'CONFIG' | 'SOURCE' | 'AGENTS' | 'SKILLS' | 'PLOT' | 'SCRIPT';
 
-// --- Mock Data Generators ---
-const mockEpisodes = [
-    {
-        id: 1,
-        title: "第1集",
-        subtitle: "治愈系游戏？",
-        status: "APPROVED",
-        wordCount: 831,
-        content: `# 第1集：治愈系游戏？\n\n※ “来生”旧货商店，昏暗，堆满杂物\n\n△ 柜台后，店老板（满脸褶子）搬出一个沉重的黑色手提箱，重重砸在柜台上。\n【音效】嘭！灰尘飞扬。\n\n△ 店老板神秘兮兮：“年轻人，生活压力大？这款《治愈系人生》绝对适合你。画面温馨，治愈心灵，是深夜独处的最佳伴侣。”\n\n△ 韩非（25岁，颓废，黑眼圈）半信半疑地盯着手提箱。\n△ 他掏出一叠皱皱巴巴的钞票，拍在桌上。\n\n韩非：“只要能让我笑出来，什么都行。”\n\n---\n\n※ 出租屋，深夜，暴雨\n\n△ 窗外雷雨交加，闪电惨白。\n△ 韩非坐在电脑前，从箱子里取出一个仿佛由人骨打磨的游戏头盔。\n△ 头盔表面没有任何LOGO，只有一股透骨的冰凉。\n△ 指尖触碰头盔，一股寒意顺着手指钻入骨髓。\n\n【独白】被辞退，被封杀，连笑都不会了... 也许，这游戏真的能救我？\n\n△ 韩非深吸一口气，戴上头盔。\n△ “咔哒”一声，卡扣锁死。`,
-        qcReport: {
-            score: 98,
-            status: "PASS",
-            checks: [
-                { title: "剧情还原度", items: ["剧本严格按照 <PlotPoints> 进行编写，无遗漏。", "关键细节（如“治愈系游戏”、“死鱼”）均准确还原。"] },
-                { title: "节奏与结构", items: ["每集字数控制在500-800字范围内，符合要求。", "结构符合“起承转合”四段式，悬念设置得当。"] },
-                { title: "视觉化风格", items: ["严格使用了符号（※、△、【音效】）。", "动作描写具体，画面感强。"] },
-                { title: "格式规范", items: ["符合标准剧本格式要求。"] }
-            ]
-        }
-    },
-    {
-        id: 2,
-        title: "第2集",
-        subtitle: "血色开端",
-        status: "APPROVED",
-        wordCount: 756,
-        content: `# 第2集：血色开端\n\n※ 游戏大厅，阴冷，雾气弥漫...\n\n△ 韩非睁开眼，发现自己站在一个巨大的轮盘前。\n△ 轮盘上布满了狰狞的笑脸。`,
-        qcReport: {
-            score: 95,
-            status: "PASS",
-            checks: [
-                { title: "剧情还原度", items: ["基本还原核心冲突。"] },
-                { title: "节奏与结构", items: ["结尾钩子力度稍弱，建议加强。"] }
-            ]
-        }
-    },
-    { id: 3, title: "第3集", subtitle: "午夜凶铃", status: "APPROVED", wordCount: 810, content: "", qcReport: null },
-    { id: 4, title: "第4集", subtitle: "看不见的客人", status: "GENERATING", wordCount: 0, content: "", qcReport: null },
-    { id: 5, title: "第5集", subtitle: "生死抉择", status: "PENDING", wordCount: 0, content: "", qcReport: null },
-    { id: 6, title: "第6集", subtitle: "黎明杀机", status: "PENDING", wordCount: 0, content: "", qcReport: null },
-];
-
 const initialAgents = [
     { id: 'a1', name: 'Narrative Architect', role: '剧情架构师', status: 'active', model: 'DeepNarrative-Pro', desc: '负责宏观剧情结构的规划与节奏控制。', temperature: 0.7, tools: ['knowledge_base'] },
     { id: 'a2', name: 'Character Psychologist', role: '角色心理师', status: 'active', model: 'Claude 3.5 Sonnet', desc: '分析角色动机，确保行为逻辑符合人设。', temperature: 0.8, tools: ['web_search'] },
@@ -137,9 +95,6 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const [agents, setAgents] = useState(initialAgents);
     const [selectedAgent, setSelectedAgent] = useState<any>(null);
 
-    // Script Tab State
-    const [selectedEpisodeId, setSelectedEpisodeId] = useState<number>(1);
-
     // Source Tab State
     const [chapters, setChapters] = useState<any[]>([]);
     const [selectedChapter, setSelectedChapter] = useState<any>(null);
@@ -186,11 +141,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const [isBreakdownModalOpen, setIsBreakdownModalOpen] = useState(false);
     const [targetBatchId, setTargetBatchId] = useState<string | null>(null);
     const [selectedBreakdownSkills, setSelectedBreakdownSkills] = useState<string[]>([]);
-    const [breakdownConfig, setBreakdownConfig] = useState({
-        adaptMethodKey: 'adapt_method_default',
-        qualityRuleKey: 'qa_breakdown_default',
-        outputStyleKey: 'output_style_default'
-    });
+    const [breakdownConfig, setBreakdownConfig] = useState<string[]>([]);
 
     // PLOT Pagination State
     const [batchPage, setBatchPage] = useState(1);
@@ -265,6 +216,18 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             onError: (error, errorCode) => {
                 console.error('[StreamLogs] 错误:', error, errorCode);
                 addLog('error', `❌ ${error}`);
+            },
+            onWarning: (warning) => {
+                console.warn('[StreamLogs] 警告:', warning);
+                addLog('warning', `⚠️ ${warning}`);
+            },
+            onInfo: (info) => {
+                console.log('[StreamLogs] 信息:', info);
+                addLog('info', info);
+            },
+            onSuccess: (msg) => {
+                console.log('[StreamLogs] 成功:', msg);
+                addLog('success', `✅ ${msg}`);
             },
             onComplete: () => {
                 console.log('[StreamLogs] 任务完成');
@@ -754,9 +717,8 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
             const res = await breakdownApi.startBreakdown(targetBatchId, {
                 selectedSkills: selectedBreakdownSkills,
-                adaptMethodKey: breakdownConfig.adaptMethodKey,
-                qualityRuleKey: breakdownConfig.qualityRuleKey,
-                outputStyleKey: breakdownConfig.outputStyleKey
+                resourceIds: breakdownConfig,
+                novelType: formData.novel_type
             });
             setBreakdownTaskId(res.data.task_id);
             message.info('拆解任务已启动');
@@ -773,48 +735,6 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const internalStartBreakdown = async (batchId: string) => {
         const res = await breakdownApi.startBreakdown(batchId); // 使用默认配置
         return res;
-    };
-
-    // 循环拆解：依次拆解所有 pending 批次
-    const handleLoopBreakdown = async () => {
-        const pendingBatches = batches.filter(b => b.breakdown_status === 'pending');
-        if (pendingBatches.length === 0) {
-            message.info('没有待拆解的批次');
-            return;
-        }
-        setShowConsole(true);
-        setBreakdownQueue(pendingBatches.map(b => b.id));
-        setCurrentBreakdownIndex(0);
-        setIsAllBreakdownRunning(true);
-
-        // 启动第一个批次
-        await processBreakdownQueue(pendingBatches[0].id, pendingBatches.map(b => b.id), 0);
-    };
-
-    // 处理拆解队列
-    const processBreakdownQueue = async (batchId: string, queue: string[], index: number) => {
-        try {
-            addLog('info', `开始拆解批次 ${index + 1}/${queue.length}...`);
-
-            const res = await breakdownApi.startBreakdown(batchId);
-            setBreakdownTaskId(res.data.task_id);
-
-            // 轮询并在完成后处理下一个
-            pollBreakdownStatusWithCallback(res.data.task_id, () => {
-                const nextIndex = index + 1;
-                if (nextIndex < queue.length) {
-                    setCurrentBreakdownIndex(nextIndex);
-                    processBreakdownQueue(queue[nextIndex], queue, nextIndex);
-                } else {
-                    setIsAllBreakdownRunning(false);
-                    setBreakdownQueue([]);
-                    message.success('所有批次拆解完成');
-                }
-            });
-        } catch (err: any) {
-            setIsAllBreakdownRunning(false);
-            message.error(err.response?.data?.detail || '拆解失败');
-        }
     };
 
     // 全部拆解：一次性启动所有 pending 批次（增强版）
@@ -841,9 +761,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         try {
             const res = await breakdownApi.startBatchBreakdown({
                 projectId,
-                adaptMethodKey: breakdownConfig.adaptMethodKey,
-                qualityRuleKey: breakdownConfig.qualityRuleKey,
-                outputStyleKey: breakdownConfig.outputStyleKey
+                resourceIds: breakdownConfig
             });
 
             if (res.data.total > 0) {
@@ -870,6 +788,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
     // 轮询批量进度
     const pollBatchProgress = () => {
+        if (!projectId) return;
         const interval = setInterval(async () => {
             try {
                 const res = await breakdownApi.getBatchProgress(projectId);
@@ -1085,9 +1004,10 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             case 'SCRIPT':
                 return (
                     <ScriptTab
-                        episodes={mockEpisodes}
-                        selectedEpisodeId={selectedEpisodeId}
-                        onSelectEpisode={setSelectedEpisodeId}
+                        projectId={projectId!}
+                        batchId={selectedBatch?.id}
+                        breakdownId={selectedBatch?.id}
+                        novelType={formData.novel_type}
                     />
                 );
             case 'AGENTS':
@@ -1279,7 +1199,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                     )}
 
                                     <button
-                                        onClick={handleLoopBreakdown}
+                                        onClick={handleAllBreakdown}
                                         disabled={!!breakdownTaskId || isAllBreakdownRunning || isBatchRunning || batches.filter(b => b.breakdown_status === 'pending').length === 0}
                                         className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                         title="依次拆解所有待处理批次"

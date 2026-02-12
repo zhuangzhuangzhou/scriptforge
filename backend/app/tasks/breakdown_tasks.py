@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.celery_app import celery_app
 from app.core.database import SyncSessionLocal
 from app.core.progress import update_task_progress_sync
-from app.core.credits import BREAKDOWN_BASE_CREDITS
+from app.core.credits import consume_credits_for_task_sync
 from app.core.exceptions import (
     AITaskException,
     RetryableError,
@@ -127,7 +127,12 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
             batch_record.breakdown_status = "completed"
             batch_record.ai_processed = True  # 标记为已处理
             db.commit()
-        
+
+        # 扣除积分（任务完成后扣费）
+        credits_result = consume_credits_for_task_sync(db, user_id, "breakdown", task_id)
+        if not credits_result["success"]:
+            print(f"[警告] 积分扣费失败: {credits_result['message']}")
+
         return {"status": "completed", "task_id": task_id}
 
     except AITaskException as e:
@@ -211,11 +216,9 @@ def _handle_quota_exceeded_sync(
 ):
     """处理配额不足错误（同步版本）
 
-    标记任务失败，回滚已消耗的配额。
+    标记任务失败。
+    注意：采用后扣费模式，不需要回滚积分。
     """
-    # 回滚配额
-    _refund_quota_sync(db, user_id)
-
     # 更新任务状态
     error_info = error.to_dict()
     error_info["failed_at"] = datetime.utcnow().isoformat()
@@ -230,7 +233,7 @@ def _handle_quota_exceeded_sync(
     if batch_record:
         batch_record.breakdown_status = "failed"
         db.commit()
-    
+
     # 发布错误消息
     if log_publisher:
         log_publisher.publish_error(
@@ -251,11 +254,9 @@ def _handle_task_failure_sync(
 ):
     """处理任务失败（同步版本）
 
-    更新状态，记录错误信息，回滚配额。
+    更新状态，记录错误信息。
+    注意：采用后扣费模式，任务失败时不需要回滚积分（因为还没扣费）。
     """
-    # 回滚配额
-    _refund_quota_sync(db, user_id)
-
     # 更新任务状态
     error_info = error.to_dict()
     error_info["failed_at"] = datetime.utcnow().isoformat()
@@ -271,7 +272,7 @@ def _handle_task_failure_sync(
     if batch_record:
         batch_record.breakdown_status = "failed"
         db.commit()
-    
+
     # 发布错误消息
     if log_publisher:
         log_publisher.publish_error(
@@ -279,17 +280,6 @@ def _handle_task_failure_sync(
             error.message,
             error_code=error.code
         )
-
-
-def _refund_quota_sync(db: Session, user_id: str):
-    """回滚用户配额（同步版本）
-
-    从User记录中恢复已消耗的配额。
-    """
-    from app.core.quota import refund_episode_quota_sync
-
-    # 调用新实现的同步配额回滚函数
-    refund_episode_quota_sync(db, user_id, amount=1)
 
 
 
@@ -303,14 +293,15 @@ def _execute_breakdown_sync(
     task_config: dict,
     log_publisher=None
 ) -> dict:
-    """执行拆解逻辑（v2：Skill + 质检循环）
+    """执行拆解逻辑（v3：Agent 驱动）
 
-    新流程：
+    使用增强的 Agent 执行器，支持循环质检和条件修正。
+
+    流程：
     1. 加载章节数据
-    2. 加载 AI 资源文档（改编方法论、输出风格、模板、示例）
-    3. 调用 webtoon_breakdown Skill 一次性生成 plot_points
-    4. 质检循环（breakdown_aligner），最多重试 3 次
-    5. 保存结果到 PlotBreakdown（format_version=2）
+    2. 加载 AI 资源文档
+    3. 调用 breakdown_agent 执行拆解（内部循环质检）
+    4. 保存结果到 PlotBreakdown
 
     Args:
         db: 同步数据库会话
@@ -324,9 +315,10 @@ def _execute_breakdown_sync(
     Returns:
         dict: 拆解结果
     """
-    # 根据 task_config 中的 format_version 判断使用新旧逻辑
-    # format_version=2 或未指定时使用新逻辑，format_version=1 使用旧逻辑
+    # 根据 task_config 判断执行模式
     use_v1 = task_config.get("format_version") == 1
+    use_agent = task_config.get("use_agent", True)  # 默认使用 Agent
+
     if use_v1:
         return _execute_breakdown_sync_v1(
             db, task_id, batch_id, project_id,
@@ -336,7 +328,8 @@ def _execute_breakdown_sync(
     from app.models.chapter import Chapter
     from app.models.batch import Batch
     from app.models.plot_breakdown import PlotBreakdown
-    from app.ai.simple_executor import SimpleSkillExecutor
+    from app.ai.simple_executor import SimpleAgentExecutor, SimpleSkillExecutor
+    from app.core.init_ai_resources import load_layered_resources_sync
     import logging
     logger = logging.getLogger(__name__)
 
@@ -345,20 +338,14 @@ def _execute_breakdown_sync(
 
     batch = db.query(Batch).filter(Batch.id == batch_id).first()
     if not batch:
-        raise AITaskException(
-            code="DATA_NOT_FOUND",
-            message=f"批次 {batch_id} 不存在"
-        )
+        raise AITaskException(code="DATA_NOT_FOUND", message=f"批次 {batch_id} 不存在")
 
     chapters = db.query(Chapter).filter(
         Chapter.batch_id == batch_id
     ).order_by(Chapter.chapter_number).all()
 
     if not chapters:
-        raise AITaskException(
-            code="DATA_NOT_FOUND",
-            message=f"批次 {batch_id} 没有章节数据"
-        )
+        raise AITaskException(code="DATA_NOT_FOUND", message=f"批次 {batch_id} 没有章节数据")
 
     chapters_text = _format_chapters_sync(chapters)
     update_task_progress_sync(db, task_id, progress=10, current_step="章节数据加载完成 (10%)")
@@ -366,35 +353,41 @@ def _execute_breakdown_sync(
     # 2. 加载 AI 资源文档（15%）
     update_task_progress_sync(db, task_id, progress=12, current_step="加载 AI 资源文档中... (12%)")
 
-    adapt_method = _load_ai_resource_sync(db, task_config.get("adapt_method_id"), "adapt_method")
-    output_style = _load_ai_resource_sync(db, task_config.get("output_style_id"), "output_style")
-    template = _load_ai_resource_sync(db, task_config.get("template_id"), "template")
-    example = _load_ai_resource_sync(db, task_config.get("example_id"), "example")
+    novel_type = task_config.get("novel_type")
+    resource_ids = task_config.get("resource_ids", [])
+
+    adapt_method = ""
+    output_style = ""
+    template = ""
+    example = ""
+    grouped_resources = {}
+
+    if resource_ids:
+        grouped_resources = _load_resources_by_ids_sync(db, resource_ids)
+        if grouped_resources.get("methodology"):
+            adapt_method = "\n\n---\n\n".join(grouped_resources["methodology"])
+        if grouped_resources.get("output_style"):
+            output_style = "\n\n---\n\n".join(grouped_resources["output_style"])
+        if grouped_resources.get("qa_rules"):
+            qa_content = "\n\n---\n\n".join(grouped_resources["qa_rules"])
+            adapt_method = (adapt_method + "\n\n---\n\n" + qa_content) if adapt_method else qa_content
+        if grouped_resources.get("template"):
+            template = "\n\n---\n\n".join(grouped_resources["template"])
+    else:
+        layered_resources = load_layered_resources_sync(db, stage="breakdown", novel_type=novel_type)
+        adapt_method_parts = [layered_resources.get(k) for k in ("core", "breakdown", "type") if layered_resources.get(k)]
+        adapt_method = "\n\n---\n\n".join(adapt_method_parts) if adapt_method_parts else _load_ai_resource_sync(db, task_config.get("adapt_method_id"), "adapt_method")
+        output_style = _load_ai_resource_sync(db, task_config.get("output_style_id"), "output_style")
+        template = _load_ai_resource_sync(db, task_config.get("template_id"), "template")
+        example = _load_ai_resource_sync(db, task_config.get("example_id"), "example")
 
     update_task_progress_sync(db, task_id, progress=15, current_step="AI 资源文档加载完成 (15%)")
 
-    if log_publisher:
-        log_publisher.publish_step_start(task_id, "加载资源")
-        loaded = []
-        if adapt_method:
-            loaded.append("改编方法论")
-        if output_style:
-            loaded.append("输出风格")
-        if template:
-            loaded.append("模板")
-        if example:
-            loaded.append("示例")
-        log_publisher.publish_step_end(
-            task_id, "加载资源",
-            {"loaded": loaded if loaded else ["使用默认配置"]}
-        )
-
-    # 3. 调用 webtoon_breakdown Skill（20%-65%）
+    # 3. 执行拆解（20%-90%）
     update_task_progress_sync(db, task_id, progress=20, current_step="执行剧情拆解中... (20%)")
 
-    skill_executor = SimpleSkillExecutor(db, model_adapter, log_publisher)
-
-    skill_inputs = {
+    # 构建 Agent 上下文
+    agent_context = {
         "chapters_text": chapters_text,
         "adapt_method": adapt_method or "",
         "output_style": output_style or "",
@@ -404,137 +397,65 @@ def _execute_breakdown_sync(
         "end_chapter": str(batch.end_chapter),
     }
 
-    try:
-        plot_points = skill_executor.execute_skill(
-            skill_name="webtoon_breakdown",
-            inputs=skill_inputs,
-            task_id=task_id
-        )
-    except Exception as e:
-        logger.error(f"webtoon_breakdown Skill 执行失败: {e}")
-        if log_publisher:
-            log_publisher.publish_error(
-                task_id,
-                f"拆解 Skill 执行失败: {str(e)}",
-                error_code="SKILL_EXECUTION_ERROR"
-            )
-        raise AITaskException(
-            code="SKILL_EXECUTION_ERROR",
-            message=f"webtoon_breakdown 执行失败: {str(e)}"
-        )
-
-    # 确保 plot_points 是列表
-    if isinstance(plot_points, dict):
-        plot_points = plot_points.get("plot_points", plot_points.get("results", [plot_points]))
-    if not isinstance(plot_points, list):
-        plot_points = [plot_points]
-
-    update_task_progress_sync(
-        db, task_id, progress=65,
-        current_step=f"拆解完成，生成 {len(plot_points)} 个剧情点 (65%)"
-    )
-
-    # 4. 质检循环（65%-90%，最多 3 次）
+    # 尝试使用 Agent 执行
+    plot_points = []
     qa_status = "pending"
     qa_score = None
     qa_report = None
-    qa_retry_count = 0
-    max_retries = task_config.get("qa_max_retries", 3)
 
-    for retry in range(max_retries):
-        qa_retry_count = retry
-        progress_base = 65 + int((retry / max_retries) * 25)
-        update_task_progress_sync(
-            db, task_id, progress=progress_base,
-            current_step=f"质量检查中（第 {retry + 1}/{max_retries} 轮）... ({progress_base}%)"
-        )
-
+    if use_agent:
         try:
-            qa_result = skill_executor.execute_skill(
-                skill_name="breakdown_aligner",
-                inputs={
-                    "plot_points": json.dumps(plot_points, ensure_ascii=False),
-                    "chapters_text": chapters_text,
-                    "adapt_method": adapt_method or "",
-                },
+            agent_executor = SimpleAgentExecutor(db, model_adapter, log_publisher)
+            results = agent_executor.execute_agent(
+                agent_name="breakdown_agent",
+                context=agent_context,
                 task_id=task_id
             )
-        except Exception as e:
-            logger.warning(f"breakdown_aligner 执行失败（第 {retry + 1} 轮）: {e}")
-            qa_status = "error"
-            qa_report = {"error": str(e), "retry": retry}
-            if log_publisher:
-                log_publisher.publish_warning(
-                    task_id,
-                    f"质检执行异常（第 {retry + 1} 轮）: {str(e)}"
-                )
-            break
 
-        # 解析质检结果
-        if isinstance(qa_result, dict):
-            qa_status = qa_result.get("status", "FAIL")
+            # 提取结果
+            plot_points = results.get("plot_points", [])
+            qa_result = results.get("qa_result", {})
+            qa_status = qa_result.get("status", "pending")
             qa_score = qa_result.get("score")
             qa_report = qa_result
-        else:
-            qa_status = "FAIL"
-            qa_report = {"raw": str(qa_result)}
 
-        if log_publisher:
-            status_label = "通过" if qa_status == "PASS" else "未通过"
-            score_label = f"，得分: {qa_score}" if qa_score is not None else ""
-            log_publisher.publish_step_end(
-                task_id,
-                f"质检第 {retry + 1} 轮",
-                {"status": status_label, "score": qa_score}
+            logger.info(f"Agent 执行完成，plot_points: {len(plot_points)}，qa_status: {qa_status}")
+
+        except Exception as e:
+            logger.warning(f"Agent 执行失败，回退到 Skill 直接调用: {e}")
+            use_agent = False
+
+    # 回退：直接调用 Skill
+    if not use_agent or not plot_points:
+        skill_executor = SimpleSkillExecutor(db, model_adapter, log_publisher)
+        try:
+            plot_points = skill_executor.execute_skill(
+                skill_name="webtoon_breakdown",
+                inputs=agent_context,
+                task_id=task_id
             )
+            if isinstance(plot_points, dict):
+                plot_points = plot_points.get("plot_points", plot_points.get("results", []))
+        except Exception as e:
+            logger.error(f"Skill 执行失败: {e}")
+            raise AITaskException(code="SKILL_EXECUTION_ERROR", message=str(e))
 
-        if qa_status == "PASS":
-            logger.info(f"质检通过（第 {retry + 1} 轮），得分: {qa_score}")
-            break
+    # 确保 plot_points 是列表
+    if not isinstance(plot_points, list):
+        plot_points = [plot_points] if plot_points else []
 
-        # 未通过：尝试自动修正
-        if retry < max_retries - 1:
-            fix_instructions = ""
-            if isinstance(qa_result, dict):
-                fix_instructions = qa_result.get("fix_instructions", "")
+    update_task_progress_sync(db, task_id, progress=90, current_step=f"拆解完成，生成 {len(plot_points)} 个剧情点 (90%)")
 
-            if fix_instructions:
-                update_task_progress_sync(
-                    db, task_id,
-                    progress=progress_base + 5,
-                    current_step=f"根据质检反馈自动修正中... ({progress_base + 5}%)"
-                )
-                try:
-                    plot_points = _auto_fix_breakdown_sync(
-                        plot_points, fix_instructions, chapters_text,
-                        model_adapter, log_publisher, task_id
-                    )
-                    logger.info(f"自动修正完成（第 {retry + 1} 轮），将进行下一轮质检")
-                except Exception as e:
-                    logger.warning(f"自动修正失败（第 {retry + 1} 轮）: {e}")
-                    if log_publisher:
-                        log_publisher.publish_warning(
-                            task_id,
-                            f"自动修正失败: {str(e)}，将使用当前结果继续质检"
-                        )
-            else:
-                logger.info(f"质检未通过但无修正指令（第 {retry + 1} 轮），跳过修正")
-
-    # 5. 保存结果（90%-100%）
-    update_task_progress_sync(db, task_id, progress=90, current_step="保存拆解结果中... (90%)")
-
+    # 4. 保存结果（90%-100%）
     breakdown = PlotBreakdown(
         batch_id=batch_id,
         project_id=project_id,
         plot_points=plot_points,
         format_version=2,
         consistency_status="pending",
-        consistency_score=None,
-        consistency_results=None,
         qa_status=qa_status.lower() if isinstance(qa_status, str) else "pending",
         qa_score=qa_score,
         qa_report=qa_report,
-        qa_retry_count=qa_retry_count,
         used_adapt_method_id=task_config.get("adapt_method_id"),
     )
 
@@ -547,10 +468,10 @@ def _execute_breakdown_sync(
     return {
         "breakdown_id": str(breakdown.id),
         "format_version": 2,
-        "plot_points_count": len(plot_points) if plot_points else 0,
+        "plot_points_count": len(plot_points),
         "qa_status": qa_status,
         "qa_score": qa_score,
-        "qa_retry_count": qa_retry_count,
+        "use_agent": use_agent,
     }
 
 
@@ -775,21 +696,57 @@ def _load_ai_resource_sync(db: Session, resource_id, category: str) -> str:
     return ""
 
 
+def _load_resources_by_ids_sync(db: Session, resource_ids: list) -> dict:
+    """批量加载用户选择的 AI 资源，按分类分组
+
+    Args:
+        db: 数据库会话
+        resource_ids: 资源 ID 列表
+
+    Returns:
+        dict: 按分类分组的资源内容，格式为 {category: [content1, content2, ...]}
+    """
+    from app.models.ai_resource import AIResource
+
+    if not resource_ids:
+        return {}
+
+    # 批量查询所有选中的资源
+    resources = db.query(AIResource).filter(
+        AIResource.id.in_(resource_ids),
+        AIResource.is_active == True
+    ).all()
+
+    # 按分类分组
+    grouped = {}
+    for resource in resources:
+        category = resource.category
+        if category not in grouped:
+            grouped[category] = []
+        if resource.content:
+            grouped[category].append(resource.content)
+
+    return grouped
+
+
 def _auto_fix_breakdown_sync(
     plot_points: list,
-    fix_instructions: str,
+    fix_instructions,
     chapters_text: str,
     model_adapter,
     log_publisher=None,
     task_id: str = None
 ) -> list:
-    """根据质检反馈自动修正剧情点
+    """根据质检反馈自动修正剧情点（针对性修正策略）
 
-    构造修正 prompt，调用大模型生成修正后的 plot_points。
+    优化版本：
+    - 支持结构化修正指令（fix_instructions_list）
+    - 按问题类型分类处理
+    - 优先使用直接替换，减少 AI 调用
 
     Args:
         plot_points: 当前剧情点列表
-        fix_instructions: 质检给出的修正指令
+        fix_instructions: 质检给出的修正指令（str 或 list）
         chapters_text: 原文章节文本
         model_adapter: 模型适配器
         log_publisher: 日志发布器（可选）
@@ -803,6 +760,53 @@ def _auto_fix_breakdown_sync(
     if log_publisher and task_id:
         log_publisher.publish_step_start(task_id, step_name)
 
+    # 解析修正指令
+    instructions_list = []
+    instructions_text = ""
+
+    if isinstance(fix_instructions, list):
+        instructions_list = fix_instructions
+    elif isinstance(fix_instructions, str):
+        instructions_text = fix_instructions
+        # 尝试从文本中解析结构化指令
+        instructions_list = _parse_fix_instructions_text(fix_instructions)
+
+    # 如果有结构化指令，尝试直接替换
+    if instructions_list:
+        modified_points, remaining_instructions = _apply_direct_fixes(
+            plot_points, instructions_list
+        )
+
+        if log_publisher and task_id:
+            direct_fixed = len(instructions_list) - len(remaining_instructions)
+            log_publisher.publish_info(
+                task_id,
+                f"直接修正 {direct_fixed} 个问题，剩余 {len(remaining_instructions)} 个需要 AI 处理"
+            )
+
+        # 如果所有问题都已直接修正，返回结果
+        if not remaining_instructions:
+            if log_publisher and task_id:
+                log_publisher.publish_step_end(
+                    task_id, step_name,
+                    {"status": "success", "method": "direct_fix", "count": len(modified_points)}
+                )
+            return modified_points
+
+        # 更新 plot_points 和 instructions_text
+        plot_points = modified_points
+        instructions_text = _format_remaining_instructions(remaining_instructions)
+
+    # 如果没有修正指令，直接返回
+    if not instructions_text and not instructions_list:
+        if log_publisher and task_id:
+            log_publisher.publish_step_end(
+                task_id, step_name,
+                {"status": "skipped", "reason": "no_instructions"}
+            )
+        return plot_points
+
+    # 使用 AI 进行复杂修正
     prompt = f"""你是一个专业的剧情拆解修正专家。请根据质检反馈修正以下剧情点。
 
 ## 当前剧情点
@@ -811,17 +815,18 @@ def _auto_fix_breakdown_sync(
 ```
 
 ## 质检修正指令
-{fix_instructions}
+{instructions_text}
 
 ## 原文参考
 {chapters_text[:3000]}
 {"..." if len(chapters_text) > 3000 else ""}
 
-## 要求
+## 修正要求
 1. 严格按照修正指令进行修改
 2. 保持 JSON 数组格式不变
 3. 只修改需要修正的部分，不要改动正确的内容
 4. 确保修正后的内容与原文一致
+5. 每个剧情点必须包含：场景、角色、事件、情绪钩子类型、集数
 
 请直接返回修正后的完整 JSON 数组，不要包含其他文字。
 """
@@ -844,7 +849,7 @@ def _auto_fix_breakdown_sync(
         if log_publisher and task_id:
             log_publisher.publish_step_end(
                 task_id, step_name,
-                {"status": "success", "count": len(result)}
+                {"status": "success", "method": "ai_fix", "count": len(result)}
             )
 
         return result
@@ -861,16 +866,206 @@ def _auto_fix_breakdown_sync(
         return plot_points
 
 
+def _parse_fix_instructions_text(text: str) -> list:
+    """从文本中解析结构化修正指令"""
+    import re
+    instructions = []
+
+    # 匹配格式：1. 【剧情X】\n   问题：...\n   修正为：...
+    pattern = r'\d+\.\s*【剧情(\d+)】\s*\n\s*问题：(.+?)\n\s*修正为：(.+?)(?=\n\d+\.|$)'
+    matches = re.findall(pattern, text, re.DOTALL)
+
+    for match in matches:
+        instructions.append({
+            "target": f"【剧情{match[0]}】",
+            "target_index": int(match[0]) - 1,
+            "issue": match[1].strip(),
+            "suggestion": match[2].strip()
+        })
+
+    return instructions
+
+
+def _apply_direct_fixes(plot_points: list, instructions: list) -> tuple:
+    """直接应用修正指令（不需要 AI）
+
+    Returns:
+        tuple: (修正后的 plot_points, 剩余未处理的 instructions)
+    """
+    modified_points = list(plot_points)  # 复制列表
+    remaining = []
+
+    for inst in instructions:
+        target_index = inst.get("target_index")
+        suggestion = inst.get("suggestion", "")
+        fix_type = inst.get("type", "")
+
+        # 检查索引是否有效
+        if target_index is None or target_index < 0 or target_index >= len(modified_points):
+            remaining.append(inst)
+            continue
+
+        # 根据问题类型进行直接修正
+        if fix_type == "emotion_hook_type" and suggestion:
+            # 情绪钩子类型修正：直接替换
+            point = modified_points[target_index]
+            if isinstance(point, dict) and "emotion_hook" in point:
+                # 从 suggestion 中提取情绪钩子类型
+                point["emotion_hook"] = _extract_emotion_hook(suggestion)
+            elif isinstance(point, str):
+                # 字符串格式的剧情点，直接替换
+                modified_points[target_index] = suggestion
+            else:
+                remaining.append(inst)
+
+        elif fix_type == "format_error" and suggestion:
+            # 格式错误：直接替换整个剧情点
+            modified_points[target_index] = suggestion
+
+        else:
+            # 其他类型需要 AI 处理
+            remaining.append(inst)
+
+    return modified_points, remaining
+
+
+def _extract_emotion_hook(text: str) -> str:
+    """从文本中提取情绪钩子类型"""
+    import re
+    # 常见情绪钩子类型
+    hook_types = [
+        "打脸蓄力", "打脸爽点", "碾压爽点", "金手指觉醒", "实力突破",
+        "身份曝光", "身份提升", "虐心痛点", "误会产生", "真相揭露",
+        "危机出现", "绝境反杀", "底牌爆发", "先知优势", "复仇成功",
+        "初露锋芒", "甜宠时刻", "吃醋争风", "悬念开场", "反转爽点"
+    ]
+
+    for hook in hook_types:
+        if hook in text:
+            return hook
+
+    # 尝试匹配逗号前的最后一个词组
+    match = re.search(r'，([^，]+)，第\d+集', text)
+    if match:
+        return match.group(1)
+
+    return ""
+
+
+def _format_remaining_instructions(instructions: list) -> str:
+    """格式化剩余的修正指令为文本"""
+    if not instructions:
+        return ""
+
+    lines = ["请按以下指令修正剧情点：\n"]
+    for i, inst in enumerate(instructions, 1):
+        target = inst.get("target", "未知")
+        issue = inst.get("issue", "")
+        suggestion = inst.get("suggestion", "")
+        lines.append(f"{i}. {target}")
+        lines.append(f"   问题：{issue}")
+        if suggestion:
+            lines.append(f"   修正为：{suggestion}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _simplify_plot_points(plot_points: list) -> list:
+    """简化剧情点列表（降级策略）
+
+    当质检分数过低时，只保留核心剧情点，删除低强度内容。
+
+    策略：
+    1. 只保留包含高强度情绪钩子的剧情点
+    2. 每6章最多保留5个剧情点
+    3. 确保每集至少有1个剧情点
+
+    Args:
+        plot_points: 原始剧情点列表
+
+    Returns:
+        list: 简化后的剧情点列表
+    """
+    if not plot_points:
+        return []
+
+    # 高强度情绪钩子类型
+    high_intensity_hooks = {
+        "打脸爽点", "碾压爽点", "金手指觉醒", "身份曝光", "真相揭露",
+        "绝境反杀", "底牌爆发", "复仇成功", "反转爽点", "虐心高潮",
+        "打脸蓄力", "实力突破", "危机出现"
+    }
+
+    # 中等强度情绪钩子类型
+    medium_intensity_hooks = {
+        "初露锋芒", "身份提升", "悬念开场", "误会产生", "甜宠时刻",
+        "吃醋争风", "先知优势"
+    }
+
+    simplified = []
+    episode_counts = {}  # 记录每集的剧情点数量
+
+    for point in plot_points:
+        # 提取情绪钩子类型
+        hook_type = ""
+        episode = None
+
+        if isinstance(point, dict):
+            hook_type = point.get("emotion_hook", point.get("hook_type", ""))
+            episode = point.get("episode", point.get("集数"))
+        elif isinstance(point, str):
+            # 从字符串中提取
+            for hook in high_intensity_hooks | medium_intensity_hooks:
+                if hook in point:
+                    hook_type = hook
+                    break
+            # 提取集数
+            import re
+            match = re.search(r'第(\d+)集', point)
+            if match:
+                episode = int(match.group(1))
+
+        # 判断是否保留
+        is_high = hook_type in high_intensity_hooks
+        is_medium = hook_type in medium_intensity_hooks
+
+        if is_high:
+            # 高强度：必须保留
+            simplified.append(point)
+            if episode:
+                episode_counts[episode] = episode_counts.get(episode, 0) + 1
+        elif is_medium:
+            # 中等强度：如果该集还没有剧情点，则保留
+            if episode and episode_counts.get(episode, 0) == 0:
+                simplified.append(point)
+                episode_counts[episode] = 1
+
+    # 如果简化后太少，保留前 5 个
+    if len(simplified) < 3 and len(plot_points) >= 3:
+        simplified = plot_points[:5]
+
+    return simplified
+
+
 def _format_chapters_sync(chapters) -> str:
-    """格式化章节文本"""
+    """格式化章节文本
+
+    Args:
+        chapters: 章节列表
+
+    Returns:
+        str: 格式化后的章节文本
+    """
     formatted = []
+
     for ch in chapters:
         chapter_num = ch.chapter_number
         title = ch.title or f"第 {chapter_num} 章"
         content = ch.content or ""
-        
-        formatted.append(f"## 第 {chapter_num} 章：{title}\n\n{content}")
-    
+        chapter_text = f"## 第 {chapter_num} 章：{title}\n\n{content}"
+        formatted.append(chapter_text)
+
     return "\n\n".join(formatted)
 
 
@@ -1379,16 +1574,18 @@ def _get_adapt_method_sync(db: Session, task_config: dict) -> dict:
         task_config: 任务配置
 
     Returns:
-        dict: 改编方法论配置
+        dict: 改编方法论配置（包含 content 字段为 Markdown 内容）
     """
-    from app.models.adapt_method import AdaptMethod
+    from app.models.ai_resource import AIResource
+    import re
 
-    adapt_method_id = task_config.get("adapt_method_key")
+    adapt_method_key = task_config.get("adapt_method_key")
 
-    if not adapt_method_id:
+    if not adapt_method_key:
         # 返回默认配置
         return {
             "description": "标准网文适配漫画原则",
+            "content": "",
             "rules": [
                 "确保内容连贯，冲突明显",
                 "每集包含完整的故事弧线",
@@ -1396,20 +1593,33 @@ def _get_adapt_method_sync(db: Session, task_config: dict) -> dict:
             ]
         }
 
-    # 从数据库查询
-    adapt_method = db.query(AdaptMethod).filter(
-        AdaptMethod.id == adapt_method_id
-    ).first()
+    # 判断是否为 UUID
+    is_uuid = bool(re.match(r"^[0-9a-fA-F-]{36}$", adapt_method_key))
 
-    if not adapt_method:
+    # 从 AIResource 查询
+    if is_uuid:
+        resource = db.query(AIResource).filter(
+            AIResource.id == adapt_method_key,
+            AIResource.is_active == True
+        ).first()
+    else:
+        resource = db.query(AIResource).filter(
+            AIResource.name == adapt_method_key,
+            AIResource.category == "methodology",
+            AIResource.is_active == True
+        ).first()
+
+    if not resource:
         return {
             "description": "标准网文适配漫画原则",
+            "content": "",
             "rules": []
         }
 
     return {
-        "description": adapt_method.description or "标准网文适配漫画原则",
-        "rules": adapt_method.rules or []
+        "description": resource.description or resource.display_name or "标准网文适配漫画原则",
+        "content": resource.content or "",
+        "rules": []  # AIResource 使用 Markdown 内容，不再使用 rules 列表
     }
 
 
@@ -1424,6 +1634,8 @@ def _run_qa_loop_sync(
 ) -> dict:
     """执行质检循环（同步版本）
 
+    使用 SimpleSkillExecutor 调用 breakdown_aligner Skill（模板驱动）。
+
     Args:
         db: 数据库会话
         task_id: 任务 ID
@@ -1436,48 +1648,44 @@ def _run_qa_loop_sync(
     Returns:
         dict: 质检结果
     """
-    # 注意：QALoopHandler 是异步的，但我们在同步上下文中
-    # 这里我们需要使用同步方式调用
-
-    # 简化版本：直接调用 breakdown_aligner，不做循环重试
-    from app.ai.skills.breakdown_aligner_skill import BreakdownAlignerSkill
-    import asyncio
+    from app.ai.simple_executor import SimpleSkillExecutor
 
     try:
-        # 格式化章节数据
-        chapters_data = [
-            {
-                "number": ch.chapter_number,
-                "title": ch.title or f"第 {ch.chapter_number} 章",
-                "content": ch.content or ""
-            }
+        # 格式化章节文本
+        chapters_text = "\n\n".join([
+            f"## 第 {ch.chapter_number} 章：{ch.title or ''}\n\n{ch.content or ''}"
             for ch in chapters
-        ]
+        ])
 
-        # 构建 context
-        context = {
-            "chapters": chapters_data,
-            "breakdown_data": breakdown_data,
-            "adapt_method": adapt_method,
-            "model_adapter": model_adapter
-        }
+        # 格式化拆解数据为 JSON
+        plot_points_json = json.dumps(breakdown_data, ensure_ascii=False)
 
-        # 创建 skill 实例
-        aligner = BreakdownAlignerSkill()
+        # 格式化改编方法论
+        adapt_method_text = adapt_method.get("description", "")
+        if adapt_method.get("rules"):
+            adapt_method_text += "\n\n规则：\n" + "\n".join(
+                f"- {rule}" for rule in adapt_method["rules"]
+            )
 
-        # 在同步上下文中运行异步函数
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(aligner.execute(context))
-        finally:
-            loop.close()
+        # 使用 SimpleSkillExecutor 调用 breakdown_aligner Skill
+        skill_executor = SimpleSkillExecutor(db, model_adapter, log_publisher)
+
+        result = skill_executor.execute_skill(
+            skill_name="breakdown_aligner",
+            inputs={
+                "plot_points": plot_points_json,
+                "chapters_text": chapters_text,
+                "adapt_method": adapt_method_text,
+            },
+            task_id=task_id
+        )
+
+        # 解析质检结果
+        qa_status = "PASS" if result.get("status") == "PASS" else "FAIL"
+        qa_score = result.get("score", 0)
 
         # 发布质检结果
         if log_publisher:
-            qa_status = result.get("qa_status", "UNKNOWN")
-            qa_score = result.get("qa_score", 0)
-
             if qa_status == "PASS":
                 log_publisher.publish_success(
                     task_id,
@@ -1489,7 +1697,11 @@ def _run_qa_loop_sync(
                     f"⚠ 质量检查未通过，得分: {qa_score}"
                 )
 
-        return result
+        return {
+            "qa_status": qa_status,
+            "qa_score": qa_score,
+            "qa_report": result
+        }
 
     except Exception as e:
         print(f"质检执行失败: {e}")

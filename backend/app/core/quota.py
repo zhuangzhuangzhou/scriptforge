@@ -1,10 +1,9 @@
 """用户等级和配额管理服务
 
-等级配置：
-- free: 免费版 - 1个项目，3集/月
-- creator: 创作者版 - 5个项目，30集/月
-- studio: 工作室版 - 20个项目，150集/月
-- enterprise: 企业版 - 无限项目，无限产出
+纯积分制：
+- 取消配额概念，统一使用积分
+- 等级权益：每月自动赠送积分
+- 积分定价：从数据库读取，默认剧情拆解 100 积分，剧本生成 50 积分，质检 30 积分
 """
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -17,13 +16,29 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# 默认积分消费定价（可被数据库配置覆盖）
+DEFAULT_CREDITS_PRICING = {
+    "breakdown": 100,      # 剧情拆解
+    "script": 50,          # 剧本生成
+    "qa": 30,              # 质检校验
+    "retry": 50,           # 重试（半价）
+}
+
+
+async def get_credits_pricing(db: AsyncSession) -> dict:
+    """从数据库获取积分定价配置"""
+    from app.core.credits import get_credits_config
+    config = await get_credits_config(db)
+    return config["base"]
+
+
 @dataclass
 class TierConfig:
     """等级配置"""
     name: str
     display_name: str
     max_projects: int          # 最大项目数，-1 表示无限
-    monthly_episodes: int      # 每月剧集配额，-1 表示无限
+    monthly_credits: int       # 每月赠送积分
     can_use_custom_api: bool   # 是否可使用自定义 API Key
     price_monthly: int         # 月费（分）
 
@@ -34,7 +49,7 @@ TIER_CONFIGS = {
         name="free",
         display_name="免费版",
         max_projects=1,
-        monthly_episodes=3,
+        monthly_credits=300,
         can_use_custom_api=False,
         price_monthly=0
     ),
@@ -42,7 +57,7 @@ TIER_CONFIGS = {
         name="creator",
         display_name="创作者版",
         max_projects=5,
-        monthly_episodes=30,
+        monthly_credits=3000,
         can_use_custom_api=False,
         price_monthly=4900  # ¥49
     ),
@@ -50,7 +65,7 @@ TIER_CONFIGS = {
         name="studio",
         display_name="工作室版",
         max_projects=20,
-        monthly_episodes=150,
+        monthly_credits=15000,
         can_use_custom_api=False,
         price_monthly=19900  # ¥199
     ),
@@ -58,7 +73,7 @@ TIER_CONFIGS = {
         name="enterprise",
         display_name="企业版",
         max_projects=-1,
-        monthly_episodes=-1,
+        monthly_credits=100000,
         can_use_custom_api=True,
         price_monthly=99900  # ¥999
     ),
@@ -78,7 +93,10 @@ def get_tier_config(tier: str) -> TierConfig:
 
 
 class QuotaService:
-    """配额检查服务"""
+    """配额检查服务（纯积分制）
+
+    所有配额检查已转换为积分检查。
+    """
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -107,147 +125,215 @@ class QuotaService:
             "used": current_count
         }
 
-    async def check_episode_quota(self, user) -> dict:
-        """检查剧集配额"""
+    async def check_and_grant_monthly_credits(self, user) -> int:
+        """检查并发放月度积分
+
+        Returns:
+            int: 本次发放的积分数量，0 表示无需发放
+        """
         config = get_tier_config(user.tier)
+        now = datetime.now(timezone.utc)
 
-        # 无限配额
-        if config.monthly_episodes == -1:
-            return {"allowed": True, "remaining": -1}
+        # 检查是否需要重置（每月1号或首次）
+        if self._should_reset_monthly(user, now):
+            granted = config.monthly_credits
+            user.credits += granted
+            user.monthly_credits_granted = granted
+            user.credits_reset_at = now
+            return granted
+        return 0
 
-        # 检查是否需要重置月度配额
-        await self._maybe_reset_monthly_quota(user)
+    def _should_reset_monthly(self, user, now: datetime) -> bool:
+        """判断是否需要重置月度积分"""
+        if user.credits_reset_at is None:
+            # 首次使用
+            return True
 
-        remaining = config.monthly_episodes - user.monthly_episodes_used
+        # 检查是否跨月
+        reset_at = user.credits_reset_at
+        if reset_at.year < now.year:
+            return True
+        if reset_at.year == now.year and reset_at.month < now.month:
+            return True
+        return False
+
+    async def check_credits(self, user, task_type: str) -> dict:
+        """检查积分是否足够
+
+        Args:
+            user: 用户对象
+            task_type: 任务类型（breakdown/script/qa/retry）
+
+        Returns:
+            dict: {allowed, cost, balance, shortfall}
+        """
+        # 先尝试发放月度积分
+        await self.check_and_grant_monthly_credits(user)
+
+        # 从数据库读取定价配置
+        pricing = await get_credits_pricing(self.db)
+        cost = pricing.get(task_type, DEFAULT_CREDITS_PRICING.get(task_type, 0))
+
         return {
-            "allowed": remaining > 0,
-            "remaining": remaining,
-            "limit": config.monthly_episodes,
-            "used": user.monthly_episodes_used
+            "allowed": user.credits >= cost,
+            "cost": cost,
+            "balance": user.credits,
+            "shortfall": max(0, cost - user.credits)
         }
 
+    async def consume_credits(self, user, task_type: str, description: str = None) -> bool:
+        """消耗积分
+
+        Args:
+            user: 用户对象
+            task_type: 任务类型
+            description: 消费描述
+
+        Returns:
+            bool: 是否成功
+        """
+        # 从数据库读取定价配置
+        pricing = await get_credits_pricing(self.db)
+        cost = pricing.get(task_type, DEFAULT_CREDITS_PRICING.get(task_type, 0))
+
+        if user.credits < cost:
+            return False
+
+        user.credits -= cost
+
+        # 记录账单
+        from app.models.billing import BillingRecord
+        from uuid import UUID
+
+        record = BillingRecord(
+            user_id=user.id if not isinstance(user.id, str) else UUID(user.id),
+            type="consume",
+            credits=-cost,
+            balance_after=user.credits,
+            description=description or f"{task_type} 任务消费",
+            created_at=datetime.now(timezone.utc)
+        )
+        self.db.add(record)
+        return True
+
+    async def check_episode_quota(self, user) -> dict:
+        """检查剧集配额（兼容旧接口，转为积分检查）"""
+        return await self.check_credits(user, "breakdown")
+
     async def consume_episode_quota(self, user, count: int = 1) -> bool:
-        """消耗剧集配额，返回是否成功"""
-        quota = await self.check_episode_quota(user)
-
-        if not quota["allowed"]:
-            return False
-
-        if quota["remaining"] != -1 and quota["remaining"] < count:
-            return False
-
-        # 无限配额不需要扣减
-        if quota["remaining"] != -1:
-            user.monthly_episodes_used += count
-
+        """消耗剧集配额（兼容旧接口，转为积分消费）"""
+        for _ in range(count):
+            if not await self.consume_credits(user, "breakdown", "剧情拆解"):
+                return False
         return True
 
     async def refund_episode_quota(self, user, count: int = 1) -> None:
-        """回滚剧集配额（失败回滚或撤销预占）"""
+        """回滚剧集配额（兼容旧接口，转为积分返还）"""
         if count <= 0:
             return
 
-        # 无限配额不需要回滚
-        config = get_tier_config(user.tier)
-        if config.monthly_episodes == -1:
-            return
+        # 从数据库读取定价配置
+        pricing = await get_credits_pricing(self.db)
+        refund_amount = pricing.get("breakdown", DEFAULT_CREDITS_PRICING.get("breakdown", 100)) * count
 
-        # 确保不会减成负数
-        user.monthly_episodes_used = max(user.monthly_episodes_used - count, 0)
+        user.credits += refund_amount
 
-    async def _maybe_reset_monthly_quota(self, user):
-        """检查并重置月度配额"""
-        now = datetime.now(timezone.utc)
+        # 记录账单
+        from app.models.billing import BillingRecord
+        from uuid import UUID
 
-        if user.monthly_reset_at is None:
-            # 首次使用，设置下月1号重置
-            user.monthly_reset_at = self._get_next_month_start(now)
-            user.monthly_episodes_used = 0
-        elif now >= user.monthly_reset_at:
-            # 已过重置时间，重置配额
-            user.monthly_episodes_used = 0
-            user.monthly_reset_at = self._get_next_month_start(now)
-
-    @staticmethod
-    def _get_next_month_start(dt: datetime) -> datetime:
-        """获取下月1号零点"""
-        if dt.month == 12:
-            return datetime(dt.year + 1, 1, 1, tzinfo=timezone.utc)
-        return datetime(dt.year, dt.month + 1, 1, tzinfo=timezone.utc)
+        record = BillingRecord(
+            user_id=user.id if not isinstance(user.id, str) else UUID(user.id),
+            type="refund",
+            credits=refund_amount,
+            balance_after=user.credits,
+            description=f"任务失败返还积分 x{count}",
+            created_at=datetime.now(timezone.utc)
+        )
+        self.db.add(record)
 
     async def get_user_quota_summary(self, user) -> dict:
-        """获取用户配额摘要"""
+        """获取用户配额摘要（纯积分制）"""
         config = get_tier_config(user.tier)
         project_quota = await self.check_project_quota(user)
-        episode_quota = await self.check_episode_quota(user)
+
+        # 先尝试发放月度积分
+        await self.check_and_grant_monthly_credits(user)
+
+        # 从数据库读取定价配置
+        pricing = await get_credits_pricing(self.db)
 
         return {
             "tier": user.tier,
             "tier_display": config.display_name,
             "credits": user.credits,
+            "monthly_credits": config.monthly_credits,
+            "monthly_credits_granted": user.monthly_credits_granted or 0,
             "projects": project_quota,
-            "episodes": episode_quota,
             "can_use_custom_api": config.can_use_custom_api,
-            "reset_at": user.monthly_reset_at.isoformat() if user.monthly_reset_at else None
+            "reset_at": user.credits_reset_at.isoformat() if user.credits_reset_at else None,
+            "pricing": pricing
         }
 
 
 def refund_episode_quota_sync(db: Session, user_id: str, amount: int = 1) -> None:
-    """同步版本：返还剧集配额
-    
-    用于 Celery worker 中的配额回滚操作。当任务失败时，需要将预扣的配额返还给用户。
-    
+    """同步版本：返还积分（纯积分制）
+
+    用于 Celery worker 中的积分回滚操作。当任务失败时，需要将预扣的积分返还给用户。
+
     Args:
         db: 同步数据库会话
         user_id: 用户ID（UUID字符串）
-        amount: 返还数量，默认为1
-        
+        amount: 返还任务数量，默认为1
+
     Raises:
-        无异常抛出。配额回滚失败不应阻止错误信息的记录。
-        
-    注意：
-        - 使用数据库事务保证原子性
-        - 配额不会减成负数
-        - 无限配额（企业版）不需要回滚
-        - 回滚失败会记录日志但不抛出异常
+        无异常抛出。积分回滚失败不应阻止错误信息的记录。
     """
     from app.models.user import User
-    
+    from app.models.billing import BillingRecord
+    from uuid import UUID
+
     if amount <= 0:
-        logger.warning(f"配额回滚数量无效: user_id={user_id}, amount={amount}")
+        logger.warning(f"积分回滚数量无效: user_id={user_id}, amount={amount}")
         return
-    
+
     try:
         # 查询用户
         user = db.query(User).filter(User.id == user_id).first()
-        
+
         if not user:
-            logger.error(f"配额回滚失败: 用户不存在 user_id={user_id}")
+            logger.error(f"积分回滚失败: 用户不存在 user_id={user_id}")
             return
-        
-        # 检查是否为无限配额（企业版）
-        config = get_tier_config(user.tier)
-        if config.monthly_episodes == -1:
-            logger.info(f"配额回滚跳过: 用户为无限配额 user_id={user_id}, tier={user.tier}")
-            return
-        
-        # 返还配额（确保不会减成负数）
-        old_used = user.monthly_episodes_used
-        user.monthly_episodes_used = max(0, user.monthly_episodes_used - amount)
-        new_used = user.monthly_episodes_used
-        
+
+        # 计算返还积分（同步函数使用默认值，无法异步查询数据库）
+        refund_credits = DEFAULT_CREDITS_PRICING.get("breakdown", 100) * amount
+        old_balance = user.credits
+        user.credits += refund_credits
+        new_balance = user.credits
+
+        # 记录账单
+        record = BillingRecord(
+            user_id=UUID(user_id) if isinstance(user_id, str) else user_id,
+            type="refund",
+            credits=refund_credits,
+            balance_after=new_balance,
+            description=f"任务失败返还积分 x{amount}",
+            created_at=datetime.now(timezone.utc)
+        )
+        db.add(record)
+
         # 提交事务
         db.commit()
-        
+
         logger.info(
-            f"配额回滚成功: user_id={user_id}, amount={amount}, "
-            f"old_used={old_used}, new_used={new_used}"
+            f"积分回滚成功: user_id={user_id}, amount={amount}, "
+            f"refund_credits={refund_credits}, old_balance={old_balance}, new_balance={new_balance}"
         )
-        
+
     except Exception as e:
-        # 配额回滚失败不应阻止错误传播
-        logger.error(f"配额回滚失败: user_id={user_id}, amount={amount}, error={str(e)}")
+        # 积分回滚失败不应阻止错误传播
+        logger.error(f"积分回滚失败: user_id={user_id}, amount={amount}, error={str(e)}")
         try:
             db.rollback()
         except Exception as rollback_error:
-            logger.error(f"配额回滚事务回滚失败: {str(rollback_error)}")
+            logger.error(f"积分回滚事务回滚失败: {str(rollback_error)}")

@@ -11,14 +11,16 @@ import Register from './pages/auth/Register';
 import Dashboard from './pages/user/Dashboard';
 import Workspace from './pages/user/Workspace';
 import SkillsManagement from './pages/user/SkillsManagement';
-import AIConfiguration from './pages/admin/AIConfiguration';
+import TemplatesPage from './pages/user/Templates';
+import TemplateEditor from './pages/user/Templates/TemplateEditor';
+import SkillsPage from './pages/admin/Skills';
+import AgentsPage from './pages/admin/Agents';
 import AdminDashboard from './pages/admin/Dashboard';
 import UserManagement from './pages/admin/UserManagement';
 import ModelManagement from './pages/admin/ModelManagement';
-import SkillsPage from './pages/admin/Skills';
-import AgentsPage from './pages/admin/Agents';
 import ResourcesPage from './pages/admin/Resources';
 import ResourceEditor from './pages/admin/Resources/ResourceEditor';
+import SystemSettings from './pages/admin/SystemSettings';
 import { UserTier } from './types';
 
 // 加载状态组件
@@ -68,18 +70,21 @@ const AppContent: React.FC = () => {
           <Route path="/dashboard" element={<Dashboard userTier={userTier} />} />
           <Route path="/workspace/:projectId" element={<Workspace userTier={userTier} />} />
           <Route path="/skills" element={<SkillsManagement />} />
+          <Route path="/user/templates" element={<TemplatesPage />} />
+          <Route path="/user/templates/new" element={<TemplateEditor />} />
+          <Route path="/user/templates/:templateId/edit" element={<TemplateEditor />} />
 
           {/* Admin Routes */}
           <Route element={<AdminRoute />}>
             <Route path="/admin/dashboard" element={<AdminDashboard />} />
             <Route path="/admin/users" element={<UserManagement />} />
-            <Route path="/admin/configurations" element={<AIConfiguration />} />
             <Route path="/admin/models" element={<ModelManagement />} />
             <Route path="/admin/skills" element={<SkillsPage />} />
             <Route path="/admin/agents" element={<AgentsPage />} />
             <Route path="/admin/resources" element={<ResourcesPage />} />
             <Route path="/admin/resources/new" element={<ResourceEditor />} />
             <Route path="/admin/resources/:resourceId/edit" element={<ResourceEditor />} />
+            <Route path="/admin/settings" element={<SystemSettings />} />
           </Route>
         </Route>
       </Route>

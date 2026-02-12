@@ -24,7 +24,6 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   onClose,
   onSubmit,
   userTier = 'FREE',
-  currentProjectCount = 0
 }) => {
   const limits = TIER_LIMITS[userTier];
   const [formData, setFormData] = useState({
@@ -58,8 +57,8 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       // 检查是否是配额限制错误
       const errorDetail = error.response?.data?.detail || '';
 
-      if (error.response?.status === 403 && errorDetail.includes('配额')) {
-        // 配额用尽，显示炫酷的升级引导弹窗
+      if (error.response?.status === 403 && (errorDetail.includes('积分') || errorDetail.includes('配额'))) {
+        // 积分不足，显示升级引导弹窗
         setShowQuotaModal(true);
       } else {
         // 其他错误，显示具体错误信息
@@ -71,13 +70,14 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
   return (
     <>
-      {/* 配额限制弹窗 */}
+      {/* 积分不足弹窗 */}
       <QuotaLimitModal
         isOpen={showQuotaModal}
         onClose={() => setShowQuotaModal(false)}
         currentTier={userTier}
-        currentLimit={TIER_LIMITS[userTier]?.projects || 1}
-        quotaType="项目"
+        currentBalance={0}
+        requiredCredits={100}
+        taskType="创建项目"
       />
 
       {/* 原有的创建项目弹窗 */}
