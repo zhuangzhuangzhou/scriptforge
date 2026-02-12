@@ -6,6 +6,7 @@
 """
 import json
 from datetime import datetime
+import logging
 from sqlalchemy.orm import Session
 from app.core.celery_app import celery_app
 from app.core.database import SyncSessionLocal
@@ -20,6 +21,8 @@ from app.core.exceptions import (
 from app.models.ai_task import AITask
 from app.models.batch import Batch
 from app.models.user import User
+
+logger = logging.getLogger(__name__)
 
 
 # Celery任务配置
@@ -131,7 +134,8 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
         # 扣除积分（任务完成后扣费）
         credits_result = consume_credits_for_task_sync(db, user_id, "breakdown", task_id)
         if not credits_result["success"]:
-            print(f"[警告] 积分扣费失败: {credits_result['message']}")
+            logger.error(f"积分扣费失败: user={user_id}, task={task_id}, reason={credits_result['message']}")
+        db.commit()
 
         return {"status": "completed", "task_id": task_id}
 

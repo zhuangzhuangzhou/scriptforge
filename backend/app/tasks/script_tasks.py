@@ -89,7 +89,7 @@ def run_script_task(self, task_id: str, batch_id: str, project_id: str, breakdow
                     reference_id=task_id
                 )
                 if not credits_result["success"]:
-                    logger.warning(f"积分扣费失败: {credits_result['message']}")
+                    logger.error(f"积分扣费失败: user={user_id}, task={task_id}, reason={credits_result['message']}")
                 await db.commit()
 
                 return {"status": "completed"}
@@ -156,7 +156,8 @@ def run_episode_script_task(
         # 扣除积分（任务完成后扣费）
         credits_result = consume_credits_for_task_sync(db, user_id, "script", task_id)
         if not credits_result["success"]:
-            logger.warning(f"积分扣费失败: {credits_result['message']}")
+            logger.error(f"积分扣费失败: user={user_id}, task={task_id}, reason={credits_result['message']}")
+        db.commit()
 
         return {"status": "completed", "task_id": task_id, **result}
 

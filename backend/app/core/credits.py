@@ -12,14 +12,18 @@ from typing import Optional, List, Tuple
 from uuid import UUID
 from decimal import Decimal
 import os
+import time
+import logging
 
-from sqlalchemy import select, desc, and_
+from sqlalchemy import select, desc, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
 from app.models.billing import BillingRecord
 from app.models.ai_model import AIModel
 from app.models.ai_model_pricing import AIModelPricing
+
+logger = logging.getLogger(__name__)
 
 
 # 默认基础费定价（可被数据库配置覆盖）
@@ -40,14 +44,28 @@ CREDITS_PER_1K_TOKENS = TOKEN_CREDITS_INPUT
 BREAKDOWN_BASE_CREDITS = CREDITS_PRICING["breakdown"]
 SCRIPT_BASE_CREDITS = CREDITS_PRICING["script"]
 
+# 配置缓存（TTL 60 秒，减少数据库查询）
+_config_cache: Optional[dict] = None
+_config_cache_ts: float = 0
+_CONFIG_CACHE_TTL = 60  # 秒
 
-async def get_credits_config(db: AsyncSession) -> dict:
-    """从数据库获取积分配置"""
-    from app.models.system_config import SystemConfig
+_DEFAULT_CONFIG = {
+    "base": {
+        "breakdown": CREDITS_PRICING["breakdown"],
+        "script": CREDITS_PRICING["script"],
+        "qa": CREDITS_PRICING["qa"],
+        "retry": CREDITS_PRICING["retry"],
+    },
+    "token": {
+        "enabled": TOKEN_BILLING_ENABLED,
+        "input_per_1k": TOKEN_CREDITS_INPUT,
+        "output_per_1k": TOKEN_CREDITS_OUTPUT,
+    }
+}
 
-    result = await db.execute(select(SystemConfig))
-    configs = {c.key: c.value for c in result.scalars().all()}
 
+def _parse_config_rows(configs: dict) -> dict:
+    """将数据库配置行解析为结构化字典"""
     return {
         "base": {
             "breakdown": int(configs.get("credits_breakdown", "100")),
@@ -61,6 +79,27 @@ async def get_credits_config(db: AsyncSession) -> dict:
             "output_per_1k": int(configs.get("token_output_per_1k", "2")),
         }
     }
+
+
+async def get_credits_config(db: AsyncSession) -> dict:
+    """从数据库获取积分配置（带缓存，TTL 60 秒）"""
+    global _config_cache, _config_cache_ts
+
+    now = time.monotonic()
+    if _config_cache is not None and (now - _config_cache_ts) < _CONFIG_CACHE_TTL:
+        return _config_cache
+
+    try:
+        from app.models.system_config import SystemConfig
+        result = await db.execute(select(SystemConfig))
+        configs = {c.key: c.value for c in result.scalars().all()}
+        parsed = _parse_config_rows(configs)
+        _config_cache = parsed
+        _config_cache_ts = now
+        return parsed
+    except Exception as e:
+        logger.warning(f"读取系统配置失败，使用默认值: {e}")
+        return _DEFAULT_CONFIG
 
 
 def calculate_token_credits(token_count: int) -> int:
@@ -505,10 +544,22 @@ class CreditsService:
         else:
             next_grant = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
 
+        # 计算本月消耗总额
+        month_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+        uid = UUID(user_id) if isinstance(user_id, str) else user_id
+        consumed_result = await self.db.execute(
+            select(func.coalesce(func.sum(func.abs(BillingRecord.credits)), 0))
+            .where(BillingRecord.user_id == uid)
+            .where(BillingRecord.type == "consume")
+            .where(BillingRecord.created_at >= month_start)
+        )
+        monthly_consumed = int(consumed_result.scalar() or 0)
+
         return {
             "balance": user.credits,
             "monthly_granted": user.monthly_credits_granted or 0,
             "monthly_credits": config.monthly_credits,
+            "monthly_consumed": monthly_consumed,
             "next_grant_at": next_grant.isoformat(),
             "tier": user.tier,
             "tier_display": config.display_name,
@@ -641,7 +692,7 @@ class CreditsService:
 # ============ 同步版本函数（用于 Celery worker）============
 
 def get_credits_config_sync(db: "Session") -> dict:
-    """从数据库获取积分配置（同步版本）
+    """从数据库获取积分配置（同步版本，带缓存）
 
     用于 Celery worker 中的同步操作。
 
@@ -651,30 +702,30 @@ def get_credits_config_sync(db: "Session") -> dict:
     Returns:
         dict: 包含 base 和 token 配置的字典
     """
-    from app.models.system_config import SystemConfig
+    global _config_cache, _config_cache_ts
 
-    result = db.query(SystemConfig).all()
-    configs = {c.key: c.value for c in result}
+    now = time.monotonic()
+    if _config_cache is not None and (now - _config_cache_ts) < _CONFIG_CACHE_TTL:
+        return _config_cache
 
-    return {
-        "base": {
-            "breakdown": int(configs.get("credits_breakdown", "100")),
-            "script": int(configs.get("credits_script", "50")),
-            "qa": int(configs.get("credits_qa", "30")),
-            "retry": int(configs.get("credits_retry", "50")),
-        },
-        "token": {
-            "enabled": configs.get("token_billing_enabled", "false").lower() == "true",
-            "input_per_1k": int(configs.get("token_input_per_1k", "1")),
-            "output_per_1k": int(configs.get("token_output_per_1k", "2")),
-        }
-    }
+    try:
+        from app.models.system_config import SystemConfig
+        result = db.query(SystemConfig).all()
+        configs = {c.key: c.value for c in result}
+        parsed = _parse_config_rows(configs)
+        _config_cache = parsed
+        _config_cache_ts = now
+        return parsed
+    except Exception as e:
+        logger.warning(f"读取系统配置失败，使用默认值: {e}")
+        return _DEFAULT_CONFIG
 
 
 def consume_credits_for_task_sync(db: "Session", user_id: str, task_type: str, reference_id: Optional[str] = None) -> dict:
     """消耗任务积分（同步版本）
 
     用于 Celery worker 中的同步操作。
+    注意：不会自行 commit，由调用方统一管理事务。
 
     Args:
         db: 同步数据库会话
@@ -738,7 +789,6 @@ def consume_credits_for_task_sync(db: "Session", user_id: str, task_type: str, r
         created_at=datetime.now(timezone.utc)
     )
     db.add(record)
-    db.commit()
 
     return {
         "success": True,

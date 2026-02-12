@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Receipt, TrendingUp, Calendar, Download, Cpu, Zap, CreditCard, ChevronDown, Filter, Loader2 } from 'lucide-react';
+import { X, Receipt, TrendingUp, Calendar, Cpu, Zap, CreditCard, ChevronDown, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { billingApi } from '../../services/api';
 
@@ -11,6 +11,7 @@ interface CreditsInfo {
   balance: number;
   monthly_granted: number;
   monthly_credits: number;
+  monthly_consumed: number;
   next_grant_at: string | null;
   tier: string;
   tier_display: string;
@@ -96,10 +97,8 @@ const BillingModal: React.FC<BillingModalProps> = ({ onClose }) => {
     }
   };
 
-  // 计算本月消耗
-  const monthlyConsumed = records
-    .filter(r => r.type === 'consume')
-    .reduce((sum, r) => sum + Math.abs(r.credits), 0);
+  // 本月消耗（从后端获取精确值）
+  const monthlyConsumed = creditsInfo?.monthly_consumed || 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -196,15 +195,6 @@ const BillingModal: React.FC<BillingModalProps> = ({ onClose }) => {
                     }`}
                   >
                     积分定价
-                  </button>
-                </div>
-
-                <div className="flex gap-2">
-                  <button className="flex items-center gap-1 px-3 py-1.5 border border-slate-700 rounded-lg text-xs text-slate-400 hover:text-white hover:bg-slate-800 transition-colors">
-                    <Filter size={12} /> 筛选
-                  </button>
-                  <button className="flex items-center gap-1 px-3 py-1.5 border border-slate-700 rounded-lg text-xs text-slate-400 hover:text-white hover:bg-slate-800 transition-colors">
-                    <Download size={12} /> 导出
                   </button>
                 </div>
               </div>
