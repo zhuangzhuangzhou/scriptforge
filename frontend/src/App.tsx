@@ -15,6 +15,7 @@ import TemplatesPage from './pages/user/Templates';
 import TemplateEditor from './pages/user/Templates/TemplateEditor';
 import SkillsPage from './pages/admin/Skills';
 import AgentsPage from './pages/admin/Agents';
+import LogsPage from './pages/admin/Logs';
 import AdminDashboard from './pages/admin/Dashboard';
 import UserManagement from './pages/admin/UserManagement';
 import ModelManagement from './pages/admin/ModelManagement';
@@ -81,6 +82,7 @@ const AppContent: React.FC = () => {
             <Route path="/admin/models" element={<ModelManagement />} />
             <Route path="/admin/skills" element={<SkillsPage />} />
             <Route path="/admin/agents" element={<AgentsPage />} />
+            <Route path="/admin/logs" element={<LogsPage />} />
             <Route path="/admin/resources" element={<ResourcesPage />} />
             <Route path="/admin/resources/new" element={<ResourceEditor />} />
             <Route path="/admin/resources/:resourceId/edit" element={<ResourceEditor />} />

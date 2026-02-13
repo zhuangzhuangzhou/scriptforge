@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Row, Col, Statistic, Typography, Button, Space } from 'antd';
-import { UserOutlined, ProjectOutlined, ThunderboltOutlined, DatabaseOutlined, SettingOutlined, TeamOutlined, ApiOutlined, CodeOutlined, RobotOutlined, FileTextOutlined } from '@ant-design/icons';
+import { UserOutlined, ProjectOutlined, ThunderboltOutlined, DatabaseOutlined, SettingOutlined, TeamOutlined, ApiOutlined, CodeOutlined, RobotOutlined, FileTextOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { adminApi } from '../../services/api';
 
@@ -175,6 +175,21 @@ const AdminDashboard: React.FC = () => {
               </div>
               <span className="text-slate-200 font-medium">资源文档</span>
               <span className="text-slate-500 text-xs mt-1">管理方法论与模板文档</span>
+            </div>
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={8} lg={6}>
+          <Card
+            hoverable
+            className="bg-slate-800 border-slate-700 cursor-pointer group"
+            onClick={() => navigate('/admin/logs')}
+          >
+            <div className="flex flex-col items-center justify-center py-4">
+              <div className="p-3 rounded-full bg-indigo-500/10 mb-3 group-hover:bg-indigo-500/20 transition-colors">
+                <UnorderedListOutlined className="text-2xl text-indigo-500" />
+              </div>
+              <span className="text-slate-200 font-medium">任务日志</span>
+              <span className="text-slate-500 text-xs mt-1">查看系统任务执行日志</span>
             </div>
           </Card>
         </Col>

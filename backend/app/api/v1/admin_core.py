@@ -1,13 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, and_, or_
+from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 from typing import Optional, List
+from datetime import datetime, timedelta
 from app.core.database import get_db
 from app.models.user import User
 from app.api.v1.auth import get_current_user
 from app.models.pipeline import Pipeline, PipelineExecution, PipelineExecutionLog
 from app.models.project import Project
+from app.models.ai_task import AITask
+from app.models.batch import Batch
 
 router = APIRouter()
 
@@ -281,4 +285,310 @@ async def get_pipeline_execution_logs_admin(
         "skip": skip,
         "limit": limit
     }
+
+
+# ==================== 任务日志管理 API ====================
+
+@router.get("/tasks")
+async def get_tasks(
+    skip: int = 0,
+    limit: int = 20,
+    status: Optional[str] = Query(None, description="任务状态: queued, running, completed, failed"),
+    task_type: Optional[str] = Query(None, description="任务类型: breakdown, script, consistency_check"),
+    project_id: Optional[str] = Query(None, description="项目ID"),
+    date_from: Optional[str] = Query(None, description="开始日期 (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    keyword: Optional[str] = Query(None, description="搜索关键词"),
+    admin: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """管理员：获取AI任务列表"""
+    query = (
+        select(AITask, Project, Batch)
+        .outerjoin(Project, AITask.project_id == Project.id)
+        .outerjoin(Batch, AITask.batch_id == Batch.id)
+    )
+
+    # 构建筛选条件
+    conditions = []
+    if status:
+        conditions.append(AITask.status == status)
+    if task_type:
+        conditions.append(AITask.task_type == task_type)
+    if project_id:
+        conditions.append(AITask.project_id == project_id)
+    if date_from:
+        try:
+            from_date = datetime.strptime(date_from, "%Y-%m-%d")
+            conditions.append(AITask.created_at >= from_date)
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            to_date = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+            conditions.append(AITask.created_at < to_date)
+        except ValueError:
+            pass
+    if keyword:
+        conditions.append(
+            or_(
+                AITask.current_step.ilike(f"%{keyword}%"),
+                AITask.error_message.ilike(f"%{keyword}%")
+            )
+        )
+
+    if conditions:
+        query = query.where(and_(*conditions))
+
+    # 统计总数
+    count_conditions = conditions.copy() if conditions else []
+    count_query = select(func.count(AITask.id))
+    if count_conditions:
+        count_query = count_query.where(and_(*count_conditions))
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    # 状态统计
+    status_stats = {}
+    for s in ["queued", "running", "completed", "failed"]:
+        stat_query = select(func.count(AITask.id)).where(AITask.status == s)
+        stat_result = await db.execute(stat_query)
+        status_stats[s] = stat_result.scalar() or 0
+
+    # 获取任务列表
+    result = await db.execute(
+        query.order_by(AITask.created_at.desc()).offset(skip).limit(limit)
+    )
+    rows = result.all()
+
+    tasks = []
+    for task, project, batch in rows:
+        tasks.append({
+            "id": str(task.id),
+            "task_type": task.task_type,
+            "status": task.status,
+            "progress": task.progress,
+            "current_step": task.current_step,
+            "error_message": task.error_message,
+            "retry_count": task.retry_count,
+            "project_id": str(task.project_id) if task.project_id else None,
+            "project_name": project.name if project else None,
+            "batch_id": str(task.batch_id) if task.batch_id else None,
+            "batch_name": batch.name if batch else None,
+            "celery_task_id": task.celery_task_id,
+            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "started_at": task.started_at.isoformat() if task.started_at else None,
+            "completed_at": task.completed_at.isoformat() if task.completed_at else None
+        })
+
+    return {
+        "tasks": tasks,
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "status_summary": status_stats
+    }
+
+
+@router.get("/tasks/{task_id}")
+async def get_task_detail(
+    task_id: str,
+    admin: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """管理员：获取任务详情"""
+    result = await db.execute(
+        select(AITask, Project, Batch)
+        .outerjoin(Project, AITask.project_id == Project.id)
+        .outerjoin(Batch, AITask.batch_id == Batch.id)
+        .where(AITask.id == task_id)
+    )
+    row = result.first()
+
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="任务不存在"
+        )
+
+    task, project, batch = row
+
+    # 计算执行时长
+    duration = None
+    if task.started_at and task.completed_at:
+        duration = (task.completed_at - task.started_at).total_seconds()
+
+    return {
+        "id": str(task.id),
+        "task_type": task.task_type,
+        "status": task.status,
+        "progress": task.progress,
+        "current_step": task.current_step,
+        "error_message": task.error_message,
+        "retry_count": task.retry_count,
+        "config": task.config,
+        "result": task.result,
+        "depends_on": task.depends_on,
+        "project_id": str(task.project_id) if task.project_id else None,
+        "project_name": project.name if project else None,
+        "batch_id": str(task.batch_id) if task.batch_id else None,
+        "batch_name": batch.name if batch else None,
+        "celery_task_id": task.celery_task_id,
+        "duration": duration,
+        "created_at": task.created_at.isoformat() if task.created_at else None,
+        "started_at": task.started_at.isoformat() if task.started_at else None,
+        "completed_at": task.completed_at.isoformat() if task.completed_at else None
+    }
+
+
+@router.get("/tasks/{task_id}/logs")
+async def get_task_logs(
+    task_id: str,
+    skip: int = 0,
+    limit: int = 200,
+    admin: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """管理员：获取任务执行日志"""
+    # 先获取任务，找到关联的 PipelineExecution
+    task_result = await db.execute(
+        select(AITask).where(AITask.id == task_id)
+    )
+    task = task_result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="任务不存在"
+        )
+
+    # 通过 celery_task_id 查找 PipelineExecution
+    logs = []
+    total = 0
+
+    if task.celery_task_id:
+        # 查找关联的 PipelineExecution
+        exec_result = await db.execute(
+            select(PipelineExecution)
+            .where(PipelineExecution.celery_task_id == task.celery_task_id)
+        )
+        execution = exec_result.scalar_one_or_none()
+
+        if execution:
+            # 获取执行日志
+            log_count = await db.execute(
+                select(func.count(PipelineExecutionLog.id))
+                .where(PipelineExecutionLog.execution_id == execution.id)
+            )
+            total = log_count.scalar() or 0
+
+            log_result = await db.execute(
+                select(PipelineExecutionLog)
+                .where(PipelineExecutionLog.execution_id == execution.id)
+                .order_by(PipelineExecutionLog.created_at.asc())
+                .offset(skip)
+                .limit(limit)
+            )
+            log_rows = log_result.scalars().all()
+
+            logs = [
+                {
+                    "id": str(log.id),
+                    "stage": log.stage,
+                    "event": log.event,
+                    "message": log.message,
+                    "detail": log.detail,
+                    "created_at": log.created_at.isoformat() if log.created_at else None
+                }
+                for log in log_rows
+            ]
+
+    return {
+        "task_id": str(task.id),
+        "logs": logs,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+
+@router.get("/logs/stats")
+async def get_logs_stats(
+    period: str = Query("day", description="统计周期: day, week, month"),
+    admin: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """管理员：获取日志统计"""
+    now = datetime.utcnow()
+
+    # 根据周期确定时间范围
+    if period == "week":
+        start_date = now - timedelta(days=7)
+    elif period == "month":
+        start_date = now - timedelta(days=30)
+    else:  # day
+        start_date = now - timedelta(days=1)
+
+    # 总任务数
+    total_query = select(func.count(AITask.id)).where(AITask.created_at >= start_date)
+    total_result = await db.execute(total_query)
+    total_tasks = total_result.scalar() or 0
+
+    # 成功任务数
+    success_query = select(func.count(AITask.id)).where(
+        and_(AITask.created_at >= start_date, AITask.status == "completed")
+    )
+    success_result = await db.execute(success_query)
+    success_tasks = success_result.scalar() or 0
+
+    # 成功率
+    success_rate = round(success_tasks / total_tasks * 100, 1) if total_tasks > 0 else 0
+
+    # 按类型统计
+    type_stats = {}
+    for task_type in ["breakdown", "script", "consistency_check"]:
+        type_query = select(func.count(AITask.id)).where(
+            and_(AITask.created_at >= start_date, AITask.task_type == task_type)
+        )
+        type_result = await db.execute(type_query)
+        type_stats[task_type] = type_result.scalar() or 0
+
+    # 每日趋势（最近7天）
+    daily_trend = []
+    for i in range(7):
+        day_start = (now - timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+
+        day_total = await db.execute(
+            select(func.count(AITask.id)).where(
+                and_(AITask.created_at >= day_start, AITask.created_at < day_end)
+            )
+        )
+        day_success = await db.execute(
+            select(func.count(AITask.id)).where(
+                and_(
+                    AITask.created_at >= day_start,
+                    AITask.created_at < day_end,
+                    AITask.status == "completed"
+                )
+            )
+        )
+
+        daily_trend.append({
+            "date": day_start.strftime("%Y-%m-%d"),
+            "total": day_total.scalar() or 0,
+            "success": day_success.scalar() or 0
+        })
+
+    daily_trend.reverse()
+
+    return {
+        "period": period,
+        "total_tasks": total_tasks,
+        "success_tasks": success_tasks,
+        "success_rate": success_rate,
+        "tasks_by_type": type_stats,
+        "daily_trend": daily_trend
+    }
+
 
