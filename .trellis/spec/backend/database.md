@@ -338,5 +338,126 @@ class AIModelCredential(Base):
 
 ---
 
-**最后更新**: 2026-02-08
-**相关变更**: 模型管理系统 v1.1.0 - 加密字段迁移
+## 业务配置系统设计
+
+### 配置读取性能优化
+
+**问题**：每次请求都查询数据库获取配置，在高并发场景下会产生大量重复查询。
+
+**解决方案**：使用内存缓存 + TTL 机制。
+
+```python
+import time
+from typing import Optional
+
+_config_cache: Optional[dict] = None
+_config_cache_ts: float = 0
+_CONFIG_CACHE_TTL = 60  # 秒
+
+async def get_credits_config(db: AsyncSession) -> dict:
+    global _config_cache, _config_cache_ts
+
+    now = time.monotonic()
+    if _config_cache is not None and (now - _config_cache_ts) < _CONFIG_CACHE_TTL:
+        return _config_cache
+
+    # 从数据库读取...
+    _config_cache = parsed
+    _config_cache_ts = now
+    return parsed
+```
+
+**关键点**：
+- 设置合理的 TTL（如 60 秒）
+- 异常时回退到默认值
+- 管理员修改配置后可通过重启服务或手动清空缓存生效
+
+---
+
+### 同步函数的数据库操作
+
+**问题**：Celery worker 使用同步数据库会话，如果在函数内部自行 commit，可能导致事务边界混乱。
+
+**解决方案**：同步函数不自行 commit，由调用方统一管理事务。
+
+```python
+# ❌ 错误：函数内部 commit
+def consume_credits_sync(db, user_id, amount):
+    user.credits -= amount
+    db.add(record)
+    db.commit()  # 事务边界不确定
+    return result
+
+# ✅ 正确：调用方管理事务
+def consume_credits_sync(db, user_id, amount):
+    user.credits -= amount
+    db.add(record)
+    return {"success": True}  # 不 commit
+
+# 调用方
+def run_task():
+    consume_credits_sync(db, user_id, 100)
+    db.commit()  # 统一在任务完成时 commit
+```
+
+---
+
+### 配置读取的异常处理
+
+**问题**：如果数据库表不存在（如迁移未执行），代码会直接抛异常导致任务失败。
+
+**解决方案**：添加异常兜底逻辑，失败时回退到代码默认值。
+
+```python
+try:
+    result = db.query(SystemConfig).all()
+    configs = {c.key: c.value for c in result}
+    parsed = _parse_config(configs)
+except Exception as e:
+    logger.warning(f"读取系统配置失败，使用默认值: {e}")
+    return _DEFAULT_CONFIG  # 回退到默认值
+```
+
+---
+
+### 积分扣费失败的处理
+
+**问题**：任务完成后扣费失败但任务仍返回成功，导致用户免费使用服务。
+
+**解决方案**：使用 logger.error 记录详细信息，便于排查和追缴。
+
+```python
+credits_result = consume_credits_for_task_sync(db, user_id, "breakdown", task_id)
+if not credits_result["success"]:
+    logger.error(
+        f"积分扣费失败: user={user_id}, task={task_id}, "
+        f"reason={credits_result['message']}"
+    )
+```
+
+**注意**：
+- 使用 `logger.error` 而非 `print`
+- 记录关键上下文（user_id, task_id, 失败原因）
+- 考虑是否需要记录到"欠费"表以便后续追缴
+
+---
+
+### 前端数据的准确性
+
+**问题**：在前端用有限的分页数据做聚合计算（如本月消耗），结果不准确。
+
+**解决方案**：后端直接返回聚合结果。
+
+```typescript
+// ❌ 前端计算（不准确，只算当前页）
+const monthlyConsumed = records.reduce((sum, r) => sum + r.credits, 0)
+
+// ✅ 后端返回（精确）
+const info = await billingApi.getCreditsInfo();
+const monthlyConsumed = info.data.monthly_consumed;
+```
+
+---
+
+**最后更新**: 2026-02-12
+**相关变更**: 纯积分制系统实现与 Code Review 修复
