@@ -2,6 +2,60 @@
 
 记录所有规范文档的更新历史。
 
+## 2026-02-12 - WorkflowEditor 可视化编辑器
+
+### 更新的规范
+
+1. **`frontend/index.md`** - 更新
+   - 新增 WorkflowEditor 组件文档
+   - 目录结构、核心功能、使用示例
+
+### 学到的关键知识
+
+#### 1. React Hooks 条件调用问题
+
+**问题**：`useMemo` 在条件返回 (`if (!step) return ...`) 之后调用，违反 Hooks 规则
+
+**解决**：将所有 Hooks 移到条件返回之前，在 Hook 内部处理 null 情况
+
+```tsx
+// ❌ 错误
+if (!step) return <Empty />;
+const inputFields = useMemo(() => { ... }, [step]);
+
+// ✅ 正确
+const inputFields = useMemo(() => {
+  if (!step) return [];
+  // ...
+}, [step]);
+if (!step) return <Empty />;
+```
+
+#### 2. 步骤 ID 修改时的匹配问题
+
+**问题**：使用 `steps.map(s => s.id === selectedStepId ? updated : s)` 更新步骤，当用户修改 ID 后匹配失败
+
+**解决**：使用索引定位而非 ID 匹配
+
+```tsx
+const selectedStepIndex = value.steps.findIndex(s => s.id === selectedStepId);
+const newSteps = [...value.steps];
+newSteps[selectedStepIndex] = updatedStep;
+```
+
+#### 3. 变量引用顺序
+
+**问题**：工作流步骤只能引用之前步骤的输出，不能引用后续步骤
+
+**解决**：传递 `currentStepIndex`，只提取之前步骤的变量引用
+
+```tsx
+const previousSteps = currentStepIndex > 0 ? allSteps.slice(0, currentStepIndex) : [];
+const variableRefs = extractVariableRefs(previousSteps);
+```
+
+---
+
 ## 2026-02-08 - 移除加密功能的经验总结
 
 ### 更新的规范
@@ -117,9 +171,205 @@ def mask_api_key(api_key: str) -> str:
 
 ---
 
-**更新人**: AI Assistant
+## 2026-02-13 - 使用 GitHub Issues 管理待办事项
+
+### 更新的规范
+
+1. **`CLAUDE.md`** - 更新
+   - 添加 GitHub Issues 工作流说明
+
+### 学到的关键知识
+
+#### 1. 使用 `gh CLI` 管理 Issues
+
+**优势**：
+- Issues 是持久的，不受 Claude Code 会话限制
+- 标签系统提供灵活的分类方式
+- 可以让团队成员和 AI 快速了解待办事项
+
+**常用命令**：
+```bash
+# 查看 Issues 列表
+gh issue list
+
+# 创建 Issue（交互式）
+gh issue create
+
+# 创建 Issue（一步到位）
+gh issue create -t "标题" -b "描述内容" -l "bug"
+
+# 查看 Issue 详情
+gh issue view 6
+
+# 关闭 Issue
+gh issue close 6
+
+# 编辑 Issue
+gh issue edit 6 --add-label "priority:high"
+```
+
+#### 2. 创建和使用自定义标签
+
+```bash
+# 创建优先级标签
+gh label create "priority:high" --color "d73a4a" --description "高优先级"
+gh label create "priority:medium" --color "fbca04" --description "中优先级"
+gh label create "priority:low" --color "0e8a16" --description "低优先级"
+
+# 查看现有标签
+gh label list
+```
+
+#### 3. GitHub Issues 作为任务跟踪
+
+**工作流程**：
+1. 发现问题或待办 → 创建 Issue
+2. 设置优先级和类型标签
+3. 开发时参考 Issue 列表
+4. 完成后关闭 Issue
+
+**标签推荐**：
+| 标签类型 | 示例 |
+|---------|------|
+| 类型 | `bug`, `enhancement`, `feature`, `documentation` |
+| 优先级 | `priority:high`, `priority:medium`, `priority:low` |
+| 模块 | `frontend`, `backend`, `database`, `api` |
+
+### 相关文件
+
+**更新的文件**：
+- `.trellis/spec/SPEC_UPDATE_LOG.md`
+
+**创建的 Issues**：
+- #6 积分双重扣费风险
+- #7 批量任务失败时积分未回滚
+- #8 质检循环缺少最大重试限制
+- #9 并发控制参数未生效
+- #10 JSON 解析正则匹配问题
+- #11 清理废弃的兼容字段
+- #12 统一错误信息解析方式
+
+### 适用场景
+
+这些规范适用于：
+- 跨会话的任务跟踪
+- 团队协作中的待办管理
+- Bug 和待办事项的持久化存储
+- 使用 GitHub 作为任务管理工具
+
+---
+
+**更新人**: AI Assistant (Claude Opus 4.6)
 **审查状态**: 待审查
-**相关任务**: 模型管理系统 v1.1.0 - 移除加密功能
+**相关任务**: GitHub Issues 任务管理系统搭建
+
+## 2026-02-12 - Agent/Skill/Resource 三层架构完善
+
+### 更新的规范
+
+1. **`backend/ai-skills.md`** - 新增第 12 章
+   - 简化架构：Agent / Skill / Resource 三层模式
+   - 循环工作流配置详解
+   - 输入类型自动转换机制
+   - 用户友好的日志消息规范
+   - 完整调用流程图
+
+### 学到的关键知识
+
+#### 1. 三层架构职责划分
+
+| 层级 | 职责 | 存储位置 |
+|------|------|----------|
+| **Resource** | AI 资源文档（方法论、规则、模板） | `AIResource` 表 |
+| **Agent** | 工作流编排（循环、条件、重试） | `SimpleAgent` 表 |
+| **Skill** | Prompt 模板 + 输入/输出定义 | `Skill` 表 |
+
+**调用关系**：
+```
+Resource (加载文档) → Agent (编排工作流) → Skill (执行单步)
+```
+
+#### 2. 输入类型自动转换 ⚠️ GOTCHA
+
+**问题**：
+Skill 的 `prompt_template` 使用 Python `str.format()`，所有输入必须是字符串。
+但 Agent 步骤之间传递的数据可能是 `list` 或 `dict`。
+
+**解决方案**：
+在 `SimpleSkillExecutor` 中自动转换：
+
+```python
+processed_inputs = {}
+for key, value in inputs.items():
+    if isinstance(value, str):
+        processed_inputs[key] = value
+    elif isinstance(value, (list, dict)):
+        processed_inputs[key] = json.dumps(value, ensure_ascii=False, indent=2)
+    elif value is None:
+        processed_inputs[key] = ""
+    else:
+        processed_inputs[key] = str(value)
+```
+
+#### 3. 用户友好的日志消息
+
+**问题**：
+技术性日志消息（如 `循环迭代 1/3`）对用户不友好。
+
+**解决方案**：
+| 场景 | ❌ 技术性消息 | ✅ 用户友好消息 |
+|------|-------------|----------------|
+| Agent 启动 | `开始执行 Agent: breakdown_agent` | `🤖 启动智能流程：剧情拆解 Agent` |
+| 循环迭代 | `循环迭代 1/3` | `🔄 第 1 轮处理（共 3 轮）` |
+| 质检通过 | `循环在第 1 轮满足退出条件` | `✅ 质量检查通过，第 1 轮完成` |
+| 达到上限 | `循环达到最大迭代次数 3，强制退出` | `⚠️ 已完成 3 轮处理，结果可能需要人工复核` |
+
+**原则**：
+1. 使用 emoji 增加可读性
+2. 避免暴露内部变量名
+3. 条件不满足时不发布日志（避免用户困惑）
+4. 失败时给出下一步建议
+
+#### 4. 模型导入错误
+
+**问题**：
+`SimpleAgentExecutor` 导入了错误的模型类 `Agent`，应该是 `SimpleAgent`。
+
+**修复**：
+```python
+# ❌ 错误
+from app.models.agent import Agent
+
+# ✅ 正确
+from app.models.agent import SimpleAgent
+```
+
+### 相关文件
+
+**修改的代码**：
+- `backend/app/ai/simple_executor.py`
+  - 修复 `SimpleAgent` 导入
+  - 添加输入类型自动转换
+  - 优化日志消息
+
+**更新的规范**：
+- `.trellis/spec/backend/ai-skills.md` - 新增第 12 章
+
+### 适用场景
+
+这些规范适用于：
+- 使用 Agent 编排多个 Skill
+- 实现循环质检工作流
+- 优化用户端日志显示
+- 排查 Agent/Skill 执行问题
+
+---
+
+**更新人**: AI Assistant (Claude Opus 4.6)
+**审查状态**: 待审查
+**相关任务**: Agent 驱动的剧情拆解流程优化
+
+---
 
 ## 2026-02-10 - AI Skill 系统开发规范
 
@@ -380,3 +630,97 @@ prompt = f"""你是一名资深的{角色描述}，负责{任务描述}。
 **更新人**: AI Assistant (Claude Sonnet 4.5)
 **审查状态**: 待审查
 **相关任务**: Webtoon-Aligner 实现
+
+---
+
+## 2026-02-12 - 纯积分制系统实现
+
+### 更新的规范
+
+1. **`backend/database.md`** - 新增章节
+   - 配置读取性能优化（内存缓存 + TTL）
+   - 同步函数的数据库操作规范
+   - 配置读取的异常处理
+   - 积分扣费失败的处理
+   - 前端数据的准确性
+
+### 学到的关键知识
+
+#### 1. 配置查询需要加缓存
+
+**问题**：每次扣费都查询数据库，高并发下性能差
+
+**解决**：使用 60 秒内存缓存
+
+```python
+_config_cache: Optional[dict] = None
+_config_cache_ts: float = 0
+_CONFIG_CACHE_TTL = 60
+
+async def get_credits_config(db):
+    global _config_cache, _config_cache_ts
+    now = time.monotonic()
+    if _config_cache and (now - _config_cache_ts) < _CONFIG_CACHE_TTL:
+        return _config_cache
+    # 从数据库读取...
+```
+
+#### 2. 同步函数内部不要自行 commit
+
+**问题**：函数内部 commit 导致事务边界混乱
+
+**解决**：由调用方统一管理事务
+
+```python
+# ✅ 正确：不 commit
+def consume_credits_sync(db, user_id):
+    user.credits -= amount
+    return {"success": True}
+
+# 调用方管理事务
+def run_task():
+    consume_credits_sync(db, user_id)
+    db.commit()  # 统一 commit
+```
+
+#### 3. 配置读取必须有异常兜底
+
+**问题**：数据库表不存在时直接抛异常
+
+**解决**：try/except 回退默认值
+
+```python
+try:
+    result = db.query(SystemConfig).all()
+except Exception as e:
+    logger.warning(f"读取配置失败，使用默认值: {e}")
+    return _DEFAULT_CONFIG
+```
+
+#### 4. 扣费失败需要详细日志
+
+**问题**：只打印警告无法排查问题
+
+**解决**：logger.error 记录 user_id 和 task_id
+
+```python
+logger.error(
+    f"积分扣费失败: user={user_id}, task={task_id}, "
+    f"reason={credits_result['message']}"
+)
+```
+
+#### 5. 前端数据计算必须精确
+
+**问题**：用分页数据做聚合不准确
+
+**解决**：后端直接返回聚合结果
+
+```python
+# 后端
+monthly_consumed = await db.execute(
+    select(func.sum(BillingRecord.credits))
+    .where(...)
+)
+return {"monthly_consumed": monthly_consumed}
+```
