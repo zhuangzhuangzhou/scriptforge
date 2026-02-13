@@ -1,5 +1,5 @@
-import React from 'react';
-import { Select, SelectProps, ConfigProvider } from 'antd';
+// import React from 'react';
+import { Select, SelectProps } from 'antd';
 
 // Note: Dropdowns are rendered in a portal (document body) by default.
 // To style the dropdown correctly without global CSS, we need to attach the popup to this container
@@ -28,6 +28,19 @@ const GLASS_SELECT_STYLES = `
 
   .glass-select-wrapper .ant-select-selection-item {
     color: #e2e8f0 !important;
+  }
+
+  .glass-select-wrapper .ant-select-selection-placeholder {
+    color: #64748b !important;
+  }
+
+  .glass-select-wrapper .ant-select-clear {
+    background: transparent !important;
+    color: #64748b !important;
+  }
+
+  .glass-select-wrapper .ant-select-clear:hover {
+    color: #94a3b8 !important;
   }
 
   /* Dropdown Styles */

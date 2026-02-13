@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Button, Space, Tag, Tabs, message } from 'antd';
+import { Button, Space, Tag, Tabs, message, Table, Card } from 'antd';
 import { LockOutlined, TeamOutlined, GlobalOutlined } from '@ant-design/icons';
 
 interface Skill {
@@ -20,9 +20,9 @@ interface SkillSelectorProps {
 }
 
 const SkillAccessControl: React.FC<SkillSelectorProps> = ({
-  category,
+  category: _category,
   onSelect,
-  mode = 'list'
+  mode: _mode = 'list'
 }) => {
   const [loading, setLoading] = useState(false);
   const [publicSkills, setPublicSkills] = useState<Skill[]>([]);

@@ -3,12 +3,12 @@
 核心理念：
 - Skill = Prompt 模板 + 输入/输出定义
 - 执行 = 模板填充 + 模型调用 + JSON 解析
-- 不需要复杂的类继承和异步处理
+- Agent = 工作流编排 + 循环控制 + 条件执行
 """
 import json
 import re
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -66,13 +66,21 @@ class SimpleSkillExecutor:
         if not skill:
             raise ValueError(f"Skill '{skill_name}' 不存在或未激活")
 
-        # 2. 检查是否为模板驱动的 Skill
-        if not skill.is_template_based:
-            raise ValueError(f"Skill '{skill_name}' 不是模板驱动的 Skill，请使用传统方式执行")
+        # 2. 预处理输入：将非字符串类型转换为 JSON 字符串
+        processed_inputs = {}
+        for key, value in inputs.items():
+            if isinstance(value, str):
+                processed_inputs[key] = value
+            elif isinstance(value, (list, dict)):
+                processed_inputs[key] = json.dumps(value, ensure_ascii=False, indent=2)
+            elif value is None:
+                processed_inputs[key] = ""
+            else:
+                processed_inputs[key] = str(value)
 
         # 3. 填充 Prompt 模板
         try:
-            prompt = skill.prompt_template.format(**inputs)
+            prompt = skill.prompt_template.format(**processed_inputs)
         except KeyError as e:
             raise ValueError(f"缺少必需的输入参数: {e}")
 
@@ -167,13 +175,18 @@ class SimpleSkillExecutor:
 
 
 class SimpleAgentExecutor:
-    """简化的 Agent 执行器
+    """增强的 Agent 执行器
 
-    负责执行 Agent 工作流：
-    1. 加载 Agent 配置
-    2. 按顺序执行 Skill
-    3. 传递变量和结果
-    4. 处理错误和重试
+    支持的工作流类型：
+    - sequential（默认）：顺序执行所有步骤
+    - loop：循环执行直到满足退出条件
+
+    支持的步骤特性：
+    - condition：条件执行（表达式为真时才执行）
+    - on_fail：失败处理策略（stop/skip/retry）
+    - max_retries：最大重试次数
+    - output_key：输出结果的键名
+    - transform：结果转换表达式
     """
 
     def __init__(self, db: Session, model_adapter, log_publisher=None):
@@ -185,6 +198,7 @@ class SimpleAgentExecutor:
             log_publisher: Redis 日志发布器（可选）
         """
         self.db = db
+        self.model_adapter = model_adapter
         self.skill_executor = SimpleSkillExecutor(db, model_adapter, log_publisher)
         self.log_publisher = log_publisher
 
@@ -207,84 +221,416 @@ class SimpleAgentExecutor:
         Raises:
             ValueError: Agent 不存在或配置错误
         """
-        from app.models.agent import Agent
+        from app.models.agent import SimpleAgent
 
         # 1. 加载 Agent 配置
-        agent = self.db.query(Agent).filter(
-            Agent.name == agent_name,
-            Agent.is_active == True
+        agent = self.db.query(SimpleAgent).filter(
+            SimpleAgent.name == agent_name,
+            SimpleAgent.is_active == True
         ).first()
 
         if not agent:
             raise ValueError(f"Agent '{agent_name}' 不存在或未激活")
 
-        # 2. 执行工作流
+        # 2. 解析工作流配置
         workflow = agent.workflow
         if not workflow or "steps" not in workflow:
             raise ValueError(f"Agent '{agent_name}' 的工作流配置无效")
 
+        workflow_type = workflow.get("type", "sequential")
+
+        # 发布 Agent 开始
+        if self.log_publisher and task_id:
+            self.log_publisher.publish_info(
+                task_id,
+                f"🤖 启动智能流程：{agent.display_name or agent.name}"
+            )
+
+        # 3. 根据工作流类型执行
+        if workflow_type == "loop":
+            results = self._execute_loop_workflow(workflow, context, task_id)
+        else:
+            results = self._execute_sequential_workflow(workflow, context, task_id)
+
+        # 发布 Agent 完成
+        if self.log_publisher and task_id:
+            self.log_publisher.publish_success(
+                task_id,
+                f"🎉 {agent.display_name or agent.name} 完成"
+            )
+
+        return results
+
+    def _execute_sequential_workflow(
+        self,
+        workflow: Dict[str, Any],
+        context: Dict[str, Any],
+        task_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """执行顺序工作流
+
+        按顺序执行所有步骤，支持条件执行。
+
+        Args:
+            workflow: 工作流配置
+            context: 初始上下文
+            task_id: 任务 ID
+
+        Returns:
+            执行结果
+        """
         steps = workflow.get("steps", [])
         results = {"context": context}
 
         for step in steps:
-            step_id = step.get("id")
-            skill_name = step.get("skill")
-            input_template = step.get("inputs", {})
-            output_key = step.get("output_key", step_id)
-            on_fail = step.get("on_fail", "stop")
-            max_retries = step.get("max_retries", 0)
+            step_result = self._execute_step(step, results, task_id)
+            if step_result is not None:
+                # 合并步骤结果到 results
+                results.update(step_result)
 
-            if not skill_name:
-                logger.warning(f"步骤 {step_id} 缺少 skill 字段，跳过")
-                continue
+        return results
 
-            # 解析输入（支持变量引用）
+    def _execute_loop_workflow(
+        self,
+        workflow: Dict[str, Any],
+        context: Dict[str, Any],
+        task_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """执行循环工作流
+
+        循环执行步骤直到满足退出条件或达到最大迭代次数。
+
+        Args:
+            workflow: 工作流配置
+            context: 初始上下文
+            task_id: 任务 ID
+
+        Returns:
+            执行结果
+        """
+        steps = workflow.get("steps", [])
+        max_iterations = workflow.get("max_iterations", 3)
+        exit_condition = workflow.get("exit_condition", "false")
+
+        results = {"context": context, "_iteration": 0}
+
+        for iteration in range(max_iterations):
+            results["_iteration"] = iteration + 1
+
+            if self.log_publisher and task_id:
+                self.log_publisher.publish_info(
+                    task_id,
+                    f"🔄 第 {iteration + 1} 轮处理（共 {max_iterations} 轮）"
+                )
+
+            # 执行所有步骤
+            for step in steps:
+                step_result = self._execute_step(step, results, task_id)
+                if step_result is not None:
+                    results.update(step_result)
+
+            # 检查退出条件
+            if self._evaluate_condition(exit_condition, results):
+                if self.log_publisher and task_id:
+                    self.log_publisher.publish_success(
+                        task_id,
+                        f"✅ 质量检查通过，第 {iteration + 1} 轮完成"
+                    )
+                break
+        else:
+            # 达到最大迭代次数
+            if self.log_publisher and task_id:
+                self.log_publisher.publish_warning(
+                    task_id,
+                    f"⚠️ 已完成 {max_iterations} 轮处理，结果可能需要人工复核"
+                )
+
+        # 清理内部变量
+        results.pop("_iteration", None)
+        return results
+
+    def _execute_step(
+        self,
+        step: Dict[str, Any],
+        results: Dict[str, Any],
+        task_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """执行单个步骤
+
+        支持：
+        - 条件执行（condition）
+        - Skill 调用（skill）
+        - 子 Agent 调用（agent）
+        - 失败处理（on_fail）
+        - 重试机制（max_retries）
+        - 结果转换（transform）
+
+        Args:
+            step: 步骤配置
+            results: 当前结果集
+            task_id: 任务 ID
+
+        Returns:
+            步骤执行结果，如果跳过则返回 None
+        """
+        step_id = step.get("id", "unknown")
+        condition = step.get("condition")
+        skill_name = step.get("skill")
+        agent_name = step.get("agent")
+        input_template = step.get("inputs", {})
+        output_key = step.get("output_key", step_id)
+        on_fail = step.get("on_fail", "stop")
+        max_retries = step.get("max_retries", 0)
+        transform = step.get("transform")
+
+        # 1. 检查条件
+        if condition and not self._evaluate_condition(condition, results):
+            logger.info(f"步骤 {step_id} 条件不满足，跳过")
+            # 条件不满足时不发布日志，避免用户困惑
+            return None
+
+        # 2. 确定执行类型
+        if not skill_name and not agent_name:
+            logger.warning(f"步骤 {step_id} 缺少 skill 或 agent 字段，跳过")
+            return None
+
+        # 3. 解析输入
+        try:
+            inputs = self._resolve_inputs(input_template, results)
+        except Exception as e:
+            logger.error(f"步骤 {step_id} 解析输入失败: {e}")
+            if on_fail == "stop":
+                raise
+            return None
+
+        # 4. 执行（支持重试）
+        retry_count = 0
+        last_error = None
+
+        while retry_count <= max_retries:
             try:
-                inputs = self._resolve_inputs(input_template, results)
-            except Exception as e:
-                logger.error(f"解析输入失败: {e}")
-                if on_fail == "stop":
-                    raise
-                continue
-
-            # 执行 Skill（支持重试）
-            retry_count = 0
-            while retry_count <= max_retries:
-                try:
+                if skill_name:
+                    # 执行 Skill
                     result = self.skill_executor.execute_skill(
                         skill_name=skill_name,
                         inputs=inputs,
                         task_id=task_id
                     )
+                else:
+                    # 执行子 Agent（递归调用）
+                    result = self.execute_agent(
+                        agent_name=agent_name,
+                        context=inputs,
+                        task_id=task_id
+                    )
 
-                    # 保存结果
-                    results[output_key] = result
-                    results[step_id] = result
-                    break  # 成功，跳出重试循环
+                # 5. 应用结果转换
+                if transform:
+                    result = self._apply_transform(transform, result, results)
 
-                except Exception as e:
-                    retry_count += 1
-                    logger.error(f"执行 Skill '{skill_name}' 失败 (尝试 {retry_count}/{max_retries + 1}): {e}")
+                # 6. 返回结果
+                return {
+                    output_key: result,
+                    step_id: result
+                }
 
-                    if retry_count > max_retries:
-                        # 超过最大重试次数
-                        if on_fail == "stop":
-                            raise
-                        elif on_fail == "skip":
-                            logger.warning(f"跳过步骤 {step_id}")
-                            break
-                        elif on_fail == "retry":
-                            # 已经重试过了，还是失败
-                            raise
-                    else:
-                        # 继续重试
+            except Exception as e:
+                retry_count += 1
+                last_error = e
+                logger.error(
+                    f"步骤 {step_id} 执行失败 (尝试 {retry_count}/{max_retries + 1}): {e}"
+                )
+
+                if retry_count <= max_retries:
+                    # 继续重试
+                    if self.log_publisher and task_id:
+                        self.log_publisher.publish_warning(
+                            task_id,
+                            f"🔁 正在重试...（第 {retry_count} 次）"
+                        )
+                else:
+                    # 超过最大重试次数
+                    if on_fail == "stop":
+                        raise
+                    elif on_fail == "skip":
+                        logger.warning(f"跳过步骤 {step_id}")
                         if self.log_publisher and task_id:
                             self.log_publisher.publish_warning(
                                 task_id,
-                                f"重试执行 {skill_name} (第 {retry_count} 次)"
+                                f"⚠️ 部分步骤未完成，继续处理..."
                             )
+                        return None
 
-        return results
+        return None
+
+    def _evaluate_condition(
+        self,
+        condition: str,
+        results: Dict[str, Any]
+    ) -> bool:
+        """评估条件表达式
+
+        支持的表达式：
+        - 简单比较：qa_result.status == 'PASS'
+        - 数值比较：qa_result.score >= 70
+        - 逻辑运算：status == 'PASS' or score >= 60
+        - 存在检查：qa_result.fix_instructions
+        - 否定：not qa_result.has_errors
+
+        Args:
+            condition: 条件表达式字符串
+            results: 当前结果集
+
+        Returns:
+            条件是否满足
+        """
+        if not condition:
+            return True
+
+        try:
+            # 构建安全的评估环境
+            eval_context = self._flatten_results(results)
+
+            # 替换变量引用为实际值
+            evaluated_condition = self._substitute_variables(condition, eval_context)
+
+            # 安全评估
+            return self._safe_eval(evaluated_condition, eval_context)
+        except Exception as e:
+            logger.warning(f"条件评估失败 '{condition}': {e}")
+            return False
+
+    def _flatten_results(self, results: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
+        """扁平化结果字典，用于条件评估
+
+        将嵌套字典转换为点分隔的键，如：
+        {"qa_result": {"status": "PASS"}} -> {"qa_result.status": "PASS", "qa_result": {...}}
+
+        Args:
+            results: 结果字典
+            prefix: 键前缀
+
+        Returns:
+            扁平化后的字典
+        """
+        flat = {}
+        for key, value in results.items():
+            full_key = f"{prefix}{key}" if prefix else key
+            flat[full_key] = value
+
+            if isinstance(value, dict):
+                # 递归扁平化
+                nested = self._flatten_results(value, f"{full_key}.")
+                flat.update(nested)
+
+        return flat
+
+    def _substitute_variables(self, expression: str, context: Dict[str, Any]) -> str:
+        """替换表达式中的变量引用
+
+        Args:
+            expression: 表达式字符串
+            context: 变量上下文
+
+        Returns:
+            替换后的表达式
+        """
+        # 匹配变量名（支持点分隔）
+        var_pattern = r'\b([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\b'
+
+        def replace_var(match):
+            var_name = match.group(1)
+            # 跳过 Python 关键字和布尔值
+            if var_name in ('and', 'or', 'not', 'True', 'False', 'None', 'in', 'is'):
+                return var_name
+
+            if var_name in context:
+                value = context[var_name]
+                if isinstance(value, str):
+                    return f"'{value}'"
+                elif value is None:
+                    return 'None'
+                elif isinstance(value, bool):
+                    return str(value)
+                elif isinstance(value, (int, float)):
+                    return str(value)
+                elif isinstance(value, (list, dict)):
+                    return repr(value)
+                else:
+                    return repr(value)
+            return var_name
+
+        return re.sub(var_pattern, replace_var, expression)
+
+    def _safe_eval(self, expression: str, context: Dict[str, Any]) -> bool:
+        """安全地评估表达式
+
+        只允许基本的比较和逻辑运算。
+
+        Args:
+            expression: 表达式字符串
+            context: 变量上下文
+
+        Returns:
+            评估结果
+        """
+        # 允许的操作符和函数
+        allowed_names = {
+            'True': True,
+            'False': False,
+            'None': None,
+            'len': len,
+            'str': str,
+            'int': int,
+            'float': float,
+            'bool': bool,
+        }
+
+        # 添加上下文变量
+        allowed_names.update(context)
+
+        try:
+            # 使用 eval 但限制可用的名称
+            result = eval(expression, {"__builtins__": {}}, allowed_names)
+            return bool(result)
+        except Exception as e:
+            logger.warning(f"表达式评估失败 '{expression}': {e}")
+            return False
+
+    def _apply_transform(
+        self,
+        transform: str,
+        result: Any,
+        results: Dict[str, Any]
+    ) -> Any:
+        """应用结果转换
+
+        支持简单的属性访问和方法调用。
+
+        Args:
+            transform: 转换表达式
+            result: 原始结果
+            results: 当前结果集
+
+        Returns:
+            转换后的结果
+        """
+        if not transform:
+            return result
+
+        try:
+            # 构建评估上下文
+            context = {
+                "result": result,
+                "results": results,
+                **results
+            }
+
+            # 安全评估转换表达式
+            return eval(transform, {"__builtins__": {}}, context)
+        except Exception as e:
+            logger.warning(f"结果转换失败 '{transform}': {e}")
+            return result
 
     def _resolve_inputs(
         self,
@@ -297,6 +643,7 @@ class SimpleAgentExecutor:
         - ${context.chapters_text} - 引用初始上下文
         - ${step1.conflicts} - 引用步骤结果
         - ${conflicts} - 引用结果中的顶级键
+        - ${qa_result.fix_instructions} - 嵌套属性访问
 
         Args:
             input_template: 输入模板
@@ -318,11 +665,15 @@ class SimpleAgentExecutor:
                 for part in parts:
                     if isinstance(current, dict):
                         current = current.get(part)
+                    elif hasattr(current, part):
+                        current = getattr(current, part)
                     else:
                         raise ValueError(f"变量 '{path}' 的路径无效")
 
                     if current is None:
-                        raise ValueError(f"变量 '{path}' 不存在")
+                        # 允许 None 值，但记录警告
+                        logger.warning(f"变量 '{path}' 的值为 None")
+                        return None
 
                 return current
             elif isinstance(value, dict):

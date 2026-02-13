@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, Tag, message, DatePicker, Tooltip, Tabs } from 'antd';
+import { Button, Tag, message, Tooltip } from 'antd';
 import { ReloadOutlined, EyeOutlined, SearchOutlined, CodeOutlined, RocketOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../../services/api';
@@ -8,11 +8,10 @@ import { GlassTable } from '../../../components/ui/GlassTable';
 import { GlassInput } from '../../../components/ui/GlassInput';
 import { GlassSelect } from '../../../components/ui/GlassSelect';
 import { GlassTabs } from '../../../components/ui/GlassTabs';
+import { GlassRangePicker } from '../../../components/ui/GlassDatePicker';
 import TaskDetailDrawer from './TaskDetailDrawer';
 import APILogsTab from './APILogsTab';
 import LLMLogsTab from './LLMLogsTab';
-
-const { RangePicker } = DatePicker;
 
 interface Task {
   id: string;
@@ -315,9 +314,8 @@ const TaskLogsTab: React.FC = () => {
               { value: 'consistency_check', label: '一致性检查' }
             ]}
           />
-          <RangePicker
+          <GlassRangePicker
             onChange={(dates) => setDateRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null)}
-            className="bg-slate-800/50 border-slate-700"
           />
           <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch}>
             搜索
@@ -402,11 +400,10 @@ const LogsPage: React.FC = () => {
         <p className="text-slate-400 text-sm mt-1">查看 AI 任务执行日志和 API 请求日志</p>
       </div>
 
-      <Tabs
+      <GlassTabs
         activeKey={activeMainTab}
         onChange={setActiveMainTab}
         items={mainTabItems}
-        className="logs-main-tabs"
         size="large"
       />
     </div>

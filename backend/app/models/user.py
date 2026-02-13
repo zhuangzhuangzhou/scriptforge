@@ -24,9 +24,13 @@ class User(Base):
     # 算力积分余额
     credits = Column(Integer, default=0)
 
-    # 每月产出配额（根据等级自动设置）
-    monthly_episodes_used = Column(Integer, default=0)  # 本月已使用的剧集数
-    monthly_reset_at = Column(TIMESTAMP(timezone=True))  # 配额重置时间
+    # 月度积分赠送（纯积分制）
+    monthly_credits_granted = Column(Integer, default=0)  # 本月已赠送积分
+    credits_reset_at = Column(TIMESTAMP(timezone=True))  # 积分赠送重置时间
+
+    # [废弃] 旧配额字段，保留兼容
+    monthly_episodes_used = Column(Integer, default=0)  # [废弃] 本月已使用的剧集数
+    monthly_reset_at = Column(TIMESTAMP(timezone=True))  # [废弃] 配额重置时间
 
     # 用户自定义 API Key 配置（企业版）
     api_keys = Column(JSON)  # {"openai": "sk-xxx", "claude": "sk-xxx"}

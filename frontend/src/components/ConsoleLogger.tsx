@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Terminal, X, ChevronDown, ChevronUp, Zap } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence as _AnimatePresence } from 'framer-motion';
 
 export interface LogEntry {
   id: string;

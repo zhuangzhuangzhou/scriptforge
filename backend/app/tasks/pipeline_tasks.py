@@ -27,7 +27,7 @@ def run_pipeline_task(
     async def _run():
         async with AsyncSessionLocal() as db:
             completed_stages = []
-            reserved_quota = 0
+            reserved_credits = 0
             try:
                 await update_pipeline_execution(
                     db,
@@ -68,7 +68,7 @@ def run_pipeline_task(
 
                 stage_names = [name for name in stage_names if name]
 
-                # 检查并预占配额（按阶段数计）
+                # 检查并预占积分（按阶段数计）
                 user_result = await db.execute(
                     select(User).where(User.id == user_id)
                 )
@@ -76,17 +76,27 @@ def run_pipeline_task(
                 if not user:
                     raise ValueError("用户不存在")
 
-                episode_stage_count = sum(1 for name in stage_names if name in ("breakdown", "script"))
-                if episode_stage_count > 0:
+                # 计算所需积分
+                from app.core.quota import CREDITS_PRICING
+                breakdown_count = sum(1 for name in stage_names if name == "breakdown")
+                script_count = sum(1 for name in stage_names if name == "script")
+                required_credits = (
+                    breakdown_count * CREDITS_PRICING.get("breakdown", 100) +
+                    script_count * CREDITS_PRICING.get("script", 50)
+                )
+
+                if required_credits > 0:
                     quota_service = QuotaService(db)
-                    quota = await quota_service.check_episode_quota(user)
-                    if quota.get("remaining") != -1 and quota.get("remaining", 0) < episode_stage_count:
-                        raise ValueError(f"剧集配额不足，需要 {episode_stage_count} 集")
-                    # 预占配额
-                    for _ in range(episode_stage_count):
-                        await quota_service.consume_episode_quota(user)
+                    # 先尝试发放月度积分
+                    await quota_service.check_and_grant_monthly_credits(user)
+
+                    if user.credits < required_credits:
+                        raise ValueError(f"积分不足，需要 {required_credits}，余额 {user.credits}")
+
+                    # 预扣积分
+                    user.credits -= required_credits
                     await db.commit()
-                reserved_quota = episode_stage_count
+                reserved_credits = required_credits if required_credits > 0 else 0
 
                 # 创建模型适配器（从数据库读取配置）
                 model_adapter = await get_adapter(
@@ -142,11 +152,11 @@ def run_pipeline_task(
                     completed_stages=completed_stages
                 )
 
-                # 回滚未完成阶段的配额预占
-                await _refund_unused_quota(
+                # 回滚未完成阶段的积分预扣
+                await _refund_unused_credits(
                     db=db,
                     user_id=user_id,
-                    reserved_quota=reserved_quota,
+                    reserved_credits=reserved_credits,
                     completed_stages=completed_stages
                 )
 
@@ -179,11 +189,11 @@ def run_pipeline_task(
                     completed_stages=completed_stages
                 )
 
-                # 回滚未完成阶段的配额预占
-                await _refund_unused_quota(
+                # 回滚未完成阶段的积分预扣
+                await _refund_unused_credits(
                     db=db,
                     user_id=user_id,
-                    reserved_quota=reserved_quota,
+                    reserved_credits=reserved_credits,
                     completed_stages=completed_stages
                 )
 
@@ -231,19 +241,28 @@ async def _consume_stage_credits(
     await db.commit()
 
 
-async def _refund_unused_quota(
+async def _refund_unused_credits(
     db: AsyncSession,
     user_id: str,
-    reserved_quota: int,
+    reserved_credits: int,
     completed_stages: list
 ):
-    """回滚未完成阶段的配额预占"""
-    if reserved_quota <= 0:
+    """回滚未完成阶段的积分预扣"""
+    if reserved_credits <= 0:
         return
 
-    used = sum(1 for name in completed_stages if name in ("breakdown", "script"))
-    unused = reserved_quota - used
-    if unused <= 0:
+    from app.core.quota import CREDITS_PRICING
+
+    # 计算已完成阶段消耗的积分
+    breakdown_count = sum(1 for name in completed_stages if name == "breakdown")
+    script_count = sum(1 for name in completed_stages if name == "script")
+    used_credits = (
+        breakdown_count * CREDITS_PRICING.get("breakdown", 100) +
+        script_count * CREDITS_PRICING.get("script", 50)
+    )
+
+    unused_credits = reserved_credits - used_credits
+    if unused_credits <= 0:
         return
 
     # 回滚未完成部分
@@ -254,8 +273,7 @@ async def _refund_unused_quota(
     if not user:
         return
 
-    quota_service = QuotaService(db)
-    await quota_service.refund_episode_quota(user, unused)
+    user.credits += unused_credits
     await db.commit()
 
 

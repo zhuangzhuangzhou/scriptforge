@@ -1,11 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Card, Button, Select, Input, Space, Modal, message, Tabs, List } from 'antd';
+import React, { useState, useEffect } from 'react';
+import { Card, Button, Input, Space, Modal, message, Tabs, List } from 'antd';
 import { CodeOutlined, PlayCircleOutlined, HistoryOutlined, SaveOutlined } from '@ant-design/icons';
-import type { Editor } from '@monaco-editor/react';
 
-const { Option } = Select;
 const { TextArea } = Input;
-const { TabPane } = Tabs;
 
 interface SkillVersion {
   id: string;
@@ -22,7 +19,6 @@ interface SkillsEditorProps {
 }
 
 const SkillsEditor: React.FC<SkillsEditorProps> = ({ skillId, skillName }) => {
-  const editorRef = useRef<Editor | null>(null);
   const [code, setCode] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('editor');
@@ -166,61 +162,66 @@ const SkillsEditor: React.FC<SkillsEditorProps> = ({ skillId, skillName }) => {
           </Space>
         }
       >
-        <Tabs activeKey={activeTab} onChange={setActiveTab}>
-          <TabPane
-            tab="编辑器"
-            key="editor"
-          >
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                版本描述
-              </label>
-              <Input
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="输入本次修改的描述..."
-              />
-            </div>
+        <Tabs
+          activeKey={activeTab}
+          onChange={setActiveTab}
+          items={[
+            {
+              key: 'editor',
+              label: '编辑器',
+              children: (
+                <>
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      版本描述
+                    </label>
+                    <Input
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      placeholder="输入本次修改的描述..."
+                    />
+                  </div>
 
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Skill代码
-              </label>
-              <TextArea
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                rows={20}
-                className="font-mono text-sm"
-                placeholder="输入Skill代码..."
-              />
-            </div>
-          </TabPane>
-
-          <TabPane
-            tab="参数Schema"
-            key="schema"
-          >
-            <div className="p-4 bg-gray-50 rounded">
-              <p className="text-gray-500">
-                定义Skill的输入参数Schema（JSON格式）
-              </p>
-              <TextArea
-                rows={10}
-                className="font-mono text-sm mt-2"
-                placeholder={'{"type": "object", "properties": {...}}'}
-              />
-            </div>
-          </TabPane>
-
-          <TabPane
-            tab="文档"
-            key="docs"
-          >
-            <div className="p-4">
-              <h4 className="mb-4">Skill开发指南</h4>
-              <div className="prose max-w-none">
-                <h5>基本结构</h5>
-                <pre className="bg-gray-100 p-4 rounded text-sm">
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Skill代码
+                    </label>
+                    <TextArea
+                      value={code}
+                      onChange={(e) => setCode(e.target.value)}
+                      rows={20}
+                      className="font-mono text-sm"
+                      placeholder="输入Skill代码..."
+                    />
+                  </div>
+                </>
+              )
+            },
+            {
+              key: 'schema',
+              label: '参数Schema',
+              children: (
+                <div className="p-4 bg-gray-50 rounded">
+                  <p className="text-gray-500">
+                    定义Skill的输入参数Schema（JSON格式）
+                  </p>
+                  <TextArea
+                    rows={10}
+                    className="font-mono text-sm mt-2"
+                    placeholder={'{"type": "object", "properties": {...}}'}
+                  />
+                </div>
+              )
+            },
+            {
+              key: 'docs',
+              label: '文档',
+              children: (
+                <div className="p-4">
+                  <h4 className="mb-4">Skill开发指南</h4>
+                  <div className="prose max-w-none">
+                    <h5>基本结构</h5>
+                    <pre className="bg-gray-100 p-4 rounded text-sm">
 {`class YourSkill(BaseSkill):
     def __init__(self):
         super().__init__(
@@ -237,19 +238,21 @@ const SkillsEditor: React.FC<SkillsEditorProps> = ({ skillId, skillName }) => {
 
         # 返回结果
         return {"output": result}`}
-                </pre>
+                    </pre>
 
-                <h5>可用上下文</h5>
-                <ul>
-                  <li><code>context["input"]</code> - 输入数据</li>
-                  <li><code>context["chapters"]</code> - 章节内容</li>
-                  <li><code>context["breakdown_data"]</code> - Breakdown结果</li>
-                  <li><code>context["model_adapter"]</code> - 模型适配器</li>
-                </ul>
-              </div>
-            </div>
-          </TabPane>
-        </Tabs>
+                    <h5>可用上下文</h5>
+                    <ul>
+                      <li><code>context["input"]</code> - 输入数据</li>
+                      <li><code>context["chapters"]</code> - 章节内容</li>
+                      <li><code>context["breakdown_data"]</code> - Breakdown结果</li>
+                      <li><code>context["model_adapter"]</code> - 模型适配器</li>
+                    </ul>
+                  </div>
+                </div>
+              )
+            }
+          ]}
+        />
       </Card>
 
       {/* 版本历史弹窗 */}

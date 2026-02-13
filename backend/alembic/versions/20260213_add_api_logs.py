@@ -1,7 +1,7 @@
 """add api_logs table
 
 Revision ID: 20260213_add_api_logs
-Revises: 20260212_add_credits_system_fields
+Revises: 20260212_system_config
 Create Date: 2026-02-13
 
 """
@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = '20260213_add_api_logs'
-down_revision = '20260212_add_credits_system_fields'
+down_revision = '20260212_system_config'
 branch_labels = None
 depends_on = None
 

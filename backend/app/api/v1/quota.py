@@ -24,15 +24,25 @@ class QuotaInfo(BaseModel):
     used: Optional[int] = None
 
 
+class PricingInfo(BaseModel):
+    """积分定价"""
+    breakdown: int = 100
+    script: int = 50
+    qa: int = 30
+    retry: int = 50
+
+
 class QuotaSummary(BaseModel):
-    """配额摘要"""
+    """配额摘要（纯积分制）"""
     tier: str
     tier_display: str
     credits: int
+    monthly_credits: int = 0
+    monthly_credits_granted: int = 0
     projects: QuotaInfo
-    episodes: QuotaInfo
     can_use_custom_api: bool
     reset_at: Optional[str] = None
+    pricing: Optional[PricingInfo] = None
 
 
 class TierInfo(BaseModel):
@@ -40,7 +50,7 @@ class TierInfo(BaseModel):
     name: str
     display_name: str
     max_projects: int
-    monthly_episodes: int
+    monthly_credits: int
     can_use_custom_api: bool
     price_monthly: int
 
@@ -65,7 +75,7 @@ async def get_all_tiers():
             "name": config.name,
             "display_name": config.display_name,
             "max_projects": config.max_projects,
-            "monthly_episodes": config.monthly_episodes,
+            "monthly_credits": config.monthly_credits,
             "can_use_custom_api": config.can_use_custom_api,
             "price_monthly": config.price_monthly
         })
@@ -80,7 +90,7 @@ async def get_tier_info(tier_name: str):
         "name": config.name,
         "display_name": config.display_name,
         "max_projects": config.max_projects,
-        "monthly_episodes": config.monthly_episodes,
+        "monthly_credits": config.monthly_credits,
         "can_use_custom_api": config.can_use_custom_api,
         "price_monthly": config.price_monthly
     }

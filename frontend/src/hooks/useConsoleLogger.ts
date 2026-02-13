@@ -35,8 +35,8 @@ export const useConsoleLogger = (
   const [llmStats, setLlmStats] = useState<LLMCallStats>({ total: 0, stages: [] });
   const [isConnected, setIsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
-  const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const queuedTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queuedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const taskStartTimeRef = useRef<number | null>(null);
 
   // 添加日志

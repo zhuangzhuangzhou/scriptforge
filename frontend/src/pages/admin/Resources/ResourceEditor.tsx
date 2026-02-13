@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Form, Input, Select, Button, message, Space, Spin } from 'antd';
+import { Form, Button, message, Space, Spin, Alert } from 'antd';
 import { SaveOutlined, ArrowLeftOutlined } from '@ant-design/icons';
-import MonacoEditor from '@monaco-editor/react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../../services/api';
 import { GlassCard } from '../../../components/ui/GlassCard';
-
-const { TextArea } = Input;
-const { Option } = Select;
+import { GlassInput, GlassTextArea } from '../../../components/ui/GlassInput';
+import { GlassSelect } from '../../../components/ui/GlassSelect';
+import MarkdownEditor from '../../../components/MarkdownEditor';
 
 const ResourceEditor: React.FC = () => {
   const { resourceId } = useParams<{ resourceId: string }>();
@@ -16,6 +15,7 @@ const ResourceEditor: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [content, setContent] = useState('');
+  const [isBuiltin, setIsBuiltin] = useState(false);
 
   const isEditMode = !!resourceId;
 
@@ -38,6 +38,7 @@ const ResourceEditor: React.FC = () => {
         visibility: resource.visibility,
       });
       setContent(resource.content || '');
+      setIsBuiltin(resource.is_builtin || false);
     } catch (error: any) {
       message.error(error.response?.data?.detail || '加载失败');
     } finally {
@@ -48,10 +49,17 @@ const ResourceEditor: React.FC = () => {
   const handleSave = async (values: any) => {
     setSaving(true);
     try {
-      const data = {
-        ...values,
-        content,
-      };
+      // 内置资源只提交允许修改的字段
+      const data = isBuiltin
+        ? {
+            display_name: values.display_name,
+            description: values.description,
+            content,
+          }
+        : {
+            ...values,
+            content,
+          };
 
       if (isEditMode) {
         await api.put(`/ai-resources/${resourceId}`, data);
@@ -92,6 +100,16 @@ const ResourceEditor: React.FC = () => {
           </h1>
         </div>
 
+        {isBuiltin && (
+          <Alert
+            message="内置资源"
+            description="内置资源只能修改显示名称、描述和内容，不能修改资源名称、分类和可见性。"
+            type="info"
+            showIcon
+            className="mb-4"
+          />
+        )}
+
         <Form
           form={form}
           layout="vertical"
@@ -103,61 +121,58 @@ const ResourceEditor: React.FC = () => {
         >
           <div className="grid grid-cols-2 gap-4">
             <Form.Item
-              label="资源名称"
+              label={<span className="text-slate-300">资源名称</span>}
               name="name"
               rules={[{ required: true, message: '请输入资源名称' }]}
-              extra="唯一标识，只能包含字母、数字和下划线"
+              extra={<span className="text-slate-500">唯一标识，只能包含字母、数字和下划线</span>}
             >
-              <Input placeholder="例如：adapt_method_default" disabled={isEditMode} />
+              <GlassInput placeholder="例如：adapt_method_default" disabled={isEditMode} />
             </Form.Item>
 
             <Form.Item
-              label="显示名称"
+              label={<span className="text-slate-300">显示名称</span>}
               name="display_name"
               rules={[{ required: true, message: '请输入显示名称' }]}
             >
-              <Input placeholder="例如：网文改编方法论" />
+              <GlassInput placeholder="例如：网文改编方法论" />
             </Form.Item>
           </div>
 
-          <Form.Item label="描述" name="description">
-            <TextArea rows={2} placeholder="简要描述此资源的用途" />
+          <Form.Item label={<span className="text-slate-300">描述</span>} name="description">
+            <GlassTextArea rows={2} placeholder="简要描述此资源的用途" />
           </Form.Item>
 
           <div className="grid grid-cols-2 gap-4">
-            <Form.Item label="分类" name="category">
-              <Select>
-                <Option value="methodology">方法论</Option>
-                <Option value="output_style">输出风格</Option>
-                <Option value="template">模板</Option>
-                <Option value="example">示例</Option>
-              </Select>
+            <Form.Item label={<span className="text-slate-300">分类</span>} name="category">
+              <GlassSelect
+                disabled={isBuiltin}
+                options={[
+                  { value: 'methodology', label: '方法论' },
+                  { value: 'output_style', label: '输出风格' },
+                  { value: 'qa_rules', label: '质检标准' },
+                  { value: 'template', label: '模板案例' },
+                ]}
+              />
             </Form.Item>
 
-            <Form.Item label="可见性" name="visibility">
-              <Select>
-                <Option value="public">公共</Option>
-                <Option value="private">私有</Option>
-              </Select>
+            <Form.Item label={<span className="text-slate-300">可见性</span>} name="visibility">
+              <GlassSelect
+                disabled={isBuiltin}
+                options={[
+                  { value: 'public', label: '公共' },
+                  { value: 'private', label: '私有' },
+                ]}
+              />
             </Form.Item>
           </div>
 
-          <Form.Item label="资源内容 (Markdown)" required>
-            <div className="border border-slate-700 rounded">
-              <MonacoEditor
-                height="500px"
-                language="markdown"
-                theme="vs-dark"
-                value={content}
-                onChange={(value) => setContent(value || '')}
-                options={{
-                  minimap: { enabled: false },
-                  fontSize: 14,
-                  wordWrap: 'on',
-                  lineNumbers: 'on',
-                }}
-              />
-            </div>
+          <Form.Item label={<span className="text-slate-300">资源内容 (Markdown)</span>} required>
+            <MarkdownEditor
+              value={content}
+              onChange={setContent}
+              height="500px"
+              showVariables={true}
+            />
           </Form.Item>
 
           <Form.Item>

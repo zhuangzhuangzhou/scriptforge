@@ -25,7 +25,17 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
   const { user } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  const showBackBtn = location.pathname.includes('/workspace') || location.pathname.includes('/projects/');
+
+  // 判断是否显示返回按钮
+  const isWorkspace = location.pathname.includes('/workspace') || location.pathname.includes('/projects/');
+  const isAdminSubPage = location.pathname.startsWith('/admin/') && location.pathname !== '/admin/dashboard';
+  const showBackBtn = isWorkspace || isAdminSubPage;
+
+  // 返回按钮的目标路径
+  const getBackPath = () => {
+    if (isAdminSubPage) return '/admin/dashboard';
+    return '/dashboard';
+  };
 
   const handleRechargeSuccess = (newTier: UserTier) => {
     setUserTier(newTier);
@@ -57,10 +67,10 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
       <header className="h-16 border-b border-slate-800/60 bg-slate-900/50 backdrop-blur-md px-6 flex items-center justify-between z-40 sticky top-0 shrink-0">
         <div className="flex items-center gap-4">
           {showBackBtn && (
-            <button 
-                onClick={() => navigate('/dashboard')}
+            <button
+                onClick={() => navigate(getBackPath())}
                 className="p-2 rounded-full hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
-                title="返回仪表盘"
+                title={isAdminSubPage ? "返回管理后台" : "返回仪表盘"}
             >
                 <ChevronLeft size={20} />
             </button>

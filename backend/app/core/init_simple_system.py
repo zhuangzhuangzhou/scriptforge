@@ -16,307 +16,6 @@ SYSTEM_OWNER_ID = uuid.UUID("00000000-0000-0000-0000-000000000000")
 
 BUILTIN_SKILLS = [
     {
-        "name": "conflict_extraction",
-        "display_name": "冲突提取",
-        "description": "从章节内容中提取主要冲突点",
-        "category": "breakdown",
-        "prompt_template": """你是一个专业的剧情分析师。请分析以下章节内容，提取其中的主要冲突。
-
-章节内容：
-{chapters_text}
-
-请以 JSON 数组格式返回冲突列表，每个冲突包含以下字段：
-- type: 冲突类型（如：人物冲突、内心冲突、环境冲突等）
-- description: 冲突描述
-- participants: 参与者列表
-- intensity: 冲突强度（1-10）
-- chapter_range: 涉及的章节范围 [起始章节, 结束章节]
-
-示例格式：
-[
-  {{
-    "type": "人物冲突",
-    "description": "主角与反派之间的权力斗争",
-    "participants": ["主角", "反派"],
-    "intensity": 8,
-    "chapter_range": [1, 3]
-  }}
-]
-
-请只返回 JSON 数组，不要包含其他文字。""",
-        "input_schema": {
-            "chapters_text": {
-                "type": "string",
-                "description": "章节文本内容"
-            }
-        },
-        "output_schema": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "type": {"type": "string"},
-                    "description": {"type": "string"},
-                    "participants": {"type": "array"},
-                    "intensity": {"type": "number"},
-                    "chapter_range": {"type": "array"}
-                }
-            }
-        },
-        "model_config": {
-            "temperature": 0.7,
-            "max_tokens": 2000
-        },
-        "example_input": {
-            "chapters_text": "第1章：重生\n主角张三重生到十年前..."
-        },
-        "example_output": [
-            {
-                "type": "内心冲突",
-                "description": "重生后的迷茫与决心",
-                "participants": ["张三"],
-                "intensity": 7,
-                "chapter_range": [1, 1]
-            }
-        ]
-    },
-    {
-        "name": "plot_hook_identification",
-        "display_name": "剧情钩子识别",
-        "description": "识别章节中的剧情钩子，吸引观众继续观看",
-        "category": "breakdown",
-        "prompt_template": """你是一个专业的剧情分析师。请分析以下章节内容，识别其中的剧情钩子（吸引读者继续阅读的关键点）。
-
-章节内容：
-{chapters_text}
-
-请以 JSON 数组格式返回剧情钩子列表，每个钩子包含以下字段：
-- type: 钩子类型（如：悬念、转折、伏笔、高潮等）
-- hook: 钩子描述
-- chapter: 所在章节
-- impact: 影响力（1-10）
-- emotion: 情绪类型（如：期待、惊讶、紧张等）
-
-示例格式：
-[
-  {{
-    "type": "悬念",
-    "hook": "主角发现了一个神秘的线索",
-    "chapter": 2,
-    "impact": 7,
-    "emotion": "期待"
-  }}
-]
-
-请只返回 JSON 数组，不要包含其他文字。""",
-        "input_schema": {
-            "chapters_text": {
-                "type": "string",
-                "description": "章节文本内容"
-            }
-        },
-        "output_schema": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "type": {"type": "string"},
-                    "hook": {"type": "string"},
-                    "chapter": {"type": "number"},
-                    "impact": {"type": "number"},
-                    "emotion": {"type": "string"}
-                }
-            }
-        },
-        "model_config": {
-            "temperature": 0.7,
-            "max_tokens": 2000
-        }
-    },
-    {
-        "name": "character_analysis",
-        "display_name": "角色分析",
-        "description": "分析章节中的人物关系、性格特点和发展轨迹",
-        "category": "breakdown",
-        "prompt_template": """你是一个专业的剧情分析师。请分析以下章节内容，提取并分析其中的主要角色。
-
-章节内容：
-{chapters_text}
-
-请以 JSON 数组格式返回角色列表，每个角色包含以下字段：
-- name: 角色名称
-- role: 角色定位（如：主角、配角、反派等）
-- traits: 性格特征列表
-- relationships: 与其他角色的关系（对象格式）
-- arc: 角色弧光描述
-
-示例格式：
-[
-  {{
-    "name": "张三",
-    "role": "主角",
-    "traits": ["勇敢", "善良", "冲动"],
-    "relationships": {{"李四": "好友", "王五": "敌人"}},
-    "arc": "从懦弱到勇敢的成长"
-  }}
-]
-
-请只返回 JSON 数组，不要包含其他文字。""",
-        "input_schema": {
-            "chapters_text": {
-                "type": "string",
-                "description": "章节文本内容"
-            }
-        },
-        "output_schema": {
-            "type": "array"
-        },
-        "model_config": {
-            "temperature": 0.7,
-            "max_tokens": 2000
-        }
-    },
-    {
-        "name": "scene_identification",
-        "display_name": "场景识别",
-        "description": "识别章节中的场景，包括地点、时间、氛围等",
-        "category": "breakdown",
-        "prompt_template": """你是一个专业的剧情分析师。请分析以下章节内容，识别其中的主要场景。
-
-章节内容：
-{chapters_text}
-
-请以 JSON 数组格式返回场景列表，每个场景包含以下字段：
-- location: 场景地点
-- time: 时间（如：白天、夜晚、具体时间等）
-- description: 场景描述
-- characters: 出现的角色列表
-- chapter: 所在章节
-- mood: 场景氛围
-
-示例格式：
-[
-  {{
-    "location": "古老的城堡",
-    "time": "深夜",
-    "description": "月光透过破碎的窗户洒进大厅",
-    "characters": ["主角", "神秘人"],
-    "chapter": 1,
-    "mood": "紧张、神秘"
-  }}
-]
-
-请只返回 JSON 数组，不要包含其他文字。""",
-        "input_schema": {
-            "chapters_text": {
-                "type": "string",
-                "description": "章节文本内容"
-            }
-        },
-        "output_schema": {
-            "type": "array"
-        },
-        "model_config": {
-            "temperature": 0.7,
-            "max_tokens": 2000
-        }
-    },
-    {
-        "name": "emotion_extraction",
-        "display_name": "情感提取",
-        "description": "提取章节中的情感变化",
-        "category": "breakdown",
-        "prompt_template": """你是一个专业的剧情分析师。请分析以下章节内容，提取其中的情感变化。
-
-章节内容：
-{chapters_text}
-
-请以 JSON 数组格式返回情感列表，每个情感包含以下字段：
-- emotion: 情感类型（如：喜悦、悲伤、愤怒、恐惧等）
-- intensity: 情感强度（1-10）
-- character: 相关角色
-- trigger: 触发事件
-- chapter: 所在章节
-
-示例格式：
-[
-  {{
-    "emotion": "愤怒",
-    "intensity": 8,
-    "character": "主角",
-    "trigger": "发现被背叛",
-    "chapter": 3
-  }}
-]
-
-请只返回 JSON 数组，不要包含其他文字。""",
-        "input_schema": {
-            "chapters_text": {
-                "type": "string",
-                "description": "章节文本内容"
-            }
-        },
-        "output_schema": {
-            "type": "array"
-        },
-        "model_config": {
-            "temperature": 0.7,
-            "max_tokens": 2000
-        }
-    },
-    {
-        "name": "episode_planning",
-        "display_name": "剧集规划",
-        "description": "基于剧情拆解结果规划剧集结构",
-        "category": "script",
-        "prompt_template": """你是一个专业的剧集规划师。基于以下剧情拆解结果，智能规划剧集结构。
-
-拆解结果：
-冲突：{conflicts}
-钩子：{plot_hooks}
-角色：{characters}
-场景：{scenes}
-情感：{emotions}
-
-请规划剧集结构，将章节内容合理分配到不同剧集中。每集应该：
-1. 有完整的故事弧线
-2. 包含主要冲突和高潮
-3. 有吸引人的剧情钩子
-4. 时长适中（建议每集包含2-4个章节）
-
-以JSON格式返回：
-[
-  {{
-    "episode_number": 1,
-    "title": "第一集标题",
-    "main_conflict": "主要冲突描述",
-    "key_scenes": ["关键场景1", "关键场景2"],
-    "chapter_range": [1, 3],
-    "conflicts": [],
-    "plot_hooks": [],
-    "characters": [],
-    "scenes": [],
-    "emotions": []
-  }}
-]
-
-请只返回JSON数组，不要包含其他文字。""",
-        "input_schema": {
-            "conflicts": {"type": "array"},
-            "plot_hooks": {"type": "array"},
-            "characters": {"type": "array"},
-            "scenes": {"type": "array"},
-            "emotions": {"type": "array"}
-        },
-        "output_schema": {
-            "type": "array"
-        },
-        "model_config": {
-            "temperature": 0.7,
-            "max_tokens": 3000
-        }
-    },
-    {
         "name": "webtoon_breakdown",
         "display_name": "网文改编剧情拆解",
         "description": "基于网文改编方法论，一次性完成剧情拆解、分集标注、情绪钩子识别",
@@ -488,6 +187,159 @@ BUILTIN_SKILLS = [
             }
         },
         "model_config": {"temperature": 0.3, "max_tokens": 4000}
+    },
+    {
+        "name": "webtoon_script",
+        "display_name": "单集剧本创作",
+        "description": "基于剧情点生成单集漫剧剧本，包含场景、动作、对话、特效标注",
+        "category": "script",
+        "is_template_based": True,
+        "prompt_template": """你是一名资深的网文改编漫剧编剧。请根据以下剧情点和方法论，创作单集剧本。
+
+### 改编方法论
+{adapt_method}
+
+### 本集剧情点
+{plot_points}
+
+### 原文参考
+{chapters_text}
+
+### 集数信息
+第 {episode_number} 集
+
+### 剧本格式要求
+1. 场景标注：※ 场景名称（时间）
+2. 动作描写：△ 动作描述
+3. 对话格式：角色名："对话内容"
+4. 特效标注：【特效类型】描述
+5. 内心独白：【独白】内容
+6. 结尾必须：【卡黑】
+
+### 单集结构（起承转钩四段式）
+- 【起】开场冲突（100-150字）：3秒抓眼球，瞬间进入冲突
+- 【承】推进发展（150-200字）：展示过程，为爽点铺垫
+- 【转】反转高潮（200-250字）：核心爽点爆发，情绪达到峰值
+- 【钩】悬念结尾（100-150字）：强制卡黑，吸引观众看下一集
+
+### 输出要求
+请以 JSON 格式返回剧本：
+{{
+  "episode_number": {episode_number},
+  "title": "本集标题",
+  "word_count": 字数统计,
+  "structure": {{
+    "opening": {{
+      "content": "【起】部分内容",
+      "word_count": 字数
+    }},
+    "development": {{
+      "content": "【承】部分内容",
+      "word_count": 字数
+    }},
+    "climax": {{
+      "content": "【转】部分内容",
+      "word_count": 字数
+    }},
+    "hook": {{
+      "content": "【钩】部分内容",
+      "word_count": 字数
+    }}
+  }},
+  "full_script": "完整剧本文本",
+  "scenes": ["场景1", "场景2"],
+  "characters": ["角色1", "角色2"],
+  "hook_type": "结尾悬念类型"
+}}
+
+请只返回 JSON 对象，不要包含其他文字。""",
+        "input_schema": {
+            "plot_points": {"type": "string", "description": "JSON格式的本集剧情点"},
+            "chapters_text": {"type": "string", "description": "原文参考"},
+            "adapt_method": {"type": "string", "description": "改编方法论"},
+            "episode_number": {"type": "integer", "description": "集数"}
+        },
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "episode_number": {"type": "integer"},
+                "title": {"type": "string"},
+                "word_count": {"type": "integer"},
+                "structure": {"type": "object"},
+                "full_script": {"type": "string"},
+                "scenes": {"type": "array"},
+                "characters": {"type": "array"},
+                "hook_type": {"type": "string"}
+            }
+        },
+        "model_config": {"temperature": 0.7, "max_tokens": 4000}
+    },
+    {
+        "name": "webtoon_aligner",
+        "display_name": "剧本质检",
+        "description": "检查单集剧本是否符合漫剧改编标准，包括字数、结构、节奏、视觉化等",
+        "category": "qa",
+        "is_template_based": True,
+        "prompt_template": """你是一名资深的网文改编漫剧质检专家。请对以下单集剧本进行质量检查。
+
+### 改编方法论
+{adapt_method}
+
+### 待检查的剧本
+{script}
+
+### 原文参考
+{chapters_text}
+
+### 质检维度
+1. 字数范围（20%）：总字数是否在500-800字范围内
+2. 结构完整（25%）：起承转钩四段式是否完整
+3. 开场冲突（15%）：是否3秒进冲突，无铺垫
+4. 悬念结尾（20%）：是否有【卡黑】，悬念是否足够
+5. 视觉化（10%）：是否无大段心理描写，可转化为画面
+6. 对话质量（10%）：对话是否简短有力
+
+### 输出格式
+请以 JSON 格式返回质检报告：
+{{
+  "status": "PASS 或 FAIL",
+  "score": 总分(0-100),
+  "dimensions": {{
+    "word_count": {{"score": 0-10, "issues": [], "actual": 实际字数}},
+    "structure": {{"score": 0-10, "issues": []}},
+    "opening": {{"score": 0-10, "issues": []}},
+    "hook_ending": {{"score": 0-10, "issues": []}},
+    "visualization": {{"score": 0-10, "issues": []}},
+    "dialogue": {{"score": 0-10, "issues": []}}
+  }},
+  "fix_instructions": [
+    {{
+      "target": "修改目标",
+      "type": "问题类型",
+      "issue": "问题描述",
+      "suggestion": "修正建议"
+    }}
+  ],
+  "summary": "整体评价"
+}}
+
+请只返回 JSON 对象，不要包含其他文字。""",
+        "input_schema": {
+            "script": {"type": "string", "description": "JSON格式的剧本"},
+            "chapters_text": {"type": "string", "description": "原文参考"},
+            "adapt_method": {"type": "string", "description": "改编方法论"}
+        },
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "score": {"type": "integer"},
+                "dimensions": {"type": "object"},
+                "fix_instructions": {"type": "array"},
+                "summary": {"type": "string"}
+            }
+        },
+        "model_config": {"temperature": 0.3, "max_tokens": 3000}
     }
 ]
 
@@ -498,12 +350,15 @@ BUILTIN_AGENTS = [
     {
         "name": "breakdown_agent",
         "display_name": "剧情拆解 Agent",
-        "description": "执行完整的剧情拆解流程：先进行网文改编剧情拆解，再进行8维度质量校验",
+        "description": "智能剧情拆解：拆解 → 质检 → 自动修正循环，直到质量达标",
         "category": "breakdown",
         "workflow": {
+            "type": "loop",
+            "max_iterations": 3,
+            "exit_condition": "qa_result.status == 'PASS' or qa_result.score >= 70",
             "steps": [
                 {
-                    "id": "step1",
+                    "id": "breakdown",
                     "skill": "webtoon_breakdown",
                     "inputs": {
                         "chapters_text": "${context.chapters_text}",
@@ -516,18 +371,73 @@ BUILTIN_AGENTS = [
                     },
                     "output_key": "plot_points",
                     "on_fail": "stop",
-                    "max_retries": 0
+                    "max_retries": 1
                 },
                 {
-                    "id": "step2",
+                    "id": "qa",
                     "skill": "breakdown_aligner",
                     "inputs": {
-                        "plot_points": "${step1.plot_points}",
+                        "plot_points": "${breakdown.plot_points}",
                         "chapters_text": "${context.chapters_text}",
                         "adapt_method": "${context.adapt_method}"
                     },
                     "output_key": "qa_result",
+                    "on_fail": "skip",
+                    "max_retries": 0
+                },
+                {
+                    "id": "fix",
+                    "skill": "webtoon_breakdown",
+                    "condition": "qa_result.status != 'PASS' and qa_result.score < 70",
+                    "inputs": {
+                        "chapters_text": "${context.chapters_text}",
+                        "adapt_method": "${context.adapt_method}",
+                        "output_style": "${context.output_style}",
+                        "template": "${context.template}",
+                        "example": "${context.example}",
+                        "start_chapter": "${context.start_chapter}",
+                        "end_chapter": "${context.end_chapter}"
+                    },
+                    "output_key": "plot_points",
+                    "on_fail": "skip",
+                    "max_retries": 0
+                }
+            ]
+        }
+    },
+    {
+        "name": "script_agent",
+        "display_name": "剧本创作 Agent",
+        "description": "基于剧情点生成高质量单集剧本，支持质检和润色",
+        "category": "script",
+        "workflow": {
+            "type": "loop",
+            "max_iterations": 2,
+            "exit_condition": "qa_result.status == 'PASS' or qa_result.score >= 80",
+            "steps": [
+                {
+                    "id": "script",
+                    "skill": "webtoon_script",
+                    "inputs": {
+                        "plot_points": "${context.plot_points}",
+                        "chapters_text": "${context.chapters_text}",
+                        "adapt_method": "${context.adapt_method}",
+                        "episode_number": "${context.episode_number}"
+                    },
+                    "output_key": "script_result",
                     "on_fail": "stop",
+                    "max_retries": 1
+                },
+                {
+                    "id": "qa",
+                    "skill": "webtoon_aligner",
+                    "inputs": {
+                        "script": "${script.script_result}",
+                        "chapters_text": "${context.chapters_text}",
+                        "adapt_method": "${context.adapt_method}"
+                    },
+                    "output_key": "qa_result",
+                    "on_fail": "skip",
                     "max_retries": 0
                 }
             ]

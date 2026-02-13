@@ -5,7 +5,8 @@ import {
   BrainCircuit, Layers, Users,
   Terminal, LayoutTemplate,
   BookText, Save, Sparkles, Loader2, X,
-  RotateCcw, PlayCircle, FastForward, Repeat, Zap
+  RotateCcw, PlayCircle, FastForward, Repeat, Zap,
+  Upload
 } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
 import ConsoleLogger from '../../../components/ConsoleLogger';
@@ -15,7 +16,7 @@ import ConfigSelector from '../../../components/ConfigSelector';
 import AgentConfigModal from '../../../components/modals/AgentConfigModal';
 import { UserTier, Batch, PlotBreakdown } from '../../../types';
 import { projectApi, breakdownApi } from '../../../services/api';
-import { message, Modal, Upload } from 'antd';
+import { message, Modal } from 'antd';
 import { useConsoleLogger } from '../../../hooks/useConsoleLogger';
 import { useBreakdownWebSocket } from '../../../hooks/useBreakdownWebSocket';
 import { useBreakdownLogs } from '../../../hooks/useBreakdownLogs';
@@ -33,7 +34,19 @@ interface ProjectWorkspaceProps {
 
 type Tab = 'CONFIG' | 'SOURCE' | 'AGENTS' | 'SKILLS' | 'PLOT' | 'SCRIPT';
 
-const initialAgents = [
+interface Agent {
+  id: string;
+  name: string;
+  role: string;
+  status: string;
+  model: string;
+  desc: string;
+  temperature?: number;
+  systemPrompt?: string;
+  tools?: string[];
+}
+
+const initialAgents: Agent[] = [
     { id: 'a1', name: 'Narrative Architect', role: '剧情架构师', status: 'active', model: 'DeepNarrative-Pro', desc: '负责宏观剧情结构的规划与节奏控制。', temperature: 0.7, tools: ['knowledge_base'] },
     { id: 'a2', name: 'Character Psychologist', role: '角色心理师', status: 'active', model: 'Claude 3.5 Sonnet', desc: '分析角色动机，确保行为逻辑符合人设。', temperature: 0.8, tools: ['web_search'] },
     { id: 'a3', name: 'Dialogue Polisher', role: '对白润色师', status: 'inactive', model: 'GPT-4o', desc: '优化人物对白，增加潜台词和方言特色。', temperature: 0.9, tools: [] },
@@ -159,7 +172,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
     // 使用 WebSocket Hook 监听任务进度（优先使用 WebSocket，失败时降级到轮询）
     const lastStepRef = useRef<string>('');
-    const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const pollingIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const pollIntervalTimeRef = useRef<number>(2000); // 动态轮询间隔
 
     const { isConnected: wsConnected, progress: wsProgress, currentStep: wsCurrentStep, usePolling } = useBreakdownWebSocket(

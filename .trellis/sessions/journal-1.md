@@ -644,3 +644,193 @@ router.include_router(models_router, prefix="/models", tags=["模型管理"])
 
 ---
 
+
+## [20260213-000205] 实现纯积分制系统和可配置定价
+
+**时间**: 2026-02-13 00:02:05
+
+**提交**:
+- `d3b7423` - feat: 实现纯积分制系统和可配置定价
+
+
+| 功能 | 说明 |
+|------|------|
+| 系统配置 API | 新增 /system/configs 端点，管理员可配置积分定价和 Token 计费 |
+| SystemSettings 页面 | 新增管理端系统配置页面 (/admin/settings) |
+| 积分服务重构 | credits.py 和 quota.py 从数据库读取配置，不再硬编码 |
+| 同步版本函数 | 新增 get_credits_config_sync / consume_credits_for_task_sync 供 Celery 使用 |
+| 任务扣费修复 | breakdown_tasks.py 和 script_tasks.py 添加/修复积分扣费逻辑 |
+| 后扣费模式 | 统一为任务完成后扣费，失败不回滚，消除逻辑不一致 |
+| 前端适配 | BillingModal、QuotaLimitModal、CreateProjectModal 适配新积分系统 |
+| 数据库迁移 | 新增 system_configs 表和 users 表积分字段 |
+
+**新增文件**:
+- `backend/app/api/v1/system_config.py`
+- `backend/app/models/system_config.py`
+- `backend/alembic/versions/20260212_add_system_config.py`
+- `backend/alembic/versions/20260212_add_credits_system_fields.py`
+- `frontend/src/pages/admin/SystemSettings.tsx`
+
+**关键修改**:
+- `backend/app/core/credits.py` - 新增数据库配置读取和同步版本函数
+- `backend/app/core/quota.py` - 改用数据库配置，移除硬编码
+- `backend/app/tasks/breakdown_tasks.py` - 添加扣费，移除错误的回滚逻辑
+- `backend/app/tasks/script_tasks.py` - 修复扣费使用数据库配置
+
+---
+
+
+## [20260213-000732] 合并 ai_configurations 到 ai_resources
+
+**时间**: 2026-02-13 00:07:32
+
+**提交**:
+- `b291dcb` - refactor: 合并 ai_configurations 到 ai_resources，消除功能重叠
+
+
+## 变更概要
+
+将 `ai_configurations` 表合并到 `ai_resources` 表，消除功能重叠，净减 1,599 行代码。
+
+| 变更 | 说明 |
+|------|------|
+| API 迁移 | `/breakdown/available-configs` 改用 AIResource 查询 |
+| 资源加载 | `pipeline_executor` 和 `breakdown_tasks` 迁移到 AIResource |
+| 废弃代码删除 | 删除 12 个文件（模型、API、Schema、脚本、前端页面） |
+| 数据库迁移 | 创建 Alembic 迁移删除 ai_configurations 表 |
+| Bug 修复 | 添加 `require_admin` 依赖、修复 `any` → `Any` 类型错误 |
+
+**删除的文件**:
+- `backend/app/models/ai_configuration.py`
+- `backend/app/api/v1/configurations.py`
+- `backend/app/schemas/ai_configuration.py`
+- `backend/scripts/` 下 5 个废弃脚本
+- `frontend/src/pages/admin/AIConfiguration.tsx`
+- `frontend/src/services/configService.ts`
+- `frontend/src/components/modals/AIConfigurationModal.tsx`
+
+**修改的文件**:
+- `backend/app/ai/pipeline_executor.py` - `_load_config` → `_load_resource`
+- `backend/app/api/v1/breakdown.py` - available-configs 端点重写
+- `backend/app/api/v1/auth.py` - 添加 require_admin
+- `backend/app/tasks/breakdown_tasks.py` - `_get_adapt_method_sync` 迁移
+- `backend/app/models/__init__.py` - 移除 AIConfiguration
+- `frontend/src/components/MainLayout.tsx` - 移除 AIConfigurationModal
+
+---
+
+
+## [20260213-002918] 修复积分系统 Code Review 问题
+
+**时间**: 2026-02-13 00:29:18
+
+**提交**:
+- `190029a` - fix: 修复积分系统 code review 发现的 7 个问题
+
+
+| # | 问题 | 修复方式 |
+|---|------|----------|
+| 1 | 每次扣费查库 | 加 60 秒内存缓存 + `_parse_config_rows` 复用 |
+| 2 | 同步函数内部 commit | 移除，由调用方统一管理事务 |
+| 3 | 扣费失败静默 | 改用 `logger.error`，记录 user_id 和 task_id |
+| 4 | print 替代 logger | 添加 `logging.getLogger(__name__)` |
+| 5 | 无异常兜底 | try/except 回退 `_DEFAULT_CONFIG` |
+| 6 | 无功能按钮 | 移除 BillingModal 筛选/导出按钮 |
+| 7 | monthlyConsumed 不准 | 后端 SQL 聚合返回 `monthly_consumed` |
+
+**修改文件**:
+- `backend/app/core/credits.py`
+- `backend/app/tasks/breakdown_tasks.py`
+- `backend/app/tasks/script_tasks.py`
+- `frontend/src/components/modals/BillingModal.tsx`
+
+---
+
+
+## [20260213-114655] 系统日志管理模块实现
+
+**时间**: 2026-02-13 11:46:55
+
+**提交**:
+- `6d0e491` - feat: 实现管理端任务日志管理模块
+- `89ad1e8` - feat: 实现 API 请求日志记录和查询功能
+- `5a7a178` - feat: 实现 LLM 调用日志记录和查询功能
+- `938e147` - fix: 适配器工厂函数传入 db 参数以启用 LLM 日志记录
+
+
+| 模块 | 新增功能 |
+|------|----------|
+| AI 任务日志 | 任务列表、详情、执行日志、统计 |
+| API 请求日志 | 自动记录 HTTP 请求/响应、状态码、耗时 |
+| LLM 调用日志 | 完整 prompt/response、tokens、延迟记录 |
+
+**后端新增**:
+- `APILog` / `LLMCallLog` 模型
+- `APILoggingMiddleware` 中间件
+- 适配器自动记录 LLM 调用
+- 8 个管理端 API 端点
+
+**前端新增**:
+- 日志管理页面（3 个标签页）
+- 详情抽屉、日志查看器
+
+**数据库迁移**:
+- `20260213_add_api_logs.py`
+- `20260213_add_llm_call_logs.py`
+
+---
+
+
+## [20260213-123724] 系统日志管理模块实现
+
+**时间**: 2026-02-13 12:37:24
+
+**提交**:
+- `30a44a3` - docs: 添加日志记录规范到 AI 模块开发规范
+
+
+**新增提交**:
+- `30a44a3` docs: 添加日志记录规范到 AI 模块开发规范
+
+---
+
+
+## [20260213-124056] 使用 GitHub Issues 管理待办事项
+
+**时间**: 2026-02-13 12:40:56
+
+**提交**:
+
+
+**摘要**: 使用 gh CLI 创建 7 个 Issues
+
+## 完成内容
+
+1. **创建项目标签**
+   - `priority:high` - 高优先级
+   - `priority:medium` - 中优先级
+   - `priority:low` - 低优先级
+
+2. **批量创建 7 个 Issues**
+   | # | 标题 | 标签 |
+   |---|------|------|
+   | 6 | 积分双重扣费风险 | bug, priority:high |
+   | 7 | 批量任务失败时积分未回滚 | bug, priority:high |
+   | 8 | 质检循环缺少最大重试限制 | bug, priority:medium |
+   | 9 | 并发控制参数未生效 | bug, priority:medium |
+   | 10 | JSON 解析正则匹配问题 | bug, priority:medium |
+   | 11 | 清理废弃的兼容字段 | enhancement, priority:low |
+   | 12 | 统一错误信息解析方式 | bug, priority:low |
+
+## 使用命令
+
+```bash
+# 查看 Issues
+gh issue list
+
+# 创建 Issue
+gh issue create -t "标题" -b "描述内容" -l "bug"
+```
+
+---
+

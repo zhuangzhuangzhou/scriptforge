@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, Tag, message, DatePicker, Tooltip, Drawer, Descriptions } from 'antd';
+import { Button, Tag, message, Drawer, Descriptions, Tooltip } from 'antd';
 import { ReloadOutlined, SearchOutlined, EyeOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../../services/api';
@@ -7,8 +7,7 @@ import { GlassCard } from '../../../components/ui/GlassCard';
 import { GlassTable } from '../../../components/ui/GlassTable';
 import { GlassInput } from '../../../components/ui/GlassInput';
 import { GlassSelect } from '../../../components/ui/GlassSelect';
-
-const { RangePicker } = DatePicker;
+import { GlassRangePicker } from '../../../components/ui/GlassDatePicker';
 
 interface LLMLogEntry {
   id: string;
@@ -342,9 +341,8 @@ const LLMLogsTab: React.FC = () => {
               { value: 'error', label: '失败' }
             ]}
           />
-          <RangePicker
+          <GlassRangePicker
             onChange={(dates) => setDateRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null)}
-            className="bg-slate-800/50 border-slate-700"
           />
           <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch}>
             搜索

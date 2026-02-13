@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { User, Lock, Mail, ArrowRight, UserPlus, Film, Sparkles, Wand2 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { User, Lock, Mail, ArrowRight, UserPlus, Film, Sparkles } from 'lucide-react';
+import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { message } from 'antd';
 import AnimatedBackground from '../../components/AnimatedBackground';

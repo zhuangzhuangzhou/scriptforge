@@ -76,7 +76,7 @@ export const projectApi = {
         total_chapters: data.batch_size || 10,
         processed_chapters: 0
       };
-      // @ts-expect-error - mock data type mismatch
+      // @ts-ignore - mock data type mismatch
       mockProjects.push(newProject);
       return { data: newProject };
     }

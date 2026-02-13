@@ -1,72 +1,124 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, Info } from 'lucide-react';
-import { GlassSelect } from './ui/GlassSelect';
-import { breakdownApi } from '../services/api';
-import { message, Select } from 'antd';
+import { Loader2, Settings } from 'lucide-react';
+import api from '../services/api';
+import { message, Checkbox, Collapse, Tag, Button } from 'antd';
+import { useNavigate } from 'react-router-dom';
 
-interface ConfigOption {
-  key: string;
+interface AIResource {
+  id: string;
+  name: string;
+  display_name: string;
   description: string;
-  is_custom: boolean;
+  category: string;
+  is_builtin: boolean;
+  is_active: boolean;
 }
 
 interface ConfigSelectorProps {
-  value?: {
-    adaptMethodKey?: string;
-    qualityRuleKey?: string;
-    outputStyleKey?: string;
-  };
-  onChange?: (value: {
-    adaptMethodKey: string;
-    qualityRuleKey: string;
-    outputStyleKey: string;
-  }) => void;
+  value?: string[];  // 选中的资源 ID 列表
+  onChange?: (value: string[]) => void;
   disabled?: boolean;
+  showManageLink?: boolean;
 }
 
+const categoryConfig: Record<string, { label: string; color: string; description: string }> = {
+  methodology: {
+    label: '方法论',
+    color: 'blue',
+    description: '改编方法论，决定如何提取冲突、识别情绪钩子、应用压缩策略',
+  },
+  output_style: {
+    label: '输出风格',
+    color: 'purple',
+    description: '剧本输出的风格规范（起承转钩、视觉化优先、快节奏无尿点）',
+  },
+  qa_rules: {
+    label: '质检标准',
+    color: 'orange',
+    description: '质量检查标准，决定拆解结果的通过阈值',
+  },
+  template: {
+    label: '模板案例',
+    color: 'cyan',
+    description: '输出格式模板和参考示例',
+  },
+};
+
 const ConfigSelector: React.FC<ConfigSelectorProps> = ({
-  value = {},
+  value = [],
   onChange,
-  disabled = false
+  disabled = false,
+  showManageLink = true,
 }) => {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-  const [configs, setConfigs] = useState<{
-    adapt_methods: ConfigOption[];
-    quality_rules: ConfigOption[];
-    output_styles: ConfigOption[];
-  }>({
-    adapt_methods: [],
-    quality_rules: [],
-    output_styles: []
-  });
+  const [resourcesByCategory, setResourcesByCategory] = useState<Record<string, AIResource[]>>({});
 
   useEffect(() => {
-    loadConfigs();
+    loadResources();
   }, []);
 
-  const loadConfigs = async () => {
+  const loadResources = async () => {
     setLoading(true);
     try {
-      const response = await breakdownApi.getAvailableConfigs();
-      if (response.data) {
-        setConfigs(response.data);
+      const response = await api.get('/ai-resources', {
+        params: { page_size: 100 },
+      });
+      const items: AIResource[] = response.data.items || response.data;
+
+      // 按分类分组
+      const grouped: Record<string, AIResource[]> = {};
+      for (const item of items) {
+        if (!item.is_active) continue;
+        if (!grouped[item.category]) {
+          grouped[item.category] = [];
+        }
+        grouped[item.category].push(item);
+      }
+
+      setResourcesByCategory(grouped);
+
+      // 如果没有选中任何模板，自动选中每个分类的第一个内置模板
+      if (value.length === 0) {
+        const defaultIds: string[] = [];
+        for (const category of Object.keys(grouped)) {
+          const builtinResource = grouped[category].find((r) => r.is_builtin);
+          if (builtinResource) {
+            defaultIds.push(builtinResource.id);
+          }
+        }
+        if (defaultIds.length > 0) {
+          onChange?.(defaultIds);
+        }
       }
     } catch (error) {
-      console.error('加载配置失败:', error);
+      console.error('加载资源失败:', error);
       message.error('无法加载配置列表');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleChange = (field: 'adaptMethodKey' | 'qualityRuleKey' | 'outputStyleKey', val: string) => {
-    const newValue = {
-      adaptMethodKey: value.adaptMethodKey || 'adapt_method_default',
-      qualityRuleKey: value.qualityRuleKey || 'qa_breakdown_default',
-      outputStyleKey: value.outputStyleKey || 'output_style_default',
-      [field]: val
-    };
-    onChange?.(newValue);
+  const handleToggle = (resourceId: string, checked: boolean) => {
+    if (checked) {
+      onChange?.([...value, resourceId]);
+    } else {
+      onChange?.(value.filter((id) => id !== resourceId));
+    }
+  };
+
+  const handleSelectAll = (category: string, checked: boolean) => {
+    const categoryResources = resourcesByCategory[category] || [];
+    const categoryIds = categoryResources.map((r) => r.id);
+
+    if (checked) {
+      // 添加该分类所有资源
+      const newValue = [...new Set([...value, ...categoryIds])];
+      onChange?.(newValue);
+    } else {
+      // 移除该分类所有资源
+      onChange?.(value.filter((id) => !categoryIds.includes(id)));
+    }
   };
 
   if (loading) {
@@ -78,163 +130,111 @@ const ConfigSelector: React.FC<ConfigSelectorProps> = ({
     );
   }
 
+  const categories = Object.keys(categoryConfig).filter(
+    (cat) => resourcesByCategory[cat]?.length > 0
+  );
+
   return (
-    <div className="space-y-4">
-      {/* 适配方法 */}
-      <div>
-        <label className="flex items-center gap-2 mb-2 text-xs text-slate-300">
-          <span className="font-medium">适配方法 (Adapt Method)</span>
-          <div className="group relative">
-            <Info size={12} className="text-slate-500 cursor-help" />
-            <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block w-64 p-2 bg-slate-900 border border-slate-700 rounded-lg text-[10px] text-slate-400 z-50">
-              决定如何提取冲突（⭐⭐⭐/⭐⭐/⭐）、识别情绪钩子、应用压缩策略
-            </div>
-          </div>
-        </label>
-        <GlassSelect
-          value={value.adaptMethodKey || 'adapt_method_default'}
-          onChange={(val) => handleChange('adaptMethodKey', val as string)}
-          className="w-full"
-          disabled={disabled}
-          placeholder="选择适配方法"
-          optionLabelProp="label"
-        >
-          {configs.adapt_methods.map((cfg) => (
-            <Select.Option 
-              key={cfg.key} 
-              value={cfg.key}
-              label={
-                <span className="font-mono text-xs">
-                  {cfg.key}
-                  {cfg.is_custom && <span className="ml-2 text-[9px] text-purple-400">自定义</span>}
-                </span>
-              }
-            >
-              <div className="py-1">
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className="font-mono text-xs text-slate-200">{cfg.key}</span>
-                  {cfg.is_custom ? (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 whitespace-nowrap">
-                      自定义
-                    </span>
-                  ) : (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 whitespace-nowrap">
-                      系统默认
-                    </span>
-                  )}
-                </div>
-                <div className="text-[10px] text-slate-500 leading-relaxed">
-                  {cfg.description}
-                </div>
-              </div>
-            </Select.Option>
-          ))}
-        </GlassSelect>
-      </div>
+    <div className="config-selector">
+      {/* 管理入口 */}
+      {showManageLink && (
+        <div className="flex justify-between items-center mb-3">
+          <span className="text-xs text-slate-400">
+            已选择 {value.length} 个模板
+          </span>
+          <Button
+            type="link"
+            size="small"
+            icon={<Settings size={12} />}
+            onClick={() => navigate('/user/templates')}
+            className="text-xs text-slate-400 hover:text-cyan-400"
+          >
+            管理模板
+          </Button>
+        </div>
+      )}
 
-      {/* 质检规则 */}
-      <div>
-        <label className="flex items-center gap-2 mb-2 text-xs text-slate-300">
-          <span className="font-medium">质检规则 (Quality Rule)</span>
-          <div className="group relative">
-            <Info size={12} className="text-slate-500 cursor-help" />
-            <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block w-64 p-2 bg-slate-900 border border-slate-700 rounded-lg text-[10px] text-slate-400 z-50">
-              8维度质量检查标准，决定拆解结果的通过阈值
-            </div>
-          </div>
-        </label>
-        <GlassSelect
-          value={value.qualityRuleKey || 'qa_breakdown_default'}
-          onChange={(val) => handleChange('qualityRuleKey', val as string)}
-          className="w-full"
-          disabled={disabled}
-          placeholder="选择质检规则"
-          optionLabelProp="label"
-        >
-          {configs.quality_rules.map((cfg) => (
-            <Select.Option 
-              key={cfg.key} 
-              value={cfg.key}
-              label={
-                <span className="font-mono text-xs">
-                  {cfg.key}
-                  {cfg.is_custom && <span className="ml-2 text-[9px] text-purple-400">自定义</span>}
-                </span>
-              }
-            >
-              <div className="py-1">
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className="font-mono text-xs text-slate-200">{cfg.key}</span>
-                  {cfg.is_custom ? (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 whitespace-nowrap">
-                      自定义
-                    </span>
-                  ) : (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 whitespace-nowrap">
-                      系统默认
-                    </span>
-                  )}
-                </div>
-                <div className="text-[10px] text-slate-500 leading-relaxed">
-                  {cfg.description}
-                </div>
-              </div>
-            </Select.Option>
-          ))}
-        </GlassSelect>
-      </div>
+      <Collapse
+        defaultActiveKey={categories}
+        ghost
+        className="config-collapse"
+        items={categories.map((category) => {
+          const config = categoryConfig[category];
+          const resources = resourcesByCategory[category] || [];
+          const selectedInCategory = resources.filter((r) => value.includes(r.id));
+          const allSelected = selectedInCategory.length === resources.length;
+          const someSelected = selectedInCategory.length > 0 && !allSelected;
 
-      {/* 输出风格 */}
-      <div>
-        <label className="flex items-center gap-2 mb-2 text-xs text-slate-300">
-          <span className="font-medium">输出风格 (Output Style)</span>
-          <div className="group relative">
-            <Info size={12} className="text-slate-500 cursor-help" />
-            <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block w-64 p-2 bg-slate-900 border border-slate-700 rounded-lg text-[10px] text-slate-400 z-50">
-              剧本输出的风格规范（起承转钩、视觉化优先、快节奏无尿点）
-            </div>
-          </div>
-        </label>
-        <GlassSelect
-          value={value.outputStyleKey || 'output_style_default'}
-          onChange={(val) => handleChange('outputStyleKey', val as string)}
-          className="w-full"
-          disabled={disabled}
-          placeholder="选择输出风格"
-          optionLabelProp="label"
-        >
-          {configs.output_styles.map((cfg) => (
-            <Select.Option 
-              key={cfg.key} 
-              value={cfg.key}
-              label={
-                <span className="font-mono text-xs">
-                  {cfg.key}
-                  {cfg.is_custom && <span className="ml-2 text-[9px] text-purple-400">自定义</span>}
-                </span>
-              }
-            >
-              <div className="py-1">
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className="font-mono text-xs text-slate-200">{cfg.key}</span>
-                  {cfg.is_custom ? (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 whitespace-nowrap">
-                      自定义
-                    </span>
-                  ) : (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 whitespace-nowrap">
-                      系统默认
-                    </span>
-                  )}
+          return {
+            key: category,
+            label: (
+              <div className="flex items-center justify-between w-full pr-2">
+                <div className="flex items-center gap-2">
+                  <Tag color={config.color} className="m-0">
+                    {config.label}
+                  </Tag>
+                  <span className="text-[10px] text-slate-500">
+                    {config.description}
+                  </span>
                 </div>
-                <div className="text-[10px] text-slate-500 leading-relaxed">
-                  {cfg.description}
+                <span className="text-[10px] text-slate-400">
+                  {selectedInCategory.length}/{resources.length}
+                </span>
+              </div>
+            ),
+            children: (
+              <div className="pl-2">
+                {/* 全选 */}
+                <div className="mb-2 pb-2 border-b border-slate-800">
+                  <Checkbox
+                    checked={allSelected}
+                    indeterminate={someSelected}
+                    onChange={(e) => handleSelectAll(category, e.target.checked)}
+                    disabled={disabled}
+                  >
+                    <span className="text-xs text-slate-400">全选</span>
+                  </Checkbox>
+                </div>
+
+                {/* 资源列表 */}
+                <div className="space-y-2">
+                  {resources.map((resource) => (
+                    <div
+                      key={resource.id}
+                      className="flex items-start gap-2 p-2 rounded-lg hover:bg-slate-800/50 transition-colors"
+                    >
+                      <Checkbox
+                        checked={value.includes(resource.id)}
+                        onChange={(e) => handleToggle(resource.id, e.target.checked)}
+                        disabled={disabled}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-200 font-medium">
+                            {resource.display_name}
+                          </span>
+                          {resource.is_builtin ? (
+                            <span className="text-[9px] px-1 py-0.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+                              系统
+                            </span>
+                          ) : (
+                            <span className="text-[9px] px-1 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                              我的
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-0.5 line-clamp-1">
+                          {resource.description}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            </Select.Option>
-          ))}
-        </GlassSelect>
-      </div>
+            ),
+          };
+        })}
+      />
     </div>
   );
 };

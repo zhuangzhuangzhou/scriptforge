@@ -131,11 +131,8 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
             batch_record.ai_processed = True  # 标记为已处理
             db.commit()
 
-        # 扣除积分（任务完成后扣费）
-        credits_result = consume_credits_for_task_sync(db, user_id, "breakdown", task_id)
-        if not credits_result["success"]:
-            logger.error(f"积分扣费失败: user={user_id}, task={task_id}, reason={credits_result['message']}")
-        db.commit()
+        # 注意：积分已在 API 层预扣，这里不再重复扣费
+        # 如果启用了 Token 计费，可以在这里扣除 Token 费用（待实现）
 
         return {"status": "completed", "task_id": task_id}
 

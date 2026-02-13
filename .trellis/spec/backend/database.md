@@ -442,6 +442,42 @@ if not credits_result["success"]:
 
 ---
 
+### 积分扣费重复问题
+
+**问题**：用户积分被重复扣除两次（如 "剧情拆解（基础费）100" 出现两次）
+
+**原因**：API 层预扣积分后，Celery 任务完成时又执行了一次扣费
+
+**症状**：账单记录中出现两条相同描述的扣费记录
+
+**修复**：
+1. 选择一个扣费时机（推荐 API 层预扣）
+2. 删除 Celery 任务中的重复扣费代码
+3. 确保失败时能正确返还积分
+
+```python
+# ✅ API 层预扣（推荐）
+async def start_breakdown(...):
+    # 任务开始前预扣
+    await quota_service.consume_credits(user, "breakdown", "剧情拆解")
+    # 提交 Celery 任务...
+
+# ✅ Celery 任务不再重复扣费
+def run_breakdown_task(...):
+    # ... 执行任务 ...
+    # 注意：不再调用 consume_credits_for_task_sync
+    # 如果任务失败，需要手动调用 refund_episode_quota_sync 返还积分
+    if failed:
+        refund_episode_quota_sync(db, user_id, 1)
+```
+
+**预防**：
+- 明确扣费时机（在哪个环节扣）
+- 在代码注释中说明"已在 XX 环节扣费"
+- 单元测试验证扣费次数
+
+---
+
 ### 前端数据的准确性
 
 **问题**：在前端用有限的分页数据做聚合计算（如本月消耗），结果不准确。
@@ -459,5 +495,37 @@ const monthlyConsumed = info.data.monthly_consumed;
 
 ---
 
-**最后更新**: 2026-02-12
-**相关变更**: 纯积分制系统实现与 Code Review 修复
+### 字段命名不一致问题
+
+**问题**：后端 User 模型有 `credits`（积分）和 `balance`（旧余额）两个字段，前端使用 `balance` 显示积分，导致数据不一致
+
+**原因**：
+- 后端 `credits` 字段存储积分
+- `/auth/me` 端点直接返回 ORM 对象，Pydantic 使用 `balance` 字段（Pydantic v2 的 `from_attributes` 会自动映射）
+- 但 User 模型中 `balance` 是 DECIMAL(10,2) 类型，值可能为 0
+- 前端显示 `user.balance`（0），但 BillingModal 调用 `/billing/credits` API 返回 `credits` 字段（实际积分）
+
+**症状**：前端显示的积分与账单详情中的余额不一致
+
+**修复**：修改 `/auth/me` 端点，手动映射字段
+
+```python
+# ✅ 正确：手动构建响应，映射字段
+@router.get("/me")
+async def get_current_user_info(current_user: User = Depends(get_current_user)):
+    return UserResponse(
+        id=str(current_user.id),
+        balance=current_user.credits,  # 使用 credits 作为积分余额
+        ...
+    )
+```
+
+**预防**：
+- 明确字段语义：只用 `credits` 存储积分
+- API 响应模型与数据库模型分离
+- 前端类型定义与后端响应对齐
+
+---
+
+**最后更新**: 2026-02-13
+**相关变更**: 积分显示不一致问题修复

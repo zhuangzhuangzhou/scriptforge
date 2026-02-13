@@ -1260,7 +1260,7 @@ async def get_batch_progress(
             "batch_id": str(batch.id),
             "batch_number": batch.batch_number,
             "batch_status": batch_status,
-            "chapter_count": batch.chapter_count or 0
+            "chapter_count": batch.total_chapters or 0
         }
 
         if task:

@@ -16,7 +16,7 @@ export const useBreakdownPolling = (options: UseBreakdownPollingOptions = {}) =>
   const [progress, setProgress] = useState(0);
   const [isRunning, setIsRunning] = useState(false);
   const [currentStep, setCurrentStep] = useState('');
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const batchIdRef = useRef<string | null>(null);
 
   // 清理轮询

@@ -127,8 +127,8 @@ const PlotBreakdown: React.FC = () => {
           </Text>
           <SkillSelector
             category="breakdown"
-            projectId={projectId}
-            onSkillsChange={setSelectedSkills}
+            selectedSkillIds={selectedSkills}
+            onChange={setSelectedSkills}
           />
         </Card>
       </Col>

@@ -24,7 +24,7 @@ export const useBreakdownQueue = (options: UseBreakdownQueueOptions = {}) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 清理轮询
   const clearPolling = useCallback(() => {

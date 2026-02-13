@@ -22,6 +22,7 @@ import ModelManagement from './pages/admin/ModelManagement';
 import ResourcesPage from './pages/admin/Resources';
 import ResourceEditor from './pages/admin/Resources/ResourceEditor';
 import SystemSettings from './pages/admin/SystemSettings';
+import SystemConfiguration from './pages/admin/ModelManagement/SystemConfiguration';
 import { UserTier } from './types';
 
 // 加载状态组件
@@ -86,6 +87,7 @@ const AppContent: React.FC = () => {
             <Route path="/admin/resources" element={<ResourcesPage />} />
             <Route path="/admin/resources/new" element={<ResourceEditor />} />
             <Route path="/admin/resources/:resourceId/edit" element={<ResourceEditor />} />
+            <Route path="/admin/configurations" element={<SystemConfiguration />} />
             <Route path="/admin/settings" element={<SystemSettings />} />
           </Route>
         </Route>

@@ -376,7 +376,7 @@ async def get_tasks(
             "project_id": str(task.project_id) if task.project_id else None,
             "project_name": project.name if project else None,
             "batch_id": str(task.batch_id) if task.batch_id else None,
-            "batch_name": batch.name if batch else None,
+            "batch_number": batch.batch_number if batch else None,
             "celery_task_id": task.celery_task_id,
             "created_at": task.created_at.isoformat() if task.created_at else None,
             "started_at": task.started_at.isoformat() if task.started_at else None,
@@ -886,7 +886,7 @@ async def get_llm_log_detail(
         "latency_ms": log.latency_ms,
         "status": log.status,
         "error_message": log.error_message,
-        "metadata": log.metadata,
+        "metadata": log.extra_metadata,
         "created_at": log.created_at.isoformat() if log.created_at else None
     }
 

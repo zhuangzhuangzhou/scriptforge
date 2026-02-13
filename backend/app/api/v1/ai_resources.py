@@ -19,12 +19,21 @@ router = APIRouter(prefix="/ai-resources", tags=["AI资源文档"])
 
 # ==================== Pydantic Schemas ====================
 
+# 分类枚举定义
+RESOURCE_CATEGORIES = {
+    "methodology": "方法论",
+    "output_style": "输出风格",
+    "qa_rules": "质检标准",
+    "template": "模板案例",
+}
+
+
 class AIResourceCreate(BaseModel):
     """创建 AI 资源"""
     name: str = Field(..., description="唯一标识")
     display_name: str = Field(..., description="显示名称")
     description: Optional[str] = Field(None, description="描述")
-    category: str = Field(..., description="分类：adapt_method/output_style/template/example")
+    category: str = Field(..., description="分类：methodology/output_style/qa_rules/template")
     content: str = Field(..., description="Markdown 文档内容")
     visibility: str = Field("public", description="可见性：public/private")
 
@@ -219,7 +228,11 @@ async def update_ai_resource(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """更新 AI 资源"""
+    """更新 AI 资源
+
+    - 普通用户只能编辑自己创建的资源
+    - 管理员可以编辑内置资源（仅限 content、description、display_name、is_active）
+    """
     result = await db.execute(
         select(AIResource).where(AIResource.id == uuid.UUID(resource_id))
     )
@@ -228,23 +241,78 @@ async def update_ai_resource(
     if not resource:
         raise HTTPException(status_code=404, detail="AI 资源不存在")
 
-    # 内置资源不允许编辑
+    # 内置资源：只有管理员可以编辑，且只能修改部分字段
     if resource.is_builtin:
-        raise HTTPException(status_code=403, detail="内置资源不可编辑")
+        if current_user.role != "admin":
+            raise HTTPException(status_code=403, detail="只有管理员可以编辑内置资源")
 
-    # 只能编辑自己创建的资源
-    if resource.owner_id != current_user.id and current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="无权编辑此资源")
+        # 内置资源只允许修改这些字段
+        allowed_fields = {"content", "description", "display_name", "is_active"}
+        update_data = data.model_dump(exclude_unset=True)
 
-    # 更新字段
-    update_data = data.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(resource, key, value)
+        # 检查是否有不允许修改的字段
+        disallowed = set(update_data.keys()) - allowed_fields
+        if disallowed:
+            raise HTTPException(
+                status_code=400,
+                detail=f"内置资源不允许修改以下字段: {', '.join(disallowed)}"
+            )
+
+        for key, value in update_data.items():
+            setattr(resource, key, value)
+    else:
+        # 非内置资源：只能编辑自己创建的资源（管理员可以编辑所有）
+        if resource.owner_id != current_user.id and current_user.role != "admin":
+            raise HTTPException(status_code=403, detail="无权编辑此资源")
+
+        # 更新字段
+        update_data = data.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(resource, key, value)
 
     await db.commit()
     await db.refresh(resource)
 
     return _to_response(resource)
+
+
+@router.patch("/{resource_id}/toggle")
+async def toggle_ai_resource(
+    resource_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """切换 AI 资源的启用/禁用状态
+
+    - 管理员可以切换任何资源（包括内置资源）
+    - 普通用户只能切换自己创建的资源
+    """
+    result = await db.execute(
+        select(AIResource).where(AIResource.id == uuid.UUID(resource_id))
+    )
+    resource = result.scalar_one_or_none()
+
+    if not resource:
+        raise HTTPException(status_code=404, detail="AI 资源不存在")
+
+    # 权限检查
+    if resource.is_builtin:
+        if current_user.role != "admin":
+            raise HTTPException(status_code=403, detail="只有管理员可以切换内置资源状态")
+    else:
+        if resource.owner_id != current_user.id and current_user.role != "admin":
+            raise HTTPException(status_code=403, detail="无权操作此资源")
+
+    # 切换状态
+    resource.is_active = not resource.is_active
+    await db.commit()
+    await db.refresh(resource)
+
+    return {
+        "id": str(resource.id),
+        "is_active": resource.is_active,
+        "message": f"资源已{'启用' if resource.is_active else '禁用'}"
+    }
 
 
 @router.delete("/{resource_id}")

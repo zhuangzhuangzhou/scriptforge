@@ -16,7 +16,7 @@ export interface Batch {
   end_chapter: number;
   total_chapters: number;
   total_words: number;
-  breakdown_status: 'pending' | 'processing' | 'completed' | 'failed';
+  breakdown_status: 'pending' | 'queued' | 'processing' | 'completed' | 'failed';
   script_status: string;
 }
 
@@ -171,4 +171,51 @@ export interface Skill {
   is_builtin: boolean;
   is_template_based: boolean;
   owner_id?: string;
+}
+
+// 剧本四段式结构
+export interface ScriptStructure {
+  opening: { content: string; word_count: number };      // 【起】开场冲突
+  development: { content: string; word_count: number };  // 【承】推进发展
+  climax: { content: string; word_count: number };       // 【转】反转高潮
+  hook: { content: string; word_count: number };         // 【钩】悬念结尾
+}
+
+// 单集剧本
+export interface EpisodeScript {
+  id?: string;
+  episode_number: number;
+  title: string;
+  word_count: number;
+  structure: ScriptStructure;
+  full_script: string;
+  scenes: string[];
+  characters: string[];
+  hook_type: string;
+  status?: 'pending' | 'generating' | 'completed' | 'failed' | 'approved';
+  qa_status?: 'pending' | 'PASS' | 'FAIL';
+  qa_score?: number;
+  qa_report?: ScriptQAReport;
+  created_at?: string;
+}
+
+// 剧本质检报告
+export interface ScriptQAReport {
+  status: 'PASS' | 'FAIL';
+  score: number;
+  dimensions: {
+    word_count: { score: number; issues: string[]; actual?: number };
+    structure: { score: number; issues: string[] };
+    opening: { score: number; issues: string[] };
+    hook_ending: { score: number; issues: string[] };
+    visualization: { score: number; issues: string[] };
+    dialogue: { score: number; issues: string[] };
+  };
+  fix_instructions: Array<{
+    target: string;
+    type: string;
+    issue: string;
+    suggestion: string;
+  }>;
+  summary: string;
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Button, Tag, Space, message, Modal } from 'antd';
+import { Button, Tag, Space, message, Modal, Switch } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import api from '../../../services/api';
@@ -17,21 +17,23 @@ interface Resource {
   scope: string;
   visibility: string;
   owner_id: string;
+  is_builtin: boolean;
+  is_active: boolean;
   created_at: string;
 }
 
 const categoryMap: Record<string, string> = {
   methodology: '方法论',
   output_style: '输出风格',
-  template: '模板',
-  example: '示例',
+  qa_rules: '质检标准',
+  template: '模板案例',
 };
 
 const categoryColorMap: Record<string, string> = {
   methodology: 'blue',
   output_style: 'purple',
+  qa_rules: 'orange',
   template: 'cyan',
-  example: 'green',
 };
 
 const ResourcesPage: React.FC = () => {
@@ -93,6 +95,17 @@ const ResourcesPage: React.FC = () => {
     });
   };
 
+  // 切换启用/禁用状态
+  const handleToggle = async (resource: Resource) => {
+    try {
+      await api.patch(`/ai-resources/${resource.id}/toggle`);
+      message.success(resource.is_active ? '已禁用' : '已启用');
+      loadResources();
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '操作失败');
+    }
+  };
+
   // 表格列定义
   const columns = [
     {
@@ -116,7 +129,7 @@ const ResourcesPage: React.FC = () => {
       title: '分类',
       dataIndex: 'category',
       key: 'category',
-      width: 120,
+      width: 100,
       render: (category: string) => (
         <Tag color={categoryColorMap[category] || 'default'}>
           {categoryMap[category] || category}
@@ -126,28 +139,52 @@ const ResourcesPage: React.FC = () => {
     {
       title: '类型',
       key: 'scope',
-      width: 100,
+      width: 80,
       render: (_: any, record: Resource) => (
-        <Tag color={record.scope === 'builtin' ? 'gold' : 'geekblue'}>
-          {record.scope === 'builtin' ? '内置' : '自定义'}
+        <Tag color={record.is_builtin ? 'gold' : 'geekblue'}>
+          {record.is_builtin ? '内置' : '自定义'}
         </Tag>
+      ),
+    },
+    {
+      title: '状态',
+      key: 'is_active',
+      width: 80,
+      render: (_: any, record: Resource) => (
+        <Switch
+          size="small"
+          checked={record.is_active}
+          onChange={() => handleToggle(record)}
+          checkedChildren="启用"
+          unCheckedChildren="禁用"
+        />
       ),
     },
     {
       title: '操作',
       key: 'actions',
-      width: 200,
+      width: 180,
       render: (_: any, record: Resource) => (
         <Space>
-          {record.scope === 'builtin' ? (
-            <Button
-              type="link"
-              size="small"
-              icon={<CopyOutlined />}
-              onClick={() => handleClone(record)}
-            >
-              复制
-            </Button>
+          {record.is_builtin ? (
+            <>
+              <Button
+                type="link"
+                size="small"
+                icon={<EditOutlined />}
+                onClick={() => navigate(`/admin/resources/${record.id}/edit`)}
+              >
+                编辑
+              </Button>
+              <Button
+                type="link"
+                size="small"
+                icon={<CopyOutlined />}
+                onClick={() => handleClone(record)}
+              >
+                复制
+              </Button>
+            </>
           ) : (
             <>
               <Button
@@ -178,8 +215,8 @@ const ResourcesPage: React.FC = () => {
     { key: 'all', label: '全部' },
     { key: 'methodology', label: '方法论' },
     { key: 'output_style', label: '输出风格' },
-    { key: 'template', label: '模板' },
-    { key: 'example', label: '示例' },
+    { key: 'qa_rules', label: '质检标准' },
+    { key: 'template', label: '模板案例' },
   ];
 
   return (

@@ -35,6 +35,7 @@ src/
 ├── components/
 │   ├── ui/                 # 基础 Glass UI 组件 (GlassTabs, GlassInput, GlassSelect, GlassTable)
 │   ├── modals/             # 弹窗组件目录
+│   ├── WorkflowEditor/     # Agent 工作流可视化编辑器
 │   ├── InputGroup.tsx      # [DEPRECATED] 请移除重复文件，使用 ui/InputGroup.tsx
 │   ├── ConsoleLogger.tsx   # 日志控制台
 │   └── ...
@@ -94,15 +95,94 @@ src/
 - **GlassSelect**: 替代 `Select`，解决 Dropdown 挂载点样式问题，提供统一的暗色下拉菜单。
 - **GlassTable**: 替代 `Table`，提供透明背景数据表格。
 - **GlassModal**: 替代 `Modal`，提供磨砂玻璃背景弹窗。
+- **GlassRangePicker**: 替代 `RangePicker`，提供深色主题日期范围选择器。
 
 **使用示例**:
 ```tsx
 import { GlassTabs } from '../ui/GlassTabs';
 import { GlassInput } from '../ui/GlassInput';
+import { GlassSelect } from '../ui/GlassSelect';
+import { GlassRangePicker } from '../ui/GlassDatePicker';
 
 <GlassTabs items={...} />
-<GlassInput placeholder="..." />
+<GlassInput placeholder="搜索..." />
+<GlassSelect options={...} />
+<GlassRangePicker onChange={...} />
 ```
+
+### 🐛 Glass 组件常见问题
+
+#### 输入框双重边框
+
+**症状**: GlassInput 组件显示两层边框
+
+**原因**: `ant-input-affix-wrapper` 本身有边框，内部的 `ant-input` 也有边框
+
+**修复**: 为 affix-wrapper 内部的 input 移除边框
+
+```css
+.glass-input-wrapper .ant-input-affix-wrapper .ant-input {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+```
+
+#### 占位符颜色看不清
+
+**症状**: 占位符文字颜色太暗，难以辨认
+
+**修复**: 使用 slate-500 (#64748b)
+
+```css
+.glass-input-wrapper .ant-input::placeholder,
+.glass-select-wrapper .ant-select-selection-placeholder {
+  color: #64748b !important;
+}
+```
+
+### 🔧 WorkflowEditor 组件
+
+**用途**: Agent 工作流可视化编辑器，支持拖拽排序、双模式编辑。
+
+**目录结构**:
+```text
+WorkflowEditor/
+├── index.tsx              # 主组件（工具栏 + 画布 + 配置面板）
+├── WorkflowCanvas.tsx     # 画布区域（拖拽排序）
+├── StepNode.tsx           # 步骤节点卡片
+├── StepConfigPanel.tsx    # 右侧配置面板
+├── SkillSelector.tsx      # Skill 选择器（按分类分组）
+├── types.ts               # 类型定义
+└── utils.ts               # 工具函数（JSON 转换、验证）
+```
+
+**核心功能**:
+- 可视化/JSON 双模式编辑，支持切换
+- 拖拽排序步骤（使用 `@dnd-kit/core`）
+- 支持 Sequential/Loop 两种工作流类型
+- 步骤配置：Skill 选择、输入参数、输出键、条件、失败策略
+- 变量引用自动补全（`${context.xxx}`, `${step_id.xxx}`）
+
+**使用示例**:
+```tsx
+import WorkflowEditor, { WorkflowConfig, SkillInfo } from '../components/WorkflowEditor';
+
+const [workflow, setWorkflow] = useState<WorkflowConfig>({
+  type: 'sequential',
+  steps: [],
+});
+
+<WorkflowEditor
+  value={workflow}
+  onChange={setWorkflow}
+  availableSkills={skills}
+/>
+```
+
+**依赖**: `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities`
+
+**使用位置**: `src/pages/admin/Agents/AgentEditor.tsx`
 
 ### ⌨️ 排版 (Typography)
 - **UI 文本**: `Inter`, `Noto Sans SC` (苹方/雅黑回退)。

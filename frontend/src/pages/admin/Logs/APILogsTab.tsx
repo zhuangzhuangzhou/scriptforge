@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, Tag, message, DatePicker, Tooltip } from 'antd';
+import { Button, Tag, message, Tooltip } from 'antd';
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../../services/api';
@@ -7,8 +7,7 @@ import { GlassCard } from '../../../components/ui/GlassCard';
 import { GlassTable } from '../../../components/ui/GlassTable';
 import { GlassInput } from '../../../components/ui/GlassInput';
 import { GlassSelect } from '../../../components/ui/GlassSelect';
-
-const { RangePicker } = DatePicker;
+import { GlassRangePicker } from '../../../components/ui/GlassDatePicker';
 
 interface APILogEntry {
   id: string;
@@ -270,9 +269,8 @@ const APILogsTab: React.FC = () => {
               { value: '500', label: '5xx 服务端错误' }
             ]}
           />
-          <RangePicker
+          <GlassRangePicker
             onChange={(dates) => setDateRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null)}
-            className="bg-slate-800/50 border-slate-700"
           />
           <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch}>
             搜索

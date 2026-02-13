@@ -34,7 +34,7 @@ export const useBatchProgress = (
 
   const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 清理定时器
   const clearRefreshInterval = useCallback(() => {

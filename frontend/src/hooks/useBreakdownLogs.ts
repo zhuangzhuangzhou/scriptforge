@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { useWebSocket } from './useWebSocket';
 
 interface StreamMessage {
-  type: 'connected' | 'step_start' | 'stream_chunk' | 'step_end' | 'error' | 'progress' | 'task_complete' | 'task_failed';
+  type: 'connected' | 'step_start' | 'stream_chunk' | 'step_end' | 'error' | 'progress' | 'task_complete' | 'task_failed' | 'info' | 'warning' | 'success' | 'qa_check';
   task_id: string;
   step_name?: string;
   content?: string;
@@ -25,6 +25,9 @@ interface UseBreakdownLogsOptions {
   onStepEnd?: (stepName: string, result?: any) => void;
   onProgress?: (progress: number, currentStep: number, totalSteps: number) => void;
   onError?: (error: string, errorCode?: string) => void;
+  onWarning?: (warning: string) => void;
+  onInfo?: (info: string) => void;
+  onSuccess?: (message: string) => void;
   onComplete?: () => void;
 }
 
@@ -46,6 +49,9 @@ export const useBreakdownLogs = (
     onStepEnd,
     onProgress,
     onError,
+    onWarning,
+    onInfo,
+    onSuccess,
     onComplete
   } = options;
 
@@ -105,6 +111,31 @@ export const useBreakdownLogs = (
         onError?.(errorMsg, errorCode);
         break;
 
+      case 'warning':
+        if (data.content) {
+          onWarning?.(data.content);
+        }
+        break;
+
+      case 'info':
+        if (data.content) {
+          onInfo?.(data.content);
+        }
+        break;
+
+      case 'success':
+        if (data.content) {
+          onSuccess?.(data.content);
+        }
+        break;
+
+      case 'qa_check':
+        // 质检维度检查结果，作为 info 处理
+        if (data.content) {
+          onInfo?.(data.content);
+        }
+        break;
+
       case 'task_complete':
         console.log('[BreakdownLogs] 任务完成');
         onComplete?.();
@@ -118,10 +149,10 @@ export const useBreakdownLogs = (
       default:
         console.warn('[BreakdownLogs] 未知消息类型:', data.type);
     }
-  }, [onStepStart, onStreamChunk, onStepEnd, onProgress, onError, onComplete]);
+  }, [onStepStart, onStreamChunk, onStepEnd, onProgress, onError, onWarning, onInfo, onSuccess, onComplete]);
 
   const { isConnected: wsConnected, lastMessage } = useWebSocket(wsUrl, {
-    onMessage: handleMessage,
+    onMessage: (data) => handleMessage(data as StreamMessage),
     onError: (error) => {
       console.error('[BreakdownLogs] WebSocket 错误:', error);
       setIsConnected(false);

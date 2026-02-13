@@ -107,6 +107,41 @@ class SkillTestResponse(BaseModel):
 
 # ==================== API Endpoints ====================
 
+@router.get("/available")
+async def list_available_skills(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取可用的 Skill 列表（简化版，供 Agent 编辑器使用）"""
+
+    # 构建查询条件：只返回启用的 Skill
+    conditions = [Skill.is_active == True]
+
+    # 权限过滤：admin 可以看到所有 Skill
+    if current_user.role != "admin":
+        conditions.append(
+            (Skill.visibility == "public") |
+            (Skill.owner_id == current_user.id)
+        )
+
+    # 执行查询
+    query = select(Skill).where(and_(*conditions))
+    result = await db.execute(query.order_by(Skill.category, Skill.display_name))
+    skills = result.scalars().all()
+
+    return [
+        {
+            "name": skill.name,
+            "display_name": skill.display_name,
+            "description": skill.description,
+            "category": skill.category,
+            "input_schema": skill.input_schema,
+            "output_schema": skill.output_schema,
+        }
+        for skill in skills
+    ]
+
+
 @router.get("", response_model=List[SkillResponse])
 async def list_skills(
     category: Optional[str] = Query(None, description="按分类筛选"),

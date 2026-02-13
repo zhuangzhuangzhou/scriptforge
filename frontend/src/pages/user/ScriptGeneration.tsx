@@ -94,10 +94,10 @@ const ScriptGeneration: React.FC = () => {
               description="选择左侧剧集预览，或配置下方技能开始生成"
             >
                <div style={{ maxWidth: 400, margin: '20px auto', textAlign: 'left' }}>
-                 <SkillSelector 
-                    category="script" 
-                    projectId={projectId} 
-                    onSkillsChange={setSelectedSkills} 
+                 <SkillSelector
+                    category="script"
+                    selectedSkillIds={selectedSkills}
+                    onChange={setSelectedSkills}
                  />
                </div>
             </Empty>

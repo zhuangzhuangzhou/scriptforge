@@ -8,8 +8,9 @@ interface Agent {
   status: string;
   model: string;
   desc: string;
-  temperature: number;
-  tools: string[];
+  temperature?: number;
+  systemPrompt?: string;
+  tools?: string[];
 }
 
 interface AgentsTabProps {

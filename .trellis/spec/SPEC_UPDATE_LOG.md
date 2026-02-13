@@ -259,9 +259,85 @@ gh label list
 
 ---
 
+## 2026-02-13 - Glass UI 组件完善与积分系统问题修复
+
+### 更新的规范
+
+1. **`frontend/index.md`** - 更新
+   - 新增 GlassRangePicker 组件
+   - 添加 Glass 组件常见问题（双重边框、占位符颜色）
+   - 修复 WorkflowEditor 文档位置
+
+2. **`backend/database.md`** - 更新
+   - 新增积分扣费重复问题
+   - 新增字段命名不一致问题
+
+### 学到的关键知识
+
+#### 1. Glass 组件双重边框问题
+
+**问题**：GlassInput 组件显示两层边框
+
+**原因**：Ant Design 的 `ant-input-affix-wrapper` 本身有边框，内部的 `ant-input` 也有边框
+
+**修复**：为 affix-wrapper 内部的 input 移除边框
+
+```css
+.glass-input-wrapper .ant-input-affix-wrapper .ant-input {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+```
+
+#### 2. 积分重复扣费
+
+**问题**：用户积分被重复扣除两次
+
+**原因**：API 层预扣积分后，Celery 任务完成时又执行了一次扣费
+
+**修复**：明确扣费时机，删除 Celery 任务中的重复扣费代码
+
+#### 3. 积分显示不一致
+
+**问题**：前端显示的积分与账单详情中的余额不一致
+
+**原因**：后端 `/auth/me` 返回 ORM 对象时，`balance` 字段是 DECIMAL(10,2) 类型（值为 0），而 `credits` 字段才是实际积分
+
+**修复**：手动构建响应，映射字段
+
+```python
+@router.get("/me")
+async def get_current_user_info(current_user: User = Depends(get_current_user)):
+    return UserResponse(
+        balance=current_user.credits,  # 使用 credits 作为积分余额
+        ...
+    )
+```
+
+### 相关文件
+
+**修复的代码**：
+- `frontend/src/components/ui/GlassInput.tsx` - 修复双重边框
+- `frontend/src/components/ui/GlassSelect.tsx` - 修复占位符颜色
+- `frontend/src/components/ui/GlassDatePicker.tsx` - 新增组件
+- `frontend/src/pages/admin/Logs/*.tsx` - 使用 Glass 组件
+- `backend/app/api/v1/auth.py` - 修复字段映射
+- `backend/app/tasks/breakdown_tasks.py` - 删除重复扣费
+
+### 适用场景
+
+这些规范适用于：
+- 创建新的 Glass UI 组件
+- 排查前端组件样式问题
+- 实现积分扣费逻辑
+- 修复前后端数据不一致问题
+
+---
+
 **更新人**: AI Assistant (Claude Opus 4.6)
 **审查状态**: 待审查
-**相关任务**: GitHub Issues 任务管理系统搭建
+**相关任务**: 系统修复与 Glass UI 组件完善
 
 ## 2026-02-12 - Agent/Skill/Resource 三层架构完善
 
