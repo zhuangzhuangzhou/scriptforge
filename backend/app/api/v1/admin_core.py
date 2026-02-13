@@ -12,6 +12,7 @@ from app.models.pipeline import Pipeline, PipelineExecution, PipelineExecutionLo
 from app.models.project import Project
 from app.models.ai_task import AITask
 from app.models.batch import Batch
+from app.models.api_log import APILog
 
 router = APIRouter()
 
@@ -590,5 +591,166 @@ async def get_logs_stats(
         "tasks_by_type": type_stats,
         "daily_trend": daily_trend
     }
+
+
+# ==================== API 请求日志 ====================
+
+@router.get("/api-logs")
+async def get_api_logs(
+    skip: int = 0,
+    limit: int = 50,
+    method: Optional[str] = Query(None, description="请求方法: GET, POST, PUT, DELETE"),
+    path: Optional[str] = Query(None, description="请求路径（模糊匹配）"),
+    status_code: Optional[int] = Query(None, description="状态码"),
+    user_id: Optional[str] = Query(None, description="用户ID"),
+    date_from: Optional[str] = Query(None, description="开始日期 (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    admin: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """管理员：获取 API 请求日志"""
+    query = select(APILog, User).outerjoin(User, APILog.user_id == User.id)
+
+    # 构建筛选条件
+    conditions = []
+    if method:
+        conditions.append(APILog.method == method.upper())
+    if path:
+        conditions.append(APILog.path.ilike(f"%{path}%"))
+    if status_code:
+        conditions.append(APILog.status_code == status_code)
+    if user_id:
+        conditions.append(APILog.user_id == user_id)
+    if date_from:
+        try:
+            from_date = datetime.strptime(date_from, "%Y-%m-%d")
+            conditions.append(APILog.created_at >= from_date)
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            to_date = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+            conditions.append(APILog.created_at < to_date)
+        except ValueError:
+            pass
+
+    if conditions:
+        query = query.where(and_(*conditions))
+
+    # 统计总数
+    count_query = select(func.count(APILog.id))
+    if conditions:
+        count_query = count_query.where(and_(*conditions))
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    # 获取日志列表
+    result = await db.execute(
+        query.order_by(APILog.created_at.desc()).offset(skip).limit(limit)
+    )
+    rows = result.all()
+
+    logs = []
+    for log, user in rows:
+        logs.append({
+            "id": str(log.id),
+            "method": log.method,
+            "path": log.path,
+            "query_params": log.query_params,
+            "user_id": str(log.user_id) if log.user_id else None,
+            "username": user.username if user else None,
+            "user_ip": log.user_ip,
+            "user_agent": log.user_agent,
+            "status_code": log.status_code,
+            "response_time": log.response_time,
+            "error_message": log.error_message,
+            "created_at": log.created_at.isoformat() if log.created_at else None
+        })
+
+    return {
+        "logs": logs,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+
+@router.get("/api-logs/stats")
+async def get_api_logs_stats(
+    period: str = Query("day", description="统计周期: day, week, month"),
+    admin: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """管理员：获取 API 请求统计"""
+    now = datetime.utcnow()
+
+    # 根据周期确定时间范围
+    if period == "week":
+        start_date = now - timedelta(days=7)
+    elif period == "month":
+        start_date = now - timedelta(days=30)
+    else:  # day
+        start_date = now - timedelta(days=1)
+
+    # 总请求数
+    total_query = select(func.count(APILog.id)).where(APILog.created_at >= start_date)
+    total_result = await db.execute(total_query)
+    total_requests = total_result.scalar() or 0
+
+    # 成功请求数 (2xx)
+    success_query = select(func.count(APILog.id)).where(
+        and_(
+            APILog.created_at >= start_date,
+            APILog.status_code >= 200,
+            APILog.status_code < 300
+        )
+    )
+    success_result = await db.execute(success_query)
+    success_requests = success_result.scalar() or 0
+
+    # 错误请求数 (4xx, 5xx)
+    error_query = select(func.count(APILog.id)).where(
+        and_(APILog.created_at >= start_date, APILog.status_code >= 400)
+    )
+    error_result = await db.execute(error_query)
+    error_requests = error_result.scalar() or 0
+
+    # 平均响应时间
+    avg_time_query = select(func.avg(APILog.response_time)).where(
+        APILog.created_at >= start_date
+    )
+    avg_time_result = await db.execute(avg_time_query)
+    avg_response_time = round(avg_time_result.scalar() or 0, 1)
+
+    # 按方法统计
+    method_stats = {}
+    for m in ["GET", "POST", "PUT", "DELETE"]:
+        method_query = select(func.count(APILog.id)).where(
+            and_(APILog.created_at >= start_date, APILog.method == m)
+        )
+        method_result = await db.execute(method_query)
+        method_stats[m] = method_result.scalar() or 0
+
+    # 热门路径 Top 10
+    top_paths_query = (
+        select(APILog.path, func.count(APILog.id).label("count"))
+        .where(APILog.created_at >= start_date)
+        .group_by(APILog.path)
+        .order_by(func.count(APILog.id).desc())
+        .limit(10)
+    )
+    top_paths_result = await db.execute(top_paths_query)
+    top_paths = [{"path": row[0], "count": row[1]} for row in top_paths_result.all()]
+
+    return {
+        "period": period,
+        "total_requests": total_requests,
+        "success_requests": success_requests,
+        "error_requests": error_requests,
+        "avg_response_time": avg_response_time,
+        "requests_by_method": method_stats,
+        "top_paths": top_paths
+    }
+
 
 

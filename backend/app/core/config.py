@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     # CORS 配置
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
 
+    # API 日志配置
+    API_LOG_ENABLED: bool = True
+
     class Config:
         env_file = ".env"
         case_sensitive = True

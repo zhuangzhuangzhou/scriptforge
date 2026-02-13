@@ -7,6 +7,7 @@ from app.core.init_skills import init_builtin_skills
 from app.core.init_pipeline import init_default_pipeline
 from app.core.init_simple_system import init_simple_system
 from app.core.init_ai_resources import init_builtin_resources
+from app.middleware.api_logging import APILoggingMiddleware
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -22,6 +23,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# API 请求日志中间件
+app.add_middleware(APILoggingMiddleware, enabled=settings.API_LOG_ENABLED)
 
 # 注册API路由
 app.include_router(api_router, prefix="/api/v1")

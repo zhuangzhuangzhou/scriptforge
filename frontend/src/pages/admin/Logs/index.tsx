@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, Tag, message, DatePicker, Tooltip } from 'antd';
-import { ReloadOutlined, EyeOutlined, SearchOutlined } from '@ant-design/icons';
+import { Button, Tag, message, DatePicker, Tooltip, Tabs } from 'antd';
+import { ReloadOutlined, EyeOutlined, SearchOutlined, CodeOutlined, RocketOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../../services/api';
 import { GlassCard } from '../../../components/ui/GlassCard';
@@ -9,6 +9,7 @@ import { GlassInput } from '../../../components/ui/GlassInput';
 import { GlassSelect } from '../../../components/ui/GlassSelect';
 import { GlassTabs } from '../../../components/ui/GlassTabs';
 import TaskDetailDrawer from './TaskDetailDrawer';
+import APILogsTab from './APILogsTab';
 
 const { RangePicker } = DatePicker;
 
@@ -45,7 +46,8 @@ interface LogStats {
   daily_trend: Array<{ date: string; total: number; success: number }>;
 }
 
-const LogsPage: React.FC = () => {
+// AI 任务日志标签页
+const TaskLogsTab: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
@@ -257,7 +259,7 @@ const LogsPage: React.FC = () => {
   ];
 
   return (
-    <div className="p-6 h-full overflow-y-auto bg-slate-950">
+    <div>
       {/* 统计卡片 */}
       {stats && (
         <div className="grid grid-cols-4 gap-4 mb-6">
@@ -282,7 +284,7 @@ const LogsPage: React.FC = () => {
 
       <GlassCard>
         <div className="mb-4 flex justify-between items-center">
-          <h1 className="text-2xl font-bold text-slate-100">任务日志</h1>
+          <h2 className="text-xl font-bold text-slate-100">AI 任务日志</h2>
           <Button
             icon={<ReloadOutlined />}
             onClick={() => { loadTasks(); loadStats(); }}
@@ -350,6 +352,51 @@ const LogsPage: React.FC = () => {
         visible={drawerVisible}
         taskId={selectedTaskId}
         onClose={handleCloseDrawer}
+      />
+    </div>
+  );
+};
+
+// 主页面
+const LogsPage: React.FC = () => {
+  const [activeMainTab, setActiveMainTab] = useState('tasks');
+
+  const mainTabItems = [
+    {
+      key: 'tasks',
+      label: (
+        <span className="flex items-center gap-2">
+          <RocketOutlined />
+          AI 任务日志
+        </span>
+      ),
+      children: <TaskLogsTab />
+    },
+    {
+      key: 'api',
+      label: (
+        <span className="flex items-center gap-2">
+          <CodeOutlined />
+          API 请求日志
+        </span>
+      ),
+      children: <APILogsTab />
+    }
+  ];
+
+  return (
+    <div className="p-6 h-full overflow-y-auto bg-slate-950">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-slate-100">系统日志</h1>
+        <p className="text-slate-400 text-sm mt-1">查看 AI 任务执行日志和 API 请求日志</p>
+      </div>
+
+      <Tabs
+        activeKey={activeMainTab}
+        onChange={setActiveMainTab}
+        items={mainTabItems}
+        className="logs-main-tabs"
+        size="large"
       />
     </div>
   );
