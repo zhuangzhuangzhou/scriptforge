@@ -13,6 +13,7 @@ from app.models.project import Project
 from app.models.ai_task import AITask
 from app.models.batch import Batch
 from app.models.api_log import APILog
+from app.models.llm_call_log import LLMCallLog
 
 router = APIRouter()
 
@@ -753,4 +754,226 @@ async def get_api_logs_stats(
     }
 
 
+# ==================== LLM 调用日志 ====================
+
+@router.get("/llm-logs")
+async def get_llm_logs(
+    skip: int = 0,
+    limit: int = 50,
+    provider: Optional[str] = Query(None, description="提供商: openai, anthropic"),
+    model_name: Optional[str] = Query(None, description="模型名称"),
+    skill_name: Optional[str] = Query(None, description="Skill 名称"),
+    task_id: Optional[str] = Query(None, description="任务ID"),
+    status: Optional[str] = Query(None, description="状态: success, error"),
+    date_from: Optional[str] = Query(None, description="开始日期 (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    admin: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """管理员：获取 LLM 调用日志"""
+    query = select(LLMCallLog, User).outerjoin(User, LLMCallLog.user_id == User.id)
+
+    # 构建筛选条件
+    conditions = []
+    if provider:
+        conditions.append(LLMCallLog.provider == provider)
+    if model_name:
+        conditions.append(LLMCallLog.model_name.ilike(f"%{model_name}%"))
+    if skill_name:
+        conditions.append(LLMCallLog.skill_name.ilike(f"%{skill_name}%"))
+    if task_id:
+        conditions.append(LLMCallLog.task_id == task_id)
+    if status:
+        conditions.append(LLMCallLog.status == status)
+    if date_from:
+        try:
+            from_date = datetime.strptime(date_from, "%Y-%m-%d")
+            conditions.append(LLMCallLog.created_at >= from_date)
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            to_date = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+            conditions.append(LLMCallLog.created_at < to_date)
+        except ValueError:
+            pass
+
+    if conditions:
+        query = query.where(and_(*conditions))
+
+    # 统计总数
+    count_query = select(func.count(LLMCallLog.id))
+    if conditions:
+        count_query = count_query.where(and_(*conditions))
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    # 获取日志列表
+    result = await db.execute(
+        query.order_by(LLMCallLog.created_at.desc()).offset(skip).limit(limit)
+    )
+    rows = result.all()
+
+    logs = []
+    for log, user in rows:
+        logs.append({
+            "id": str(log.id),
+            "task_id": str(log.task_id) if log.task_id else None,
+            "user_id": str(log.user_id) if log.user_id else None,
+            "username": user.username if user else None,
+            "provider": log.provider,
+            "model_name": log.model_name,
+            "skill_name": log.skill_name,
+            "stage": log.stage,
+            "prompt_preview": log.prompt[:200] + "..." if log.prompt and len(log.prompt) > 200 else log.prompt,
+            "response_preview": log.response[:200] + "..." if log.response and len(log.response) > 200 else log.response,
+            "prompt_tokens": log.prompt_tokens,
+            "response_tokens": log.response_tokens,
+            "total_tokens": log.total_tokens,
+            "latency_ms": log.latency_ms,
+            "status": log.status,
+            "error_message": log.error_message,
+            "created_at": log.created_at.isoformat() if log.created_at else None
+        })
+
+    return {
+        "logs": logs,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+
+@router.get("/llm-logs/{log_id}")
+async def get_llm_log_detail(
+    log_id: str,
+    admin: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """管理员：获取 LLM 调用详情（包含完整 prompt 和 response）"""
+    result = await db.execute(
+        select(LLMCallLog, User)
+        .outerjoin(User, LLMCallLog.user_id == User.id)
+        .where(LLMCallLog.id == log_id)
+    )
+    row = result.first()
+
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="日志不存在"
+        )
+
+    log, user = row
+
+    return {
+        "id": str(log.id),
+        "task_id": str(log.task_id) if log.task_id else None,
+        "user_id": str(log.user_id) if log.user_id else None,
+        "username": user.username if user else None,
+        "project_id": str(log.project_id) if log.project_id else None,
+        "provider": log.provider,
+        "model_name": log.model_name,
+        "skill_name": log.skill_name,
+        "stage": log.stage,
+        "prompt": log.prompt,
+        "response": log.response,
+        "prompt_tokens": log.prompt_tokens,
+        "response_tokens": log.response_tokens,
+        "total_tokens": log.total_tokens,
+        "temperature": log.temperature,
+        "max_tokens": log.max_tokens,
+        "latency_ms": log.latency_ms,
+        "status": log.status,
+        "error_message": log.error_message,
+        "metadata": log.metadata,
+        "created_at": log.created_at.isoformat() if log.created_at else None
+    }
+
+
+@router.get("/llm-logs/stats/summary")
+async def get_llm_logs_stats(
+    period: str = Query("day", description="统计周期: day, week, month"),
+    admin: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """管理员：获取 LLM 调用统计"""
+    now = datetime.utcnow()
+
+    # 根据周期确定时间范围
+    if period == "week":
+        start_date = now - timedelta(days=7)
+    elif period == "month":
+        start_date = now - timedelta(days=30)
+    else:  # day
+        start_date = now - timedelta(days=1)
+
+    # 总调用数
+    total_query = select(func.count(LLMCallLog.id)).where(LLMCallLog.created_at >= start_date)
+    total_result = await db.execute(total_query)
+    total_calls = total_result.scalar() or 0
+
+    # 成功调用数
+    success_query = select(func.count(LLMCallLog.id)).where(
+        and_(LLMCallLog.created_at >= start_date, LLMCallLog.status == "success")
+    )
+    success_result = await db.execute(success_query)
+    success_calls = success_result.scalar() or 0
+
+    # 总 token 消耗
+    token_query = select(func.sum(LLMCallLog.total_tokens)).where(
+        LLMCallLog.created_at >= start_date
+    )
+    token_result = await db.execute(token_query)
+    total_tokens = token_result.scalar() or 0
+
+    # 平均延迟
+    avg_latency_query = select(func.avg(LLMCallLog.latency_ms)).where(
+        LLMCallLog.created_at >= start_date
+    )
+    avg_latency_result = await db.execute(avg_latency_query)
+    avg_latency = round(avg_latency_result.scalar() or 0, 1)
+
+    # 按提供商统计
+    provider_stats = {}
+    for p in ["openai", "anthropic", "gemini"]:
+        p_query = select(func.count(LLMCallLog.id)).where(
+            and_(LLMCallLog.created_at >= start_date, LLMCallLog.provider == p)
+        )
+        p_result = await db.execute(p_query)
+        provider_stats[p] = p_result.scalar() or 0
+
+    # 按模型统计 Top 5
+    model_stats_query = (
+        select(LLMCallLog.model_name, func.count(LLMCallLog.id).label("count"))
+        .where(LLMCallLog.created_at >= start_date)
+        .group_by(LLMCallLog.model_name)
+        .order_by(func.count(LLMCallLog.id).desc())
+        .limit(5)
+    )
+    model_stats_result = await db.execute(model_stats_query)
+    top_models = [{"model": row[0], "count": row[1]} for row in model_stats_result.all()]
+
+    # 按 Skill 统计 Top 5
+    skill_stats_query = (
+        select(LLMCallLog.skill_name, func.count(LLMCallLog.id).label("count"))
+        .where(and_(LLMCallLog.created_at >= start_date, LLMCallLog.skill_name.isnot(None)))
+        .group_by(LLMCallLog.skill_name)
+        .order_by(func.count(LLMCallLog.id).desc())
+        .limit(5)
+    )
+    skill_stats_result = await db.execute(skill_stats_query)
+    top_skills = [{"skill": row[0], "count": row[1]} for row in skill_stats_result.all()]
+
+    return {
+        "period": period,
+        "total_calls": total_calls,
+        "success_calls": success_calls,
+        "error_calls": total_calls - success_calls,
+        "total_tokens": total_tokens,
+        "avg_latency_ms": avg_latency,
+        "calls_by_provider": provider_stats,
+        "top_models": top_models,
+        "top_skills": top_skills
+    }
 

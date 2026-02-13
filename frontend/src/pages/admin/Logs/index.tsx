@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Button, Tag, message, DatePicker, Tooltip, Tabs } from 'antd';
-import { ReloadOutlined, EyeOutlined, SearchOutlined, CodeOutlined, RocketOutlined } from '@ant-design/icons';
+import { ReloadOutlined, EyeOutlined, SearchOutlined, CodeOutlined, RocketOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../../services/api';
 import { GlassCard } from '../../../components/ui/GlassCard';
@@ -10,6 +10,7 @@ import { GlassSelect } from '../../../components/ui/GlassSelect';
 import { GlassTabs } from '../../../components/ui/GlassTabs';
 import TaskDetailDrawer from './TaskDetailDrawer';
 import APILogsTab from './APILogsTab';
+import LLMLogsTab from './LLMLogsTab';
 
 const { RangePicker } = DatePicker;
 
@@ -371,6 +372,16 @@ const LogsPage: React.FC = () => {
         </span>
       ),
       children: <TaskLogsTab />
+    },
+    {
+      key: 'llm',
+      label: (
+        <span className="flex items-center gap-2">
+          <ThunderboltOutlined />
+          LLM 调用日志
+        </span>
+      ),
+      children: <LLMLogsTab />
     },
     {
       key: 'api',
