@@ -707,7 +707,285 @@ class YourSkill(BaseSkill):
 
 ---
 
-**最后更新**: 2026-02-10
+## 12. 简化架构：Agent / Skill / Resource 三层模式
+
+> **2026-02-12 新增**：基于实践总结的简化架构模式
+
+### 12.1 架构概览
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Resource 层                             │
+│  AI 资源文档（方法论、输出风格、质检规则、模板案例）          │
+│  存储在 AIResource 表，按 category 分类                      │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                       Agent 层                               │
+│  工作流编排（循环、条件、重试）                              │
+│  存储在 SimpleAgent 表，workflow 字段定义流程                │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                       Skill 层                               │
+│  Prompt 模板 + 输入/输出定义                                 │
+│  存储在 Skill 表，prompt_template 字段定义模板               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 12.2 核心组件
+
+#### Resource（AI 资源文档）
+
+**定义**：存储 AI 任务所需的参考文档，如方法论、规则、模板等。
+
+**分类**：
+| Category | 说明 | 示例 |
+|----------|------|------|
+| `methodology` | 方法论 | 改编核心原则、拆解方法 |
+| `output_style` | 输出风格 | 格式规范、语言风格 |
+| `qa_rules` | 质检规则 | 检查维度、评分标准 |
+| `template` | 模板案例 | 输出格式模板、示例 |
+
+**加载方式**：
+```python
+# 通过 resource_ids 加载用户选择的资源
+grouped_resources = _load_resources_by_ids_sync(db, resource_ids)
+adapt_method = "\n\n---\n\n".join(grouped_resources.get("methodology", []))
+```
+
+#### Skill（技能单元）
+
+**定义**：Prompt 模板 + 输入/输出 Schema，是最小的 AI 执行单元。
+
+**核心字段**：
+- `prompt_template`：Prompt 模板，使用 `{variable}` 占位符
+- `input_schema`：输入参数定义
+- `output_schema`：输出格式定义
+- `model_config`：模型配置（temperature、max_tokens）
+
+**执行器**：`SimpleSkillExecutor`
+```python
+class SimpleSkillExecutor:
+    def execute_skill(self, skill_name: str, inputs: Dict[str, Any], task_id: str):
+        # 1. 加载 Skill 配置
+        # 2. 预处理输入（自动 JSON 序列化）
+        # 3. 填充 Prompt 模板
+        # 4. 调用模型
+        # 5. 解析 JSON 响应
+```
+
+#### Agent（工作流编排）
+
+**定义**：编排多个 Skill 的执行顺序，支持循环、条件、重试。
+
+**工作流类型**：
+| Type | 说明 |
+|------|------|
+| `sequential` | 顺序执行所有步骤 |
+| `loop` | 循环执行直到满足退出条件 |
+
+**执行器**：`SimpleAgentExecutor`
+
+### 12.3 循环工作流配置
+
+```python
+{
+    "type": "loop",
+    "max_iterations": 3,
+    "exit_condition": "qa_result.status == 'PASS' or qa_result.score >= 70",
+    "steps": [
+        {
+            "id": "breakdown",
+            "skill": "webtoon_breakdown",
+            "inputs": {
+                "chapters_text": "${context.chapters_text}",
+                "adapt_method": "${context.adapt_method}"
+            },
+            "output_key": "plot_points",
+            "on_fail": "stop",
+            "max_retries": 1
+        },
+        {
+            "id": "qa",
+            "skill": "breakdown_aligner",
+            "inputs": {
+                "plot_points": "${breakdown.plot_points}",
+                "chapters_text": "${context.chapters_text}"
+            },
+            "output_key": "qa_result",
+            "on_fail": "skip"
+        },
+        {
+            "id": "fix",
+            "skill": "webtoon_breakdown",
+            "condition": "qa_result.status != 'PASS' and qa_result.score < 70",
+            "inputs": {...},
+            "output_key": "plot_points",
+            "on_fail": "skip"
+        }
+    ]
+}
+```
+
+**步骤配置字段**：
+| 字段 | 说明 |
+|------|------|
+| `id` | 步骤标识符 |
+| `skill` | 要调用的 Skill 名称 |
+| `inputs` | 输入参数模板，支持 `${context.xxx}` 和 `${step_id.xxx}` 引用 |
+| `output_key` | 输出结果的键名 |
+| `condition` | 条件表达式，为真时才执行 |
+| `on_fail` | 失败处理：`stop`（停止）/ `skip`（跳过）|
+| `max_retries` | 最大重试次数 |
+
+### 12.4 输入类型自动转换
+
+> **Gotcha**：Skill 的 `prompt_template` 使用 Python `str.format()`，所有输入必须是字符串。
+
+**问题**：Agent 步骤之间传递的数据可能是 `list` 或 `dict`，直接填充模板会报错。
+
+**解决方案**：`SimpleSkillExecutor` 自动转换输入类型：
+
+```python
+# 预处理输入：将非字符串类型转换为 JSON 字符串
+processed_inputs = {}
+for key, value in inputs.items():
+    if isinstance(value, str):
+        processed_inputs[key] = value
+    elif isinstance(value, (list, dict)):
+        processed_inputs[key] = json.dumps(value, ensure_ascii=False, indent=2)
+    elif value is None:
+        processed_inputs[key] = ""
+    else:
+        processed_inputs[key] = str(value)
+```
+
+### 12.5 用户友好的日志消息
+
+> **最佳实践**：日志消息应该让用户理解正在发生什么，而不是暴露技术细节。
+
+**对比**：
+| 场景 | ❌ 技术性消息 | ✅ 用户友好消息 |
+|------|-------------|----------------|
+| Agent 启动 | `开始执行 Agent: breakdown_agent` | `🤖 启动智能流程：剧情拆解 Agent` |
+| 循环迭代 | `循环迭代 1/3` | `🔄 第 1 轮处理（共 3 轮）` |
+| 质检通过 | `循环在第 1 轮满足退出条件` | `✅ 质量检查通过，第 1 轮完成` |
+| 达到上限 | `循环达到最大迭代次数 3，强制退出` | `⚠️ 已完成 3 轮处理，结果可能需要人工复核` |
+| 重试 | `重试步骤 qa (第 1 次)` | `🔁 正在重试...（第 1 次）` |
+
+**原则**：
+1. 使用 emoji 增加可读性
+2. 避免暴露内部变量名（如 `step_id`）
+3. 条件不满足时不发布日志（避免用户困惑）
+4. 失败时给出下一步建议
+
+### 12.6 完整调用流程
+
+```
+前端 Workspace
+    │
+    ▼ POST /breakdown/start (resource_ids, batch_id)
+API (breakdown.py)
+    │
+    ▼ run_breakdown_task.delay()
+Celery Task (breakdown_tasks.py)
+    │
+    ├── 1. 加载章节数据
+    ├── 2. 加载 AI 资源文档 (Resource)
+    ├── 3. 构建 Agent 上下文
+    │
+    ▼ SimpleAgentExecutor.execute_agent("breakdown_agent")
+Agent 执行器 (simple_executor.py)
+    │
+    ├── 加载 SimpleAgent 配置
+    ├── 执行循环工作流
+    │       │
+    │       ├── Step 1: webtoon_breakdown (Skill)
+    │       ├── Step 2: breakdown_aligner (Skill)
+    │       └── Step 3: webtoon_breakdown (条件修正)
+    │
+    ▼ 返回结果
+保存 PlotBreakdown
+    │
+    ▼ 更新 AITask 和 Batch 状态
+完成
+```
+
+---
+
+**最后更新**: 2026-02-13
 **相关文档**:
 - [Agent 实现机制探索报告](../../docs/agent-implementation-analysis.md)
 - [Agent Skills 使用指南](../../docs/agent-skills-usage-guide.md)
+
+---
+
+## 13. 日志记录规范
+
+### 13.1 LLM 调用日志
+
+> **2026-02-13 新增**：所有 AI 模型调用必须记录完整日志，便于调试和审计。
+
+**日志内容**：
+| 字段 | 说明 |
+|------|------|
+| `prompt` | 完整的请求 prompt |
+| `response` | 完整的模型响应 |
+| `prompt_tokens` | 输入 token 数 |
+| `response_tokens` | 输出 token 数 |
+| `latency_ms` | 响应延迟（毫秒） |
+| `status` | `success` / `error` |
+
+**适配器自动记录**：
+```python
+# OpenAIAdapter 和 AnthropicAdapter 自动记录调用日志
+adapter = await get_adapter(db=db, model_id=model_config_id)
+response = adapter.generate(prompt, temperature=0.7)
+# 自动记录到 llm_call_logs 表
+```
+
+**禁用日志**（生产环境可能需要）：
+```python
+adapter = await get_adapter(db=db, log_enabled=False)
+```
+
+### 13.2 API 请求日志
+
+> **2026-02-13 新增**：使用 `APILoggingMiddleware` 自动记录所有 HTTP 请求。
+
+**排除路径**：
+- `/health` - 健康检查
+- `/docs`, `/openapi.json`, `/redoc` - API 文档
+- `/favicon.ico` - 图标
+
+**启用方式**（`main.py`）：
+```python
+from app.middleware.api_logging import APILoggingMiddleware
+
+app.add_middleware(APILoggingMiddleware, enabled=settings.API_LOG_ENABLED)
+```
+
+### 13.3 日志查询（管理端）
+
+| API | 用途 |
+|-----|------|
+| `GET /admin/llm-logs` | LLM 调用日志列表 |
+| `GET /admin/llm-logs/{id}` | LLM 调用详情（包含完整 prompt/response） |
+| `GET /admin/api-logs` | API 请求日志列表 |
+| `GET /admin/logs/stats` | AI 任务统计 |
+
+### 13.4 上下文传递
+
+在 Celery 任务中传递上下文以便日志关联：
+```python
+from app.ai.llm_logger import llm_context
+
+# 在任务开始时设置上下文
+with llm_context(task_id=task_id, user_id=user_id, project_id=project_id):
+    # 所有 LLM 调用会自动关联这些信息
+    adapter = get_adapter_sync(db, model_id=model_id)
+    result = adapter.generate(prompt)
+```
