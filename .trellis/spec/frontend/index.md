@@ -94,8 +94,10 @@ src/
 - **GlassInput / GlassTextArea**: 替代 `Input` / `Input.TextArea`，提供毛玻璃背景与发光边框。
 - **GlassSelect**: 替代 `Select`，解决 Dropdown 挂载点样式问题，提供统一的暗色下拉菜单。
 - **GlassTable**: 替代 `Table`，提供透明背景数据表格。
-- **GlassModal**: 替代 `Modal`，提供磨砂玻璃背景弹窗。
+- **GlassModal**: 替代 `Modal` 和 `Drawer`，提供磨砂玻璃背景弹窗。
 - **GlassRangePicker**: 替代 `RangePicker`，提供深色主题日期范围选择器。
+
+> **注意**: 详情展示类场景（如日志详情、任务详情）应使用 `GlassModal` 而非 `Drawer`，以保持 UI 风格统一。
 
 **使用示例**:
 ```tsx
@@ -108,6 +110,40 @@ import { GlassRangePicker } from '../ui/GlassDatePicker';
 <GlassInput placeholder="搜索..." />
 <GlassSelect options={...} />
 <GlassRangePicker onChange={...} />
+```
+
+**Drawer → GlassModal 迁移指南**:
+
+| Drawer 属性 | GlassModal 属性 | 说明 |
+|-------------|-----------------|------|
+| `visible` | `open` | 控制显示状态 |
+| `onClose` | `onCancel` | 关闭回调 |
+| `placement` | - | 移除，Modal 默认居中 |
+| `width` | `width` | 保持不变 |
+| - | `footer={null}` | 隐藏默认按钮（详情展示场景） |
+
+```tsx
+// Before (Drawer)
+<Drawer
+  title="详情"
+  placement="right"
+  width={700}
+  open={visible}
+  onClose={handleClose}
+>
+  {content}
+</Drawer>
+
+// After (GlassModal)
+<GlassModal
+  title="详情"
+  width={700}
+  open={visible}
+  onCancel={handleClose}
+  footer={null}
+>
+  {content}
+</GlassModal>
 ```
 
 ### 🐛 Glass 组件常见问题

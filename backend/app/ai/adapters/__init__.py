@@ -4,9 +4,17 @@ from app.ai.adapters.base import BaseModelAdapter
 from app.ai.adapters.openai_adapter import OpenAIAdapter
 from app.ai.adapters.anthropic_adapter import AnthropicAdapter
 from app.ai.adapters.model_config_service import ModelConfigService
+from app.ai.simple_executor import parse_llm_response
 from app.core.config import settings
 
-__all__ = ["BaseModelAdapter", "OpenAIAdapter", "AnthropicAdapter", "get_adapter"]
+__all__ = [
+    "BaseModelAdapter",
+    "OpenAIAdapter",
+    "AnthropicAdapter",
+    "get_adapter",
+    "get_adapter_sync",
+    "parse_llm_response"  # 统一的 JSON 解析函数
+]
 
 # 默认模型提供商，可在配置中覆盖
 DEFAULT_MODEL_PROVIDER = getattr(settings, 'DEFAULT_MODEL_PROVIDER', 'openai')
@@ -83,6 +91,8 @@ async def get_adapter(
 # ============================================================================
 
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
+from datetime import datetime
 from app.models.ai_model import AIModel
 from app.models.ai_model_provider import AIModelProvider
 from app.models.ai_model_credential import AIModelCredential
@@ -131,9 +141,22 @@ def get_adapter_sync(
         raise ValueError(f"模型提供商不存在或未启用: {model.provider_id}")
 
     # 查询凭证
+    # 优先选择：
+    # 1. is_system_default=True 的凭证
+    # 2. 未过期的凭证
+    # 3. 按最后使用时间排序（用过一次的优先）
+    from sqlalchemy import or_
     credential = db.query(AIModelCredential).filter(
         AIModelCredential.provider_id == provider.id,
-        AIModelCredential.is_active == True
+        AIModelCredential.is_active == True,
+        # 排除过期凭证
+        or_(
+            AIModelCredential.expires_at == None,
+            AIModelCredential.expires_at > datetime.utcnow()
+        )
+    ).order_by(
+        AIModelCredential.is_system_default.desc(),  # 优先系统默认
+        AIModelCredential.last_used_at.asc()  # 其次按最后使用时间（用过的优先）
     ).first()
 
     if not credential:
@@ -151,6 +174,15 @@ def get_adapter_sync(
     # 如果提供商有自定义 API 端点，添加到配置中
     if hasattr(provider, 'api_endpoint') and provider.api_endpoint:
         extra_config['base_url'] = provider.api_endpoint
+
+    # 将模型的默认配置传递给适配器
+    model_config = {
+        "max_output_tokens": model.max_output_tokens,
+        "max_input_tokens": model.max_input_tokens,
+        "temperature_default": float(model.temperature_default) if model.temperature_default else None,
+        "timeout_seconds": model.timeout_seconds,
+    }
+    extra_config["model_config"] = model_config
 
     if provider_type == "anthropic":
         return AnthropicAdapter(

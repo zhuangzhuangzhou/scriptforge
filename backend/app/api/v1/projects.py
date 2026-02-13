@@ -297,7 +297,7 @@ async def get_project_batches(
     return {
         "items": batches,
         "total": total
-    }
+}
 
 
 @router.get("/{project_id}/logs", response_model=List[LogResponse])

@@ -36,7 +36,9 @@ async def test_openai_credential(api_key: str, api_endpoint: str = None) -> Tupl
     except httpx.TimeoutException:
         return False, "请求超时，请检查网络连接或 API 端点"
     except Exception as e:
-        return False, f"验证失败：{str(e)}"
+        # 确保显示详细的错误信息
+        error_detail = str(e) if str(e) else f"未知错误 ({type(e).__name__})"
+        return False, f"验证失败：{error_detail}"
 
 
 async def test_anthropic_credential(api_key: str, api_endpoint: str = None) -> Tuple[bool, str]:
@@ -82,7 +84,9 @@ async def test_anthropic_credential(api_key: str, api_endpoint: str = None) -> T
     except httpx.TimeoutException:
         return False, "请求超时，请检查网络连接或 API 端点"
     except Exception as e:
-        return False, f"验证失败：{str(e)}"
+        # 确保显示详细的错误信息
+        error_detail = str(e) if str(e) else f"未知错误 ({type(e).__name__})"
+        return False, f"验证失败：{error_detail}"
 
 
 async def test_azure_openai_credential(
@@ -125,27 +129,30 @@ async def test_azure_openai_credential(
     except httpx.TimeoutException:
         return False, "请求超时，请检查网络连接或 API 端点"
     except Exception as e:
-        return False, f"验证失败：{str(e)}"
+        # 确保显示详细的错误信息
+        error_detail = str(e) if str(e) else f"未知错误 ({type(e).__name__})"
+        return False, f"验证失败：{error_detail}"
 
 
 async def test_gemini_credential(api_key: str, api_endpoint: str = None) -> Tuple[bool, str]:
     """测试 Google Gemini API 凭证
-    
+
     Args:
         api_key: Google API Key
         api_endpoint: 可选的自定义 API 端点
-        
+
     Returns:
         (是否成功, 消息)
     """
+    import httpx
     endpoint = api_endpoint or "https://generativelanguage.googleapis.com"
     # 使用 models.list 接口测试凭证
     url = f"{endpoint}/v1beta/models?key={api_key}"
-    
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(url)
-            
+
             if response.status_code == 200:
                 return True, "Google Gemini API 凭证验证成功"
             elif response.status_code == 400:
@@ -158,10 +165,14 @@ async def test_gemini_credential(api_key: str, api_endpoint: str = None) -> Tupl
                 return False, "API 请求频率超限，但凭证有效"
             else:
                 return False, f"验证失败：HTTP {response.status_code}"
+    except httpx.ConnectError:
+        return False, "无法连接到 Google Gemini API，请检查网络连接或代理设置"
     except httpx.TimeoutException:
-        return False, "请求超时，请检查网络连接或 API 端点"
+        return False, "请求超时，请检查网络连接"
     except Exception as e:
-        return False, f"验证失败：{str(e)}"
+        # 确保显示详细的错误信息
+        error_detail = str(e) if str(e) else f"未知错误 ({type(e).__name__})"
+        return False, f"验证失败：{error_detail}"
 
 
 async def test_credential(

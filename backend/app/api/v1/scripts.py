@@ -17,14 +17,6 @@ from app.core.quota import QuotaService
 router = APIRouter()
 
 
-class ScriptGenerateRequest(BaseModel):
-    """生成剧本请求"""
-    batch_id: str
-    model_config_id: Optional[str] = None
-    selected_skills: Optional[List[str]] = None
-    pipeline_id: Optional[str] = None
-
-
 class EpisodeScriptStartRequest(BaseModel):
     """启动单集剧本生成请求"""
     breakdown_id: str
@@ -110,98 +102,6 @@ async def get_script(
         )
 
     return script
-
-
-@router.post("/generate")
-async def generate_script(
-    request: ScriptGenerateRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """生成剧本"""
-    # 验证批次存在且属于当前用户
-    result = await db.execute(
-        select(Batch).join(Project).where(
-            Batch.id == request.batch_id,
-            Project.user_id == current_user.id
-        )
-    )
-    batch = result.scalar_one_or_none()
-
-    if not batch:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="批次不存在"
-        )
-
-    # 验证拆解结果存在
-    result = await db.execute(
-        select(PlotBreakdown).where(PlotBreakdown.batch_id == request.batch_id)
-    )
-    breakdown = result.scalar_one_or_none()
-
-    if not breakdown:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="请先完成剧情拆解"
-        )
-
-    # 检查积分（纯积分制）
-    quota_service = QuotaService(db)
-    credits_check = await quota_service.check_credits(current_user, "script")
-    if not credits_check["allowed"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"积分不足: 需要 {credits_check['cost']}，余额 {credits_check['balance']}"
-        )
-
-    # 消耗积分
-    await quota_service.consume_credits(current_user, "script", "剧本生成")
-
-    # 创建AI任务
-    from app.tasks.script_tasks import run_script_task
-
-    dep_result = await db.execute(
-        select(AITask)
-        .where(
-            AITask.batch_id == batch.id,
-            AITask.task_type == "breakdown"
-        )
-        .order_by(AITask.created_at.desc())
-    )
-    dep_task = dep_result.scalar_one_or_none()
-    depends_on = [str(dep_task.id)] if dep_task else []
-
-    task = AITask(
-        project_id=batch.project_id,
-        batch_id=batch.id,
-        task_type="script",
-        status="queued",
-        depends_on=depends_on,
-        config={
-            "model_config_id": request.model_config_id,
-            "breakdown_id": str(breakdown.id),
-            "selected_skills": request.selected_skills or [],
-            "pipeline_id": request.pipeline_id
-        }
-    )
-    db.add(task)
-    await db.commit()
-    await db.refresh(task)
-
-    # 启动Celery异步任务
-    celery_task = run_script_task.delay(
-        str(task.id),
-        str(batch.id),
-        str(batch.project_id),
-        str(breakdown.id),
-        str(current_user.id)
-    )
-
-    task.celery_task_id = celery_task.id
-    await db.commit()
-
-    return {"task_id": str(task.id), "status": "queued"}
 
 
 # ==================== 单集剧本 API ====================

@@ -54,7 +54,7 @@ class AgentExecutor:
                 prompt=full_prompt,
                 system_prompt=system_prompt,
                 temperature=parameters.get("temperature", 0.7),
-                max_tokens=parameters.get("max_tokens", 4096)
+                max_tokens=parameters.get("max_tokens", 100000)
             )
 
             # 4. 解析结果

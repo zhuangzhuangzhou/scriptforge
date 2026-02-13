@@ -144,6 +144,11 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
         raise
 
     except Exception as e:
+        # 记录详细错误日志
+        import traceback
+        logger.exception(f"任务执行发生未知错误: {e}")
+        logger.error(f"堆栈跟踪:\n{traceback.format_exc()}")
+
         # 未知错误：分类后处理
         classified_error = classify_exception(e)
         if isinstance(classified_error, RetryableError):
@@ -351,6 +356,34 @@ def _execute_breakdown_sync(
     chapters_text = _format_chapters_sync(chapters)
     update_task_progress_sync(db, task_id, progress=10, current_step="章节数据加载完成 (10%)")
 
+    # 1.5 计算起始集数（查询该项目中"之前"批次的最大集数）
+    # 只查询 start_chapter 小于当前批次的批次，确保第一批次从1开始
+    start_episode = 1
+
+    # 获取当前批次的 start_chapter
+    current_start_chapter = batch.start_chapter
+
+    # 查询之前批次的 breakdown 结果
+    from sqlalchemy import and_
+    previous_breakdowns = db.query(PlotBreakdown).join(
+        Batch, PlotBreakdown.batch_id == Batch.id
+    ).filter(
+        and_(
+            PlotBreakdown.project_id == project_id,
+            Batch.start_chapter < current_start_chapter  # 只查询之前的批次
+        )
+    ).all()
+
+    for prev_bd in previous_breakdowns:
+        if prev_bd.plot_points:
+            for pp in prev_bd.plot_points:
+                if isinstance(pp, dict) and pp.get("episode"):
+                    ep = pp.get("episode")
+                    if isinstance(ep, int) and ep >= start_episode:
+                        start_episode = ep + 1
+
+    logger.info(f"计算起始集数: start_episode={start_episode} (项目 {project_id}, 当前批次 start_chapter={current_start_chapter})")
+
     # 2. 加载 AI 资源文档（15%）
     update_task_progress_sync(db, task_id, progress=12, current_step="加载 AI 资源文档中... (12%)")
 
@@ -396,6 +429,7 @@ def _execute_breakdown_sync(
         "example": example or "",
         "start_chapter": str(batch.start_chapter),
         "end_chapter": str(batch.end_chapter),
+        "start_episode": str(start_episode),
     }
 
     # 尝试使用 Agent 执行
@@ -477,6 +511,80 @@ def _execute_breakdown_sync(
     # 确保 plot_points 是列表
     if not isinstance(plot_points, list):
         plot_points = [plot_points] if plot_points else []
+
+    # 4. 质检不通过时自动重试（最多3次）
+    max_auto_fix_retries = task_config.get("max_auto_fix_retries", 3)
+    auto_fix_enabled = task_config.get("auto_fix_on_fail", True)  # 默认启用
+    fix_attempt = 0
+
+    while (auto_fix_enabled and
+           qa_status and qa_status.upper() == "FAIL" and
+           fix_attempt < max_auto_fix_retries and
+           qa_report):
+
+        fix_attempt += 1
+        logger.info(f"质检未通过，开始第 {fix_attempt}/{max_auto_fix_retries} 次自动修正...")
+
+        if log_publisher:
+            log_publisher.publish_warning(
+                task_id,
+                f"质检未通过 (得分: {qa_score})，开始第 {fix_attempt}/{max_auto_fix_retries} 次自动修正..."
+            )
+
+        update_task_progress_sync(
+            db, task_id,
+            progress=85 + fix_attempt,
+            current_step=f"自动修正中 (第 {fix_attempt} 次)..."
+        )
+
+        # 提取修正指令
+        fix_instructions = _extract_fix_instructions_from_qa_report(qa_report)
+
+        if not fix_instructions:
+            logger.info("无法提取修正指令，跳过自动修正")
+            break
+
+        # 执行自动修正
+        plot_points = _auto_fix_breakdown_sync(
+            plot_points=plot_points,
+            fix_instructions=fix_instructions,
+            chapters_text=chapters_text,
+            model_adapter=model_adapter,
+            log_publisher=log_publisher,
+            task_id=task_id
+        )
+
+        # 重新执行质检
+        logger.info(f"第 {fix_attempt} 次修正完成，重新执行质检...")
+        qa_result = _run_breakdown_qa_sync(
+            db=db,
+            task_id=task_id,
+            plot_points=plot_points,
+            chapters_text=chapters_text,
+            adapt_method=adapt_method,
+            model_adapter=model_adapter,
+            log_publisher=log_publisher
+        )
+        qa_status = qa_result.get("status", "pending")
+        qa_score = qa_result.get("score")
+        qa_report = qa_result
+
+        logger.info(f"第 {fix_attempt} 次修正后质检结果: status={qa_status}, score={qa_score}")
+
+        if qa_status and qa_status.upper() == "PASS":
+            if log_publisher:
+                log_publisher.publish_success(
+                    task_id,
+                    f"第 {fix_attempt} 次修正后质检通过！得分: {qa_score}"
+                )
+            break
+
+    # 记录最终修正次数
+    if fix_attempt > 0:
+        if qa_report is None:
+            qa_report = {}
+        qa_report["auto_fix_attempts"] = fix_attempt
+        qa_report["auto_fix_success"] = qa_status and qa_status.upper() == "PASS"
 
     update_task_progress_sync(db, task_id, progress=90, current_step=f"拆解完成，生成 {len(plot_points)} 个剧情点 (90%)")
 
@@ -761,6 +869,95 @@ def _load_resources_by_ids_sync(db: Session, resource_ids: list) -> dict:
             grouped[category].append(resource.content)
 
     return grouped
+
+
+def _extract_fix_instructions_from_qa_report(qa_report: dict) -> str:
+    """从 QA 报告中提取修正指令
+
+    将问题列表和修复指引组合成提示词，用于自动修正。
+
+    Args:
+        qa_report: QA 质检报告
+
+    Returns:
+        str: 格式化的修正指令文本
+    """
+    if not qa_report:
+        return ""
+
+    instructions_parts = []
+
+    # 1. 提取问题列表
+    issues = qa_report.get("issues", [])
+    if issues:
+        instructions_parts.append("## 发现的问题\n")
+        for i, issue in enumerate(issues, 1):
+            if isinstance(issue, str):
+                instructions_parts.append(f"{i}. {issue}")
+            elif isinstance(issue, dict):
+                desc = issue.get("description") or issue.get("issue") or str(issue)
+                target = issue.get("target", "")
+                if target:
+                    instructions_parts.append(f"{i}. {target}: {desc}")
+                else:
+                    instructions_parts.append(f"{i}. {desc}")
+        instructions_parts.append("")
+
+    # 2. 提取修复指引
+    fix_instructions = qa_report.get("fix_instructions", [])
+    if fix_instructions:
+        instructions_parts.append("## 修复指引\n")
+        if isinstance(fix_instructions, str):
+            instructions_parts.append(fix_instructions)
+        elif isinstance(fix_instructions, list):
+            for i, inst in enumerate(fix_instructions, 1):
+                if isinstance(inst, str):
+                    instructions_parts.append(f"{i}. {inst}")
+                elif isinstance(inst, dict):
+                    action = inst.get("action") or inst.get("suggestion") or str(inst)
+                    target = inst.get("target", "")
+                    if target:
+                        instructions_parts.append(f"{i}. {target}: {action}")
+                    else:
+                        instructions_parts.append(f"{i}. {action}")
+        instructions_parts.append("")
+
+    # 3. 提取改进建议
+    suggestions = qa_report.get("suggestions", [])
+    if suggestions:
+        instructions_parts.append("## 改进建议\n")
+        for i, suggestion in enumerate(suggestions, 1):
+            if isinstance(suggestion, str):
+                instructions_parts.append(f"{i}. {suggestion}")
+            elif isinstance(suggestion, dict):
+                action = suggestion.get("action") or suggestion.get("suggestion") or str(suggestion)
+                instructions_parts.append(f"{i}. {action}")
+        instructions_parts.append("")
+
+    # 4. 提取各维度的详细问题
+    dimensions = qa_report.get("dimensions", {})
+    if dimensions:
+        failed_dimensions = []
+        if isinstance(dimensions, dict):
+            for name, dim_data in dimensions.items():
+                if isinstance(dim_data, dict) and not dim_data.get("passed", dim_data.get("pass", True)):
+                    details = dim_data.get("details", "")
+                    if details:
+                        failed_dimensions.append(f"- {name}: {details}")
+        elif isinstance(dimensions, list):
+            for dim in dimensions:
+                if isinstance(dim, dict) and not dim.get("passed", dim.get("pass", True)):
+                    name = dim.get("name", "未知维度")
+                    details = dim.get("details", "")
+                    if details:
+                        failed_dimensions.append(f"- {name}: {details}")
+
+        if failed_dimensions:
+            instructions_parts.append("## 未通过的维度详情\n")
+            instructions_parts.extend(failed_dimensions)
+            instructions_parts.append("")
+
+    return "\n".join(instructions_parts)
 
 
 def _auto_fix_breakdown_sync(
@@ -1756,34 +1953,140 @@ def _run_qa_loop_sync(
         }
 
 
+def _try_fix_incomplete_json(json_str: str) -> str:
+    """尝试修复不完整的 JSON 字符串
+
+    常见问题：
+    - 缺少结尾的 } 或 ]
+    - 字符串未闭合
+    - 尾部有多余字符
+
+    Args:
+        json_str: 可能不完整的 JSON 字符串
+
+    Returns:
+        修复后的 JSON 字符串
+    """
+    import re
+
+    # 移除尾部的 ``` 标记
+    json_str = re.sub(r'`+\s*$', '', json_str)
+
+    # 统计括号
+    open_braces = json_str.count('{')
+    close_braces = json_str.count('}')
+    open_brackets = json_str.count('[')
+    close_brackets = json_str.count(']')
+
+    # 补充缺失的闭合括号
+    if open_braces > close_braces:
+        # 检查是否在字符串中间被截断（查找未闭合的引号）
+        # 简单处理：如果最后一个字符不是 } 或 ]，尝试截断到最后一个完整的值
+        last_valid_pos = max(
+            json_str.rfind('},'),
+            json_str.rfind('}]'),
+            json_str.rfind('"}'),
+            json_str.rfind('"]'),
+            json_str.rfind('" }'),
+            json_str.rfind('" ]'),
+        )
+        if last_valid_pos > 0:
+            # 截断到最后一个完整的位置
+            json_str = json_str[:last_valid_pos + 1]
+            # 重新统计
+            open_braces = json_str.count('{')
+            close_braces = json_str.count('}')
+            open_brackets = json_str.count('[')
+            close_brackets = json_str.count(']')
+
+        # 补充缺失的 }
+        json_str += '}' * (open_braces - close_braces)
+
+    if open_brackets > close_brackets:
+        json_str += ']' * (open_brackets - close_brackets)
+
+    return json_str
+
+
 def _parse_json_response_sync(response: str, default=None):
-    """解析 JSON 响应"""
+    """解析 JSON 响应（高度容错版本）
+
+    解析策略（按优先级）：
+    1. 直接解析整个响应
+    2. 提取 ```json ... ``` 代码块
+    3. 提取 ``` ... ```（无语言标记）
+    4. 提取 { ... } JSON 对象
+    5. 提取 [ ... ] JSON 数组
+    6. 尝试修复不完整的 JSON
+
+    Args:
+        response: AI 模型的响应文本
+        default: 解析失败时返回的默认值
+
+    Returns:
+        解析后的 JSON 对象，或默认值
+    """
     import re
 
     if default is None:
         default = []
 
+    # 检查响应是否为空
+    if not response or not isinstance(response, str):
+        return default
+
+    response = response.strip()
+    if not response:
+        return default
+
     try:
-        # 尝试直接解析
+        # 策略1：直接解析
         return json.loads(response)
     except json.JSONDecodeError:
         pass
 
-    # 尝试提取 JSON 代码块
+    # 策略2：提取 ```json ... ``` 代码块
     json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
     if json_match:
+        json_str = json_match.group(1).strip()
         try:
-            return json.loads(json_match.group(1))
+            return json.loads(json_str)
         except json.JSONDecodeError:
-            pass
+            json_str = _try_fix_incomplete_json(json_str)
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                pass
 
-    # 尝试提取任何 JSON 数组或对象
-    json_match = re.search(r'(\[.*\]|\{.*\})', response, re.DOTALL)
+    # 策略3：提取 ``` ... ```（无语言标记）
+    json_match = re.search(r'```\s*(.*?)\s*```', response, re.DOTALL)
     if json_match:
+        json_str = json_match.group(1).strip()
         try:
-            return json.loads(json_match.group(1))
+            return json.loads(json_str)
         except json.JSONDecodeError:
-            pass
+            json_str = _try_fix_incomplete_json(json_str)
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                pass
+
+    # 策略4：提取 { ... } 或 [ ... ]
+    json_match = re.search(r'(\{[\s\S]*\}|\[[\s\S]*\])', response)
+    if json_match:
+        json_str = json_match.group(1).strip()
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            json_str = _try_fix_incomplete_json(json_str)
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                pass
+
+    # 策略5：检查是否包含空响应关键词
+    if any(keyword in response for keyword in ['没有', '无', '空', 'null', 'None', '[]', '{}']):
+        return []
 
     # 解析失败，返回默认值
     return default

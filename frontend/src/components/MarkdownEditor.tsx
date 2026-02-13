@@ -1,10 +1,59 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import MonacoEditor from '@monaco-editor/react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkFrontmatter from 'remark-frontmatter';
 import { Tag, Tooltip } from 'antd';
-import { EyeOutlined, CodeOutlined, ExpandOutlined } from '@ant-design/icons';
+import { EyeOutlined, CodeOutlined, ExpandOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import { GlassTabs } from './ui/GlassTabs';
+
+// 提取标题生成大纲
+interface TocItem {
+  id: string;
+  text: string;
+  level: number;
+}
+
+const extractToc = (markdown: string): TocItem[] => {
+  const lines = markdown.split('\n');
+  const toc: TocItem[] = [];
+  let inCodeBlock = false;
+  let inFrontmatter = false;
+  let frontmatterCount = 0;
+
+  for (const line of lines) {
+    // 跳过 frontmatter
+    if (line.trim() === '---') {
+      frontmatterCount++;
+      if (frontmatterCount === 1) {
+        inFrontmatter = true;
+        continue;
+      } else if (frontmatterCount === 2) {
+        inFrontmatter = false;
+        continue;
+      }
+    }
+    if (inFrontmatter) continue;
+
+    // 跳过代码块
+    if (line.trim().startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      continue;
+    }
+    if (inCodeBlock) continue;
+
+    // 匹配标题
+    const match = line.match(/^(#{1,6})\s+(.+)$/);
+    if (match) {
+      const level = match[1].length;
+      const text = match[2].trim();
+      const id = text.toLowerCase().replace(/[^\w\u4e00-\u9fa5]+/g, '-');
+      toc.push({ id, text, level });
+    }
+  }
+
+  return toc;
+};
 
 // Markdown 预览样式
 const MARKDOWN_STYLES = `
@@ -158,7 +207,9 @@ interface MarkdownEditorProps {
   onChange: (value: string) => void;
   height?: string;
   showVariables?: boolean;
+  showSplitView?: boolean;
   readOnly?: boolean;
+  renderHeader?: (tabs: React.ReactNode) => React.ReactNode;
 }
 
 const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
@@ -166,9 +217,19 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   onChange,
   height = '500px',
   showVariables = true,
+  showSplitView = true,
   readOnly = false,
+  renderHeader,
 }) => {
-  const [viewMode, setViewMode] = useState<'split' | 'edit' | 'preview'>('split');
+  // 根据 showSplitView 设置默认视图模式
+  const defaultMode = showSplitView ? 'split' : 'edit';
+  const [viewMode, setViewMode] = useState<'split' | 'edit' | 'preview'>(defaultMode);
+
+  // 提取大纲
+  const toc = useMemo(() => extractToc(value), [value]);
+
+  // 大纲只在预览模式显示
+  const showToc = viewMode === 'preview';
 
   const handleEditorChange = useCallback((newValue: string | undefined) => {
     onChange(newValue || '');
@@ -178,46 +239,114 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     onChange(value + variable);
   }, [value, onChange]);
 
-  // 编辑器组件
-  const EditorPane = (
-    <div className="h-full border border-slate-700 rounded-lg overflow-hidden">
-      <MonacoEditor
-        height="100%"
-        language="markdown"
-        theme="vs-dark"
-        value={value}
-        onChange={handleEditorChange}
-        options={{
-          minimap: { enabled: false },
-          fontSize: 14,
-          wordWrap: 'on',
-          lineNumbers: 'on',
-          readOnly,
-          scrollBeyondLastLine: false,
-          automaticLayout: true,
-        }}
-      />
+  // 滚动到指定标题
+  const scrollToHeading = useCallback((id: string) => {
+    const element = document.getElementById(id);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, []);
+
+  // 大纲面板（仅预览模式显示）
+  const TocPanel = toc.length > 0 && showToc && (
+    <div className="w-48 flex-shrink-0 bg-slate-900/30 border border-slate-700/50 rounded-lg ml-4 overflow-hidden">
+      <div className="text-xs text-slate-400 p-3 border-b border-slate-700/50 flex items-center gap-1">
+        <UnorderedListOutlined /> 大纲
+      </div>
+      <div className="p-2 space-y-1 overflow-auto" style={{ maxHeight: 'calc(100% - 40px)' }}>
+        {toc.map((item, index) => (
+          <div
+            key={`${item.id}-${index}`}
+            className="text-sm text-slate-400 hover:text-cyan-400 cursor-pointer truncate transition-colors py-1.5 px-2 rounded hover:bg-slate-800/50"
+            style={{ paddingLeft: `${(item.level - 1) * 12 + 8}px` }}
+            onClick={() => scrollToHeading(item.id)}
+            title={item.text}
+          >
+            {item.text}
+          </div>
+        ))}
+      </div>
     </div>
   );
 
-  // 预览组件
-  const PreviewPane = (
-    <div
-      className="h-full border border-slate-700 rounded-lg overflow-auto bg-slate-900/50 p-4"
-      style={{ height }}
-    >
-      <style>{MARKDOWN_STYLES}</style>
-      <div className="markdown-preview">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-          {value || '*暂无内容*'}
-        </ReactMarkdown>
+  // 编辑器组件（编辑模式不显示大纲）
+  const EditorPane = () => (
+    <div className="h-full">
+      <div className="h-full border border-slate-700 rounded-lg overflow-hidden">
+        <MonacoEditor
+          height="100%"
+          language="markdown"
+          theme="vs-dark"
+          value={value}
+          onChange={handleEditorChange}
+          options={{
+            minimap: { enabled: false },
+            fontSize: 14,
+            wordWrap: 'on',
+            lineNumbers: 'on',
+            readOnly,
+            scrollBeyondLastLine: false,
+            automaticLayout: true,
+          }}
+        />
       </div>
+    </div>
+  );
+
+  // 预览组件（带大纲）
+  const PreviewPane = (
+    <div className="h-full flex overflow-hidden">
+      <div
+        className="flex-1 border border-slate-700 rounded-lg overflow-auto bg-slate-900/50 p-4"
+      >
+        <style>{MARKDOWN_STYLES}</style>
+        <div className="markdown-preview">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm, remarkFrontmatter]}
+            components={{
+              h1: ({ children }) => {
+                const text = String(children);
+                const id = text.toLowerCase().replace(/[^\w\u4e00-\u9fa5]+/g, '-');
+                return <h1 id={id}>{children}</h1>;
+              },
+              h2: ({ children }) => {
+                const text = String(children);
+                const id = text.toLowerCase().replace(/[^\w\u4e00-\u9fa5]+/g, '-');
+                return <h2 id={id}>{children}</h2>;
+              },
+              h3: ({ children }) => {
+                const text = String(children);
+                const id = text.toLowerCase().replace(/[^\w\u4e00-\u9fa5]+/g, '-');
+                return <h3 id={id}>{children}</h3>;
+              },
+              h4: ({ children }) => {
+                const text = String(children);
+                const id = text.toLowerCase().replace(/[^\w\u4e00-\u9fa5]+/g, '-');
+                return <h4 id={id}>{children}</h4>;
+              },
+              h5: ({ children }) => {
+                const text = String(children);
+                const id = text.toLowerCase().replace(/[^\w\u4e00-\u9fa5]+/g, '-');
+                return <h5 id={id}>{children}</h5>;
+              },
+              h6: ({ children }) => {
+                const text = String(children);
+                const id = text.toLowerCase().replace(/[^\w\u4e00-\u9fa5]+/g, '-');
+                return <h6 id={id}>{children}</h6>;
+              },
+            }}
+          >
+            {value || '*暂无内容*'}
+          </ReactMarkdown>
+        </div>
+      </div>
+      {TocPanel}
     </div>
   );
 
   // 变量提示面板
   const VariablesPanel = showVariables && (
-    <div className="mb-3 p-3 bg-slate-800/50 rounded-lg border border-slate-700">
+    <div className="p-3 mb-4 bg-slate-800/50 rounded-lg border border-slate-700">
       <div className="text-xs text-slate-400 mb-2">可用变量（点击插入）：</div>
       <div className="flex flex-wrap gap-2">
         {TEMPLATE_VARIABLES.map((v) => (
@@ -237,32 +366,37 @@ const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
 
   // 视图模式切换
   const viewModeItems = [
-    { key: 'split', label: <span><ExpandOutlined /> 分栏</span> },
+    ...(showSplitView ? [{ key: 'split', label: <span><ExpandOutlined /> 分栏</span> }] : []),
     { key: 'edit', label: <span><CodeOutlined /> 编辑</span> },
     { key: 'preview', label: <span><EyeOutlined /> 预览</span> },
   ];
 
+  // 标签页组件（含大纲开关）
+  const TabsComponent = (
+    <div className="flex items-center gap-2">
+      <GlassTabs
+        size="small"
+        activeKey={viewMode}
+        onChange={(key) => setViewMode(key as 'split' | 'edit' | 'preview')}
+        items={viewModeItems}
+      />
+    </div>
+  );
+
   return (
-    <div className="markdown-editor">
+    <div className="markdown-editor h-full flex flex-col">
+      {renderHeader ? renderHeader(TabsComponent) : TabsComponent}
+
       {VariablesPanel}
 
-      <div className="mb-2 flex justify-end">
-        <GlassTabs
-          size="small"
-          activeKey={viewMode}
-          onChange={(key) => setViewMode(key as 'split' | 'edit' | 'preview')}
-          items={viewModeItems}
-        />
-      </div>
-
-      <div style={{ height }}>
+      <div className="flex-1 min-h-0">
         {viewMode === 'split' && (
           <div className="grid grid-cols-2 gap-4 h-full">
-            {EditorPane}
+            {EditorPane()}
             {PreviewPane}
           </div>
         )}
-        {viewMode === 'edit' && EditorPane}
+        {viewMode === 'edit' && EditorPane()}
         {viewMode === 'preview' && PreviewPane}
       </div>
     </div>

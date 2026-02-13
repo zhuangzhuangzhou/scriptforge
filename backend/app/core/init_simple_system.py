@@ -38,6 +38,11 @@ BUILTIN_SKILLS = [
 ### 小说原文（第{start_chapter}-{end_chapter}章）
 {chapters_text}
 
+### 集数编号规则
+**重要**：本批次的集数编号必须从第 {start_episode} 集开始，依次递增。
+- 如果 start_episode=1，则本批次拆分的集数为 1, 2, 3...
+- 如果 start_episode=4，则本批次拆分的集数为 4, 5, 6...（因为前面的批次已经拆到第3集）
+
 ### 任务
 请按照上述方法论和格式模板，对原文进行剧情拆解。产出统一格式的剧情点列表。
 
@@ -48,7 +53,7 @@ BUILTIN_SKILLS = [
   "characters": ["角色A", "角色B"],
   "event": "角色A对角色B做了什么",
   "hook_type": "情绪钩子类型",
-  "episode": 集数,
+  "episode": 集数（从 {start_episode} 开始编号）,
   "status": "unused",
   "source_chapter": 来源章节号
 }}
@@ -61,7 +66,8 @@ BUILTIN_SKILLS = [
             "template": {"type": "string", "description": "格式模板"},
             "example": {"type": "string", "description": "示例"},
             "start_chapter": {"type": "integer", "description": "起始章节号"},
-            "end_chapter": {"type": "integer", "description": "结束章节号"}
+            "end_chapter": {"type": "integer", "description": "结束章节号"},
+            "start_episode": {"type": "integer", "description": "起始集数（本批次从第几集开始编号）"}
         },
         "output_schema": {
             "type": "array",
@@ -79,7 +85,7 @@ BUILTIN_SKILLS = [
                 }
             }
         },
-        "model_config": {"temperature": 0.7, "max_tokens": 4000}
+        "model_config": {"temperature": 0.7, "max_tokens": 100000}
     },
     {
         "name": "breakdown_aligner",
@@ -186,7 +192,7 @@ BUILTIN_SKILLS = [
                 "fix_instructions": {"type": "array"}
             }
         },
-        "model_config": {"temperature": 0.3, "max_tokens": 4000}
+        "model_config": {"temperature": 0.3, "max_tokens": 100000}
     },
     {
         "name": "webtoon_script",
@@ -272,7 +278,7 @@ BUILTIN_SKILLS = [
                 "hook_type": {"type": "string"}
             }
         },
-        "model_config": {"temperature": 0.7, "max_tokens": 4000}
+        "model_config": {"temperature": 0.7, "max_tokens": 100000}
     },
     {
         "name": "webtoon_aligner",
@@ -339,7 +345,7 @@ BUILTIN_SKILLS = [
                 "summary": {"type": "string"}
             }
         },
-        "model_config": {"temperature": 0.3, "max_tokens": 3000}
+        "model_config": {"temperature": 0.3, "max_tokens": 100000}
     }
 ]
 
@@ -367,7 +373,8 @@ BUILTIN_AGENTS = [
                         "template": "${context.template}",
                         "example": "${context.example}",
                         "start_chapter": "${context.start_chapter}",
-                        "end_chapter": "${context.end_chapter}"
+                        "end_chapter": "${context.end_chapter}",
+                        "start_episode": "${context.start_episode}"
                     },
                     "output_key": "plot_points",
                     "on_fail": "stop",
@@ -377,7 +384,7 @@ BUILTIN_AGENTS = [
                     "id": "qa",
                     "skill": "breakdown_aligner",
                     "inputs": {
-                        "plot_points": "${breakdown.plot_points}",
+                        "plot_points": "${plot_points}",
                         "chapters_text": "${context.chapters_text}",
                         "adapt_method": "${context.adapt_method}"
                     },
@@ -396,7 +403,8 @@ BUILTIN_AGENTS = [
                         "template": "${context.template}",
                         "example": "${context.example}",
                         "start_chapter": "${context.start_chapter}",
-                        "end_chapter": "${context.end_chapter}"
+                        "end_chapter": "${context.end_chapter}",
+                        "start_episode": "${context.start_episode}"
                     },
                     "output_key": "plot_points",
                     "on_fail": "skip",
@@ -486,7 +494,14 @@ async def init_simple_system(db: Session):
             db.add(skill)
             print(f"  ✓ 创建 Skill: {skill_data['display_name']}")
         else:
-            print(f"  - Skill 已存在: {skill_data['display_name']}")
+            # 更新已存在的内置 Skill
+            existing_skill.display_name = skill_data["display_name"]
+            existing_skill.description = skill_data["description"]
+            existing_skill.prompt_template = skill_data["prompt_template"]
+            existing_skill.input_schema = skill_data["input_schema"]
+            existing_skill.output_schema = skill_data["output_schema"]
+            existing_skill.model_config = skill_data["model_config"]
+            print(f"  ↻ 更新 Skill: {skill_data['display_name']}")
 
     await db.commit()
     print(f"✓ 已初始化 {len(BUILTIN_SKILLS)} 个内置 Skills")
@@ -517,7 +532,11 @@ async def init_simple_system(db: Session):
             db.add(agent)
             print(f"  ✓ 创建 Agent: {agent_data['display_name']}")
         else:
-            print(f"  - Agent 已存在: {agent_data['display_name']}")
+            # 更新已存在的内置 Agent
+            existing_agent.display_name = agent_data["display_name"]
+            existing_agent.description = agent_data["description"]
+            existing_agent.workflow = agent_data["workflow"]
+            print(f"  ↻ 更新 Agent: {agent_data['display_name']}")
 
     await db.commit()
     print(f"✓ 已初始化 {len(BUILTIN_AGENTS)} 个内置 Agents")

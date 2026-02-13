@@ -301,6 +301,15 @@ export const breakdownApi = {
     return api.get(`/breakdown/tasks/${taskId}`);
   },
 
+  // 获取批次当前正在执行的任务
+  getBatchCurrentTask: async (batchId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return { data: { task_id: null, status: 'pending' } };
+    }
+    return api.get(`/breakdown/batch/${batchId}/current-task`);
+  },
+
   // 获取任务执行日志（包括 LLM 调用详情）
   getTaskLogs: async (taskId: string) => {
     if (USE_MOCK) {

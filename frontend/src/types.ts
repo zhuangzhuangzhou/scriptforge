@@ -90,10 +90,13 @@ export interface QADimension {
 export interface QAReport {
   status: 'PASS' | 'FAIL';
   score: number;
-  dimensions: Record<string, QADimension>;
-  issues: string[];
-  suggestions: string[];
-  fix_instructions?: string;
+  dimensions: Record<string, QADimension> | QADimension[];
+  issues: string[] | { description?: string; issue?: string; target?: string }[];
+  suggestions: string[] | { action?: string; suggestion?: string }[];
+  fix_instructions?: string | { action?: string; suggestion?: string; target?: string }[];
+  // 自动修正相关
+  auto_fix_attempts?: number;
+  auto_fix_success?: boolean;
 }
 
 export interface PlotBreakdown {

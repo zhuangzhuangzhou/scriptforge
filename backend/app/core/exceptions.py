@@ -102,6 +102,26 @@ class DatabaseError(AITaskException):
         super().__init__(message, code="DATABASE_ERROR")
 
 
+class TokenLimitExceededError(AITaskException):
+    """Token 超限错误
+
+    输入或输出超过模型的 Token 限制。
+    """
+
+    def __init__(self, message: str, limit: int = None, actual: int = None):
+        super().__init__(message, code="TOKEN_LIMIT_EXCEEDED")
+        self.limit = limit
+        self.actual = actual
+
+    def to_dict(self) -> dict:
+        return {
+            "code": self.code,
+            "message": self.message,
+            "limit": self.limit,
+            "actual": self.actual
+        }
+
+
 # 异常分类辅助函数
 
 def classify_exception(error: Exception) -> AITaskException:
@@ -119,29 +139,46 @@ def classify_exception(error: Exception) -> AITaskException:
 
     # 根据异常类型进行分类
     error_type = type(error).__name__
-    error_message = str(error)
+    error_message = str(error).lower()
 
     # 网络相关错误 - 可重试
     if error_type in ("TimeoutError", "ConnectionError", "ConnectionRefusedError"):
-        return RetryableError(f"网络连接失败: {error_message}")
+        return RetryableError(f"网络连接失败: {str(error)}")
+
+    # Token 超限错误 - 不可重试
+    token_limit_keywords = [
+        "context_length_exceeded",
+        "context length",
+        "maximum context length",
+        "token limit",
+        "max_tokens",
+        "too many tokens",
+        "input is too long",
+        "prompt is too long",
+        "exceeds the model's maximum",
+    ]
+    if any(keyword in error_message for keyword in token_limit_keywords):
+        return TokenLimitExceededError(
+            f"内容超过模型 Token 限制，请减少输入内容或分批处理: {str(error)}"
+        )
 
     # OpenAI/API相关错误 - 可能是配额或可重试
-    if "rate_limit" in error_message.lower() or "quota" in error_message.lower():
-        return QuotaExceededError(f"API配额不足: {error_message}")
+    if "rate_limit" in error_message or "quota" in error_message:
+        return QuotaExceededError(f"API配额不足: {str(error)}")
 
-    if "timeout" in error_message.lower():
-        return RetryableError(f"API请求超时: {error_message}")
+    if "timeout" in error_message:
+        return RetryableError(f"API请求超时: {str(error)}")
 
     # JSON解析错误 - 可能是配置问题
     if isinstance(error, (ValueError, TypeError)):
-        return ValidationError(f"数据验证失败: {error_message}")
+        return ValidationError(f"数据验证失败: {str(error)}")
 
     # 数据库错误
-    if "sqlalchemy" in error_message.lower() or "database" in error_message.lower():
-        return DatabaseError(f"数据库操作失败: {error_message}")
+    if "sqlalchemy" in error_message or "database" in error_message:
+        return DatabaseError(f"数据库操作失败: {str(error)}")
 
     # 默认返回通用错误
-    return AITaskException(f"任务执行失败: {error_message}")
+    return AITaskException(f"任务执行失败: {str(error)}")
 
 
 # 可重试错误的来源标识
@@ -157,4 +194,5 @@ NON_RETRYABLE_ERROR_TYPES = (
     QuotaExceededError,
     ValidationError,
     ConfigurationError,
+    TokenLimitExceededError,
 )

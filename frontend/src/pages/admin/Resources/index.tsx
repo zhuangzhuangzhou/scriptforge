@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Tag, Space, message, Modal, Switch } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
 import api from '../../../services/api';
 import { GlassCard } from '../../../components/ui/GlassCard';
 import { GlassTable } from '../../../components/ui/GlassTable';
 import { GlassInput } from '../../../components/ui/GlassInput';
 import { GlassTabs } from '../../../components/ui/GlassTabs';
+import ResourceEditorModal from './ResourceEditorModal';
 
 interface Resource {
   id: string;
@@ -41,7 +41,8 @@ const ResourcesPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [activeTab, setActiveTab] = useState('all');
-  const navigate = useNavigate();
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editingResourceId, setEditingResourceId] = useState<string | null>(null);
 
   // 加载资源列表
   const loadResources = async () => {
@@ -64,12 +65,24 @@ const ResourcesPage: React.FC = () => {
     loadResources();
   }, [searchText, activeTab]);
 
+  // 打开编辑弹窗
+  const openEditor = (resourceId?: string) => {
+    setEditingResourceId(resourceId || null);
+    setEditorOpen(true);
+  };
+
+  // 关闭编辑弹窗
+  const closeEditor = () => {
+    setEditorOpen(false);
+    setEditingResourceId(null);
+  };
+
   // 复制资源
   const handleClone = async (resource: Resource) => {
     try {
       const response = await api.post(`/ai-resources/${resource.id}/clone`);
       message.success('复制成功，可以编辑自己的版本');
-      navigate(`/admin/resources/${response.data.id}/edit`);
+      openEditor(response.data.id);
     } catch (error: any) {
       message.error(error.response?.data?.detail || '复制失败');
     }
@@ -172,7 +185,7 @@ const ResourcesPage: React.FC = () => {
                 type="link"
                 size="small"
                 icon={<EditOutlined />}
-                onClick={() => navigate(`/admin/resources/${record.id}/edit`)}
+                onClick={() => openEditor(record.id)}
               >
                 编辑
               </Button>
@@ -191,7 +204,7 @@ const ResourcesPage: React.FC = () => {
                 type="link"
                 size="small"
                 icon={<EditOutlined />}
-                onClick={() => navigate(`/admin/resources/${record.id}/edit`)}
+                onClick={() => openEditor(record.id)}
               >
                 编辑
               </Button>
@@ -227,7 +240,7 @@ const ResourcesPage: React.FC = () => {
           <Button
             type="primary"
             icon={<PlusOutlined />}
-            onClick={() => navigate('/admin/resources/new')}
+            onClick={() => openEditor()}
           >
             新建资源
           </Button>
@@ -257,6 +270,13 @@ const ResourcesPage: React.FC = () => {
           }}
         />
       </GlassCard>
+
+      <ResourceEditorModal
+        open={editorOpen}
+        resourceId={editingResourceId}
+        onClose={closeEditor}
+        onSuccess={loadResources}
+      />
     </div>
   );
 };

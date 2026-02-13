@@ -393,6 +393,28 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 if (newItems.length > 0 && !selectedBatch && pageNum === 1) {
                     setSelectedBatch(newItems[0]);
                 }
+
+                // 自动检测正在处理的批次，连接 console
+                if (pageNum === 1 && !breakdownTaskId) {
+                    const processingBatch = newItems.find(
+                        (b: Batch) => b.breakdown_status === 'processing' || b.breakdown_status === 'queued'
+                    );
+                    if (processingBatch) {
+                        // 调用接口获取当前任务 ID
+                        try {
+                            const taskRes = await breakdownApi.getBatchCurrentTask(processingBatch.id);
+                            const taskId = taskRes.data?.task_id;
+                            if (taskId) {
+                                console.log('[Workspace] 检测到正在处理的批次，自动连接 console:', processingBatch.batch_number, taskId);
+                                setSelectedBatch(processingBatch);
+                                setBreakdownTaskId(taskId);
+                                addLog('info', `检测到批次 ${processingBatch.batch_number} 正在拆解中，已自动连接...`);
+                            }
+                        } catch (err) {
+                            console.warn('[Workspace] 获取批次任务 ID 失败:', err);
+                        }
+                    }
+                }
             }
 
             setBatchHasMore((pageNum * 20) < total);
@@ -1113,7 +1135,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                     <div className="flex flex-col gap-1.5 w-40 group">
                                         <div className="flex justify-between items-end px-0.5">
                                             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest group-hover:text-slate-400 transition-colors">
-                                                {isAllBreakdownRunning ? 'Processing' : 'Breakdown Status'}
+                                                {isAllBreakdownRunning ? '处理中' : '拆解进度'}
                                             </span>
                                             <span className={`text-[10px] font-mono font-bold ${isAllBreakdownRunning ? 'text-cyan-400' : 'text-emerald-500'}`}>
                                                 {Math.round((batches.filter(b => b.breakdown_status === 'completed').length / batches.length) * 100)}%
@@ -1562,7 +1584,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 closeIcon={<X size={18} className="text-slate-500 hover:text-white transition-colors" />}
                 className="error-modal"
                 styles={{
-                    mask: { backgroundColor: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(4px)' },
+                    mask: { backgroundColor: 'rgba(0, 0, 0, 0.4)', backdropFilter: 'blur(2px)' },
                     content: {
                         backgroundColor: '#0f172a',
                         border: '1px solid #334155',
@@ -1615,17 +1637,6 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                 className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg text-sm font-medium transition-all hover:scale-[1.02]"
                             >
                                 升级套餐
-                            </button>
-                        )}
-                        {parsedError?.action === 'configure' && (
-                            <button
-                                onClick={() => {
-                                    setShowErrorModal(false);
-                                    navigate('/admin/ai-config');
-                                }}
-                                className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium border border-slate-700 transition-colors"
-                            >
-                                修改配置
                             </button>
                         )}
                         {parsedError?.canRetry && (

@@ -13,6 +13,8 @@ class BaseModelAdapter(ABC):
         self.api_key = api_key
         self.model_name = model_name
         self.config = kwargs
+        # 模型默认配置（max_output_tokens, temperature_default 等）
+        self.model_config = kwargs.get("model_config", {})
         # 可选的数据库会话，用于记录日志
         self._db: Optional[Session] = kwargs.get("db")
         # 是否启用日志记录

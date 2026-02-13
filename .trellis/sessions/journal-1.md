@@ -834,3 +834,159 @@ gh issue create -t "标题" -b "描述内容" -l "bug"
 
 ---
 
+
+## [20260213-202059] 修复 Breakdown QA 质检流程
+
+**时间**: 2026-02-13 20:20:59
+
+**提交**:
+- `5ae4df6` - fix: LLM 日志记录功能修复与增强
+
+
+## 问题
+
+调用 `/breakdown/start` 接口后，拆解成功但 QA 质检没有执行：
+- `qa_status` 始终为 `pending`
+- `qa_score` 和 `qa_report` 为 `None`
+
+## 根因分析
+
+1. **Agent 失败回退到 Skill 模式时**：完全跳过 QA 环节
+2. **Agent 成功但 QA 步骤失败时**：配置了 `on_fail: "skip"` 静默跳过
+3. **`breakdown_aligner` skill 配置不完整**：`prompt_template=None`，`is_template_based=False`
+
+## 修复内容
+
+### 代码修改 (`breakdown_tasks.py`)
+- 添加 `_run_breakdown_qa_sync()` 函数，专门执行 QA 质检
+- Skill 模式回退后强制执行 QA
+- Agent 模式无 QA 结果时补充执行
+
+### 数据库修复
+- 修复 `breakdown_aligner` skill 配置
+- 设置 `is_template_based=True`
+- 填充完整的 `prompt_template`（8维度质检）
+
+### 文档
+- 创建 `docs/05-features/ai-workflow/breakdown-start-flow.md`
+- 详细记录 `/breakdown/start` 接口完整执行流程
+
+## 修改文件
+
+| 文件 | 变更 |
+|------|------|
+| `backend/app/tasks/breakdown_tasks.py` | +120 行，添加强制 QA 逻辑 |
+| `docs/05-features/ai-workflow/breakdown-start-flow.md` | +473 行，流程文档 |
+
+---
+
+
+## [20260214-004828] ResourceEditor 页面重构为弹窗组件
+
+**时间**: 2026-02-14 00:48:28
+
+**提交**:
+- `222841f` - refactor: ResourceEditor 页面按 Glass UI 规范重构
+
+
+**摘要**: 将资源编辑器从独立页面重构为弹窗组件，并增强 MarkdownEditor 功能
+
+
+## 任务目标
+
+1. 将 ResourceEditor 从独立页面改为弹窗组件
+2. MarkdownEditor 增强：添加 showVariables、showSplitView 配置
+3. 优化大纲面板样式
+4. 资源列表页直接弹出编辑
+
+
+## 完成功能
+
+| 功能 | 说明 |
+|------|------|
+| **左右分栏布局** | 基本信息 + 内容编辑器分离，信息左栏固定，内容右栏自适应 |
+| **GlassAlert 组件** | 新建深色主题提示框组件，支持 info/warning/error 三种类型 |
+| **Markdown 预览样式** | 自定义 Markdown 预览样式，支持换行、代码高亮、表格、引用块等 |
+| **模板变量更新** | 从小说相关变量改为资源文档通用变量（项目信息、系统信息、统计数据） |
+| **GlassTabs 替代** | MarkdownEditor 中原生 Tabs 替换为 GlassTabs 组件 |
+
+
+## 技术细节
+
+**MarkdownEditor 增强**:
+- 新增 `showVariables` 和 `showSplitView` Props
+- 添加完整 Markdown 预览样式（`MARKDOWN_STYLES` 常量）
+- 模板变量重构为 10 个通用变量
+- 使用 GlassTabs 替代原生 Tabs
+
+**ResourceEditor 布局重构**:
+- 采用左右分栏布局：左侧基本信息（col-span-1），右侧内容编辑器（col-span-2）
+- 表单样式统一（`FORM_STYLES` 常量）
+- 保存按钮移至左侧基本信息栏
+- 内容编辑器高度自适应：`calc(100vh - 280px)`
+
+**GlassAlert 组件**:
+```typescript
+const GlassAlert: React.FC<{
+  type?: 'info' | 'warning' | 'error';
+  title: string;
+  description?: string;
+}> = ({ type = 'info', title, description }) => { ... }
+```
+
+
+## 修改文件
+
+| 文件 | 变更 |
+|------|------|
+| `frontend/src/components/MarkdownEditor.tsx` | +161 行，添加 Markdown 样式、GlassTabs、通用变量 |
+| `frontend/src/pages/admin/Resources/ResourceEditor.tsx` | +293 行，左右分栏布局、GlassAlert 组件 |
+
+
+## 代码统计
+
+- **提交哈希**: 222841f
+- **新增代码**: ~454 行
+- **修改文件**: 2 个
+
+
+## 测试验证
+
+- ✅ ResourceEditor 页面按 Glass UI 规范渲染
+- ✅ Markdown 预览样式正常显示
+- ✅ 模板变量点击插入功能正常
+- ✅ 左右分栏布局响应式适配
+
+
+---
+
+
+
+
+## [20260214-010901] 日志详情 Drawer 改为 Modal
+
+**时间**: 2026-02-14 01:09:01
+
+**提交**:
+- `ae4c657` - refactor: 前端任务详情组件从 Drawer 改为 Modal
+
+
+## 任务目标
+将 admin/logs 路径下的日志查看详情从抽屉式（Drawer）改为弹窗式（Modal）显示
+
+## 修改内容
+
+| 文件 | 变更 |
+|------|------|
+| `TaskDetailModal.tsx` | 新建，替代 TaskDetailDrawer.tsx |
+| `LLMLogsTab.tsx` | Drawer → GlassModal |
+| `index.tsx` | 组件名和状态变量更新 |
+| `TaskDetailDrawer.tsx` | 已删除 |
+
+## 规范更新
+更新 `.trellis/spec/frontend/index.md`，添加：
+- GlassModal 替代 Drawer 的说明
+- Drawer → GlassModal 迁移指南（属性映射表 + 代码示例）
+
+---
+

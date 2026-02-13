@@ -45,6 +45,13 @@ interface QAReportModalProps {
 const QAReportModal: React.FC<QAReportModalProps> = ({ report, onClose }) => {
   if (!report) return null;
 
+  // 兼容数组和对象两种 dimensions 格式
+  const dimensionsArray = Array.isArray(report.dimensions)
+    ? report.dimensions
+    : report.dimensions && typeof report.dimensions === 'object'
+    ? Object.entries(report.dimensions).map(([key, value]) => ({ name: key, ...value }))
+    : [];
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <motion.div
@@ -54,73 +61,84 @@ const QAReportModal: React.FC<QAReportModalProps> = ({ report, onClose }) => {
         className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden shadow-2xl"
       >
         {/* 头部 */}
-        <div className="flex items-center justify-between p-6 border-b border-slate-700">
-          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
-            <BarChart3 className="w-5 h-5 text-cyan-400" />
+        <div className="flex items-center justify-between p-4 border-b border-slate-700">
+          <h3 className="text-base font-semibold text-white flex items-center gap-2">
+            <BarChart3 className="w-4 h-4 text-cyan-400" />
             质检报告详情
           </h3>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-slate-800 rounded-lg transition-colors"
+            className="p-1.5 hover:bg-slate-800 rounded-lg transition-colors"
           >
-            <X className="w-5 h-5 text-slate-400" />
+            <X className="w-4 h-4 text-slate-400" />
           </button>
         </div>
 
         {/* 内容 */}
-        <div className="p-6 overflow-y-auto max-h-[60vh] space-y-6">
+        <div className="p-4 overflow-y-auto max-h-[60vh] space-y-4">
           {/* 整体评分 */}
-          <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
+          <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${
+              <div className="flex items-center gap-3">
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
                   report.status === 'PASS'
                     ? 'bg-green-500/20 text-green-400'
                     : 'bg-red-500/20 text-red-400'
                 }`}>
-                  <span className="text-2xl font-black">{report.score}</span>
+                  <span className="text-xl font-black">{report.score}</span>
                 </div>
                 <div>
-                  <p className="text-sm text-slate-400">质检总分</p>
-                  <p className="text-xs text-slate-500">满分 100 分</p>
+                  <p className="text-xs text-slate-400">质检总分</p>
+                  <p className="text-[10px] text-slate-500">满分 100 分</p>
                 </div>
               </div>
-              <div className={`px-4 py-2 rounded-full text-sm font-medium ${
-                report.status === 'PASS'
-                  ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                  : 'bg-red-500/20 text-red-400 border border-red-500/30'
-              }`}>
-                {report.status === 'PASS' ? '质检通过' : '质检未通过'}
+              <div className="flex items-center gap-2">
+                {/* 自动修正次数 */}
+                {report.auto_fix_attempts !== undefined && report.auto_fix_attempts > 0 && (
+                  <div className={`px-2 py-1 rounded-full text-[10px] font-medium ${
+                    report.auto_fix_success
+                      ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                      : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                  }`}>
+                    已修正 {report.auto_fix_attempts} 次
+                  </div>
+                )}
+                <div className={`px-3 py-1.5 rounded-full text-xs font-medium ${
+                  report.status === 'PASS'
+                    ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                    : 'bg-red-500/20 text-red-400 border border-red-500/30'
+                }`}>
+                  {report.status === 'PASS' ? '质检通过' : '质检未通过'}
+                </div>
               </div>
             </div>
           </div>
 
           {/* 各维度得分 */}
-          {report.dimensions && Object.keys(report.dimensions).length > 0 && (
-            <div className="space-y-4">
-              <h4 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
-                <BarChart3 className="w-4 h-4" />
+          {dimensionsArray.length > 0 && (
+            <div className="space-y-3">
+              <h4 className="text-xs font-semibold text-slate-300 flex items-center gap-2">
+                <BarChart3 className="w-3.5 h-3.5" />
                 各维度评分
               </h4>
-              <div className="grid gap-4">
-                {Object.entries(report.dimensions).map(([key, dimension]) => (
-                  <div key={key} className="bg-slate-800/30 border border-slate-700/50 rounded-xl p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="text-sm font-medium text-slate-200">{key}</span>
+              <div className="grid gap-3">
+                {dimensionsArray.map((dimension: any, idx: number) => (
+                  <div key={idx} className="bg-slate-800/30 border border-slate-700/50 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-medium text-slate-200">{dimension.name}</span>
                       <div className="flex items-center gap-2">
-                        <span className={`text-xs px-2 py-1 rounded-full ${
-                          dimension.pass
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                          dimension.passed || dimension.pass
                             ? 'bg-green-500/20 text-green-400'
                             : 'bg-red-500/20 text-red-400'
                         }`}>
-                          {dimension.pass ? '通过' : '未通过'}
+                          {dimension.passed || dimension.pass ? '通过' : '未通过'}
                         </span>
-                        <span className="text-lg font-bold text-cyan-400">{dimension.score}</span>
-                        <span className="text-xs text-slate-500">/ 100</span>
+                        <span className="text-sm font-bold text-cyan-400">{dimension.score}</span>
                       </div>
                     </div>
                     {/* 进度条 */}
-                    <div className="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
+                    <div className="w-full bg-slate-700 h-1.5 rounded-full overflow-hidden">
                       <div
                         className={`h-full rounded-full transition-all ${
                           dimension.score >= 80
@@ -132,16 +150,9 @@ const QAReportModal: React.FC<QAReportModalProps> = ({ report, onClose }) => {
                         style={{ width: `${dimension.score}%` }}
                       />
                     </div>
-                    {/* 问题列表 */}
-                    {dimension.issues && dimension.issues.length > 0 && (
-                      <div className="mt-3 space-y-2">
-                        {dimension.issues.map((issue, idx) => (
-                          <div key={idx} className="flex items-start gap-2 text-xs text-red-300 bg-red-500/10 border border-red-500/20 rounded-lg p-2">
-                            <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                            <span>{issue}</span>
-                          </div>
-                        ))}
-                      </div>
+                    {/* 详情 */}
+                    {dimension.details && (
+                      <p className="mt-2 text-[10px] text-slate-400">{dimension.details}</p>
                     )}
                   </div>
                 ))}
@@ -151,16 +162,16 @@ const QAReportModal: React.FC<QAReportModalProps> = ({ report, onClose }) => {
 
           {/* 问题列表 */}
           {report.issues && report.issues.length > 0 && (
-            <div className="space-y-3">
-              <h4 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
-                <XCircle className="w-4 h-4 text-red-400" />
+            <div className="space-y-2">
+              <h4 className="text-xs font-semibold text-slate-300 flex items-center gap-2">
+                <XCircle className="w-3.5 h-3.5 text-red-400" />
                 问题列表
               </h4>
-              <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 space-y-2">
-                {report.issues.map((issue, idx) => (
-                  <div key={idx} className="flex items-start gap-2 text-sm text-red-300">
-                    <span className="text-red-500 font-mono text-xs mt-0.5">{idx + 1}.</span>
-                    <span>{issue}</span>
+              <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 space-y-1.5">
+                {report.issues.map((issue: any, idx: number) => (
+                  <div key={idx} className="flex items-start gap-2 text-xs text-red-300">
+                    <span className="text-red-500 font-mono text-[10px] mt-0.5">{idx + 1}.</span>
+                    <span>{typeof issue === 'string' ? issue : issue.description || JSON.stringify(issue)}</span>
                   </div>
                 ))}
               </div>
@@ -169,16 +180,16 @@ const QAReportModal: React.FC<QAReportModalProps> = ({ report, onClose }) => {
 
           {/* 改进建议 */}
           {report.suggestions && report.suggestions.length > 0 && (
-            <div className="space-y-3">
-              <h4 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
-                <Lightbulb className="w-4 h-4 text-amber-400" />
+            <div className="space-y-2">
+              <h4 className="text-xs font-semibold text-slate-300 flex items-center gap-2">
+                <Lightbulb className="w-3.5 h-3.5 text-amber-400" />
                 改进建议
               </h4>
-              <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 space-y-2">
-                {report.suggestions.map((suggestion, idx) => (
-                  <div key={idx} className="flex items-start gap-2 text-sm text-amber-300">
-                    <span className="text-amber-500 font-mono text-xs mt-0.5">{idx + 1}.</span>
-                    <span>{suggestion}</span>
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 space-y-1.5">
+                {report.suggestions.map((suggestion: any, idx: number) => (
+                  <div key={idx} className="flex items-start gap-2 text-xs text-amber-300">
+                    <span className="text-amber-500 font-mono text-[10px] mt-0.5">{idx + 1}.</span>
+                    <span>{typeof suggestion === 'string' ? suggestion : suggestion.action || JSON.stringify(suggestion)}</span>
                   </div>
                 ))}
               </div>
@@ -187,21 +198,32 @@ const QAReportModal: React.FC<QAReportModalProps> = ({ report, onClose }) => {
 
           {/* 修复指引 */}
           {report.fix_instructions && (
-            <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4">
-              <h4 className="text-sm font-semibold text-blue-400 flex items-center gap-2 mb-2">
-                <CheckCircle className="w-4 h-4" />
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3">
+              <h4 className="text-xs font-semibold text-blue-400 flex items-center gap-2 mb-2">
+                <CheckCircle className="w-3.5 h-3.5" />
                 修复指引
               </h4>
-              <p className="text-sm text-blue-300 leading-relaxed">{report.fix_instructions}</p>
+              {Array.isArray(report.fix_instructions) ? (
+                <div className="space-y-1.5">
+                  {report.fix_instructions.map((inst: any, idx: number) => (
+                    <div key={idx} className="text-xs text-blue-300">
+                      <span className="font-mono text-[10px] text-blue-500">{idx + 1}.</span>{' '}
+                      {typeof inst === 'string' ? inst : inst.action || JSON.stringify(inst)}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-blue-300 leading-relaxed">{report.fix_instructions}</p>
+              )}
             </div>
           )}
         </div>
 
         {/* 底部 */}
-        <div className="flex justify-end gap-3 p-6 border-t border-slate-700 bg-slate-900/50">
+        <div className="flex justify-end gap-3 p-4 border-t border-slate-700 bg-slate-900/50">
           <button
             onClick={onClose}
-            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-medium rounded-lg border border-slate-700 transition-colors"
+            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition-colors"
           >
             关闭
           </button>
@@ -274,40 +296,40 @@ const PlotPointTableRow: React.FC<PlotPointTableRowProps> = ({
 }) => {
   return (
     <tr className="border-b border-slate-700/50 hover:bg-slate-800/30 transition-colors">
-      <td className="px-4 py-3 text-center">
-        <span className="text-cyan-400 font-semibold">{point.id}</span>
+      <td className="px-3 py-2 text-center">
+        <span className="text-cyan-400 font-semibold text-xs">{point.id}</span>
       </td>
-      <td className="px-4 py-3">
-        <span className="text-sm text-slate-300 line-clamp-2">{point.scene}</span>
+      <td className="px-3 py-2">
+        <span className="text-xs text-slate-300 line-clamp-2">{point.scene}</span>
       </td>
-      <td className="px-4 py-3">
+      <td className="px-3 py-2">
         <div className="flex flex-wrap gap-1 max-w-[150px]">
           {point.characters && point.characters.length > 0 ? (
             point.characters.map((char, idx) => (
-              <span key={idx} className="text-xs px-2 py-0.5 bg-cyan-500/20 text-cyan-300 rounded border border-cyan-500/30 truncate max-w-[80px]" title={char}>
+              <span key={idx} className="text-[10px] px-1.5 py-0.5 bg-cyan-500/20 text-cyan-300 rounded border border-cyan-500/30 truncate max-w-[80px]" title={char}>
                 {char}
               </span>
             ))
           ) : (
-            <span className="text-slate-500 text-sm">-</span>
+            <span className="text-slate-500 text-xs">-</span>
           )}
         </div>
       </td>
-      <td className="px-4 py-3">
-        <span className="text-sm text-slate-300 line-clamp-2">{point.event}</span>
+      <td className="px-3 py-2">
+        <span className="text-xs text-slate-300 line-clamp-2">{point.event}</span>
       </td>
-      <td className="px-4 py-3">
-        <span className="text-xs px-2 py-1 bg-amber-500/20 text-amber-300 rounded border border-amber-500/30">
+      <td className="px-3 py-2">
+        <span className="text-[10px] px-1.5 py-0.5 bg-amber-500/20 text-amber-300 rounded border border-amber-500/30">
           {point.hook_type}
         </span>
       </td>
-      <td className="px-4 py-3 text-center">
-        <span className="text-sm text-slate-300">第 {point.episode} 集</span>
+      <td className="px-3 py-2 text-center">
+        <span className="text-xs text-slate-300">第 {point.episode} 集</span>
       </td>
-      <td className="px-4 py-3 text-center">
+      <td className="px-3 py-2 text-center">
         <button
           onClick={() => onStatusChange?.(point.id, point.status === 'used' ? 'unused' : 'used')}
-          className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+          className={`px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors ${
             point.status === 'used'
               ? 'bg-green-500/20 text-green-400 border border-green-500/30'
               : 'bg-slate-600/20 text-slate-400 border border-slate-600/30'
@@ -316,8 +338,8 @@ const PlotPointTableRow: React.FC<PlotPointTableRowProps> = ({
           {point.status === 'used' ? '已用' : '未用'}
         </button>
       </td>
-      <td className="px-4 py-3 text-center">
-        <span className="text-slate-500 text-sm">待接入</span>
+      <td className="px-3 py-2 text-center">
+        <span className="text-slate-500 text-xs">待接入</span>
       </td>
     </tr>
   );
@@ -658,51 +680,37 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   if (isV2Format && breakdownResult?.plot_points) {
     return (
       <>
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {/* 标题栏 */}
           <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-bold text-slate-200">剧情拆解结果</h2>
-              <p className="text-xs text-slate-500 mt-1">V2 统一剧情点格式</p>
-            </div>
+            <h2 className="text-lg font-bold text-slate-200">剧情拆解结果</h2>
           </div>
-
-          {/* 一致性评分卡片 */}
-          {breakdownResult.consistency_score !== undefined && breakdownResult.consistency_score !== null && (
-            <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-emerald-400 flex items-center gap-2">
-                  <Activity className="w-5 h-5" />
-                  一致性评分
-                </h3>
-                <div className="text-2xl font-black text-emerald-400">
-                  {breakdownResult.consistency_score}
-                  <span className="text-sm text-slate-500 ml-1">/ 100</span>
-                </div>
-              </div>
-              <div className="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-emerald-500 to-cyan-500"
-                  style={{ width: `${breakdownResult.consistency_score}%` }}
-                />
-              </div>
-            </div>
-          )}
 
           {/* 质检信息卡片 */}
           {breakdownResult.qa_status && (
-            <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
+            <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-purple-400 flex items-center gap-2">
-                  <BarChart3 className="w-5 h-5" />
+                <h3 className="text-sm font-semibold text-purple-400 flex items-center gap-2">
+                  <BarChart3 className="w-4 h-4" />
                   质检结果
+                  {/* 自动修正次数标签 */}
+                  {breakdownResult.qa_report?.auto_fix_attempts !== undefined &&
+                   breakdownResult.qa_report.auto_fix_attempts > 0 && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                      breakdownResult.qa_report.auto_fix_success
+                        ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                        : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                    }`}>
+                      已修正 {breakdownResult.qa_report.auto_fix_attempts} 次
+                    </span>
+                  )}
                 </h3>
                 <div className="flex items-center gap-3">
                   {/* 质检分数 */}
                   {breakdownResult.qa_score !== undefined && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-slate-400">分数:</span>
-                      <span className={`text-lg font-black ${
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-slate-400">分数:</span>
+                      <span className={`text-sm font-black ${
                         breakdownResult.qa_score >= 80
                           ? 'text-green-400'
                           : breakdownResult.qa_score >= 60
@@ -714,25 +722,39 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
                     </div>
                   )}
                   {/* 质检状态 */}
-                  <div className={`px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 ${
+                  <div className={`px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1 ${
                     breakdownResult.qa_status === 'PASS'
                       ? 'bg-green-500/20 text-green-400 border border-green-500/30'
                       : breakdownResult.qa_status === 'FAIL'
                       ? 'bg-red-500/20 text-red-400 border border-red-500/30'
                       : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
                   }`}>
-                    {breakdownResult.qa_status === 'PASS' && <CheckCircle className="w-3.5 h-3.5" />}
-                    {breakdownResult.qa_status === 'FAIL' && <XCircle className="w-3.5 h-3.5" />}
-                    {breakdownResult.qa_status === 'pending' && <Clock className="w-3.5 h-3.5" />}
-                    {breakdownResult.qa_status === 'PASS' ? '质检通过' : breakdownResult.qa_status === 'FAIL' ? '质检未通过' : '待质检'}
+                    {breakdownResult.qa_status === 'PASS' && <CheckCircle className="w-3 h-3" />}
+                    {breakdownResult.qa_status === 'FAIL' && <XCircle className="w-3 h-3" />}
+                    {breakdownResult.qa_status === 'pending' && <Clock className="w-3 h-3" />}
+                    {breakdownResult.qa_status === 'PASS' ? '通过' : breakdownResult.qa_status === 'FAIL' ? '未通过' : '待质检'}
                   </div>
                   {/* 查看报告按钮 */}
                   {breakdownResult.qa_report && (
                     <button
                       onClick={() => setQaReportModalOpen(true)}
-                      className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded-lg border border-slate-600 transition-colors"
+                      className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded-lg border border-slate-600 transition-colors"
                     >
                       查看报告
+                    </button>
+                  )}
+                  {/* 手动重新生成按钮 - 当自动修正失败后显示 */}
+                  {breakdownResult.qa_status === 'FAIL' &&
+                   breakdownResult.qa_report?.auto_fix_attempts !== undefined &&
+                   breakdownResult.qa_report.auto_fix_attempts >= 3 &&
+                   !breakdownResult.qa_report.auto_fix_success &&
+                   onStartBreakdown && (
+                    <button
+                      onClick={() => onStartBreakdown(selectedBatch!.id)}
+                      className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs rounded-lg border border-amber-500/30 transition-colors flex items-center gap-1"
+                    >
+                      <Play className="w-3 h-3" />
+                      重新生成
                     </button>
                   )}
                 </div>
@@ -741,23 +763,23 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
           )}
 
           {/* 剧情点统计 */}
-          <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
+          <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-cyan-400 flex items-center gap-2">
-                <List className="w-5 h-5" />
+              <h3 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
+                <List className="w-4 h-4" />
                 剧情点列表
               </h3>
-              <div className="flex items-center gap-4 text-sm">
+              <div className="flex items-center gap-3 text-xs">
                 <span className="text-slate-400">
-                  共 <span className="text-cyan-400 font-semibold">{breakdownResult.plot_points.length}</span> 个剧情点
+                  共 <span className="text-cyan-400 font-semibold">{breakdownResult.plot_points.length}</span> 个
                 </span>
-                <span className="text-slate-500">|</span>
+                <span className="text-slate-600">|</span>
                 <span className="text-slate-400">
                   已用 <span className="text-green-400 font-semibold">
                     {breakdownResult.plot_points.filter(p => p.status === 'used').length}
                   </span>
                 </span>
-                <span className="text-slate-500">|</span>
+                <span className="text-slate-600">|</span>
                 <span className="text-slate-400">
                   未用 <span className="text-slate-400 font-semibold">
                     {breakdownResult.plot_points.filter(p => p.status === 'unused').length}
@@ -810,9 +832,9 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
             </table>
 
             {/* 表格底部提示 */}
-            <div className="px-4 py-3 bg-slate-900/30 border-t border-slate-700/50">
-              <p className="text-xs text-slate-500">
-                提示：点击状态可以切换"已用/未用"标记，用于标记该剧情点是否已被剧本使用。
+            <div className="px-4 py-2 bg-slate-900/30 border-t border-slate-700/50">
+              <p className="text-[10px] text-slate-500">
+                提示：点击状态可切换"已用/未用"标记
               </p>
             </div>
           </div>

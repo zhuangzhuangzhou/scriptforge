@@ -235,6 +235,51 @@ async def start_breakdown(
     return {"task_id": str(task.id), "status": "queued"}
 
 
+@router.get("/batch/{batch_id}/current-task")
+async def get_batch_current_task(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取批次当前正在执行的任务 ID
+
+    用于页面加载时自动连接正在处理的任务。
+    """
+    # 验证批次归属
+    batch_result = await db.execute(
+        select(Batch).join(Project).where(
+            Batch.id == batch_id,
+            Project.user_id == current_user.id
+        )
+    )
+    batch = batch_result.scalar_one_or_none()
+
+    if not batch:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="批次不存在"
+        )
+
+    # 查询正在执行的任务（queued 或 running 状态）
+    task_result = await db.execute(
+        select(AITask).where(
+            AITask.batch_id == batch_id,
+            AITask.status.in_(["queued", "running"])
+        ).order_by(AITask.created_at.desc()).limit(1)
+    )
+    task = task_result.scalar_one_or_none()
+
+    if not task:
+        return {"task_id": None, "status": batch.breakdown_status}
+
+    return {
+        "task_id": str(task.id),
+        "status": task.status,
+        "progress": task.progress,
+        "current_step": task.current_step
+    }
+
+
 @router.get("/tasks/{task_id}")
 async def get_breakdown_task(
     task_id: str,

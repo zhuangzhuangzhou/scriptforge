@@ -1,21 +1,15 @@
 """单集剧本创作 Celery 任务
 
-支持两种模式：
-1. 批量模式（旧版）：基于 batch_id 和 breakdown_id 生成所有剧集
-2. 单集模式（新版）：基于 breakdown_id 和 episode_number 生成单集剧本
+基于 breakdown_id 和 episode_number 生成单集剧本。
 """
 import json
-from datetime import datetime
 from sqlalchemy.orm import Session
-from sqlalchemy import select
 from app.core.celery_app import celery_app
-from app.core.database import SyncSessionLocal, AsyncSessionLocal
-from app.core.progress import update_task_progress, update_task_progress_sync
-from app.core.credits import CreditsService, consume_credits_for_task_sync
+from app.core.database import SyncSessionLocal
+from app.core.progress import update_task_progress_sync
+from app.core.credits import consume_credits_for_task_sync
 from app.core.exceptions import AITaskException, RetryableError, classify_exception
 from app.models.ai_task import AITask
-from app.models.batch import Batch
-from app.models.user import User
 import logging
 
 logger = logging.getLogger(__name__)
@@ -31,77 +25,6 @@ CELERY_TASK_CONFIG = {
     "acks_late": True,
     "reject_on_worker_lost": True,
 }
-
-
-@celery_app.task(bind=True)
-def run_script_task(self, task_id: str, batch_id: str, project_id: str, breakdown_id: str, user_id: str):
-    """执行 Script 任务（批量模式，旧版兼容）"""
-    import asyncio
-
-    async def _run():
-        async with AsyncSessionLocal() as db:
-            batch_record = None
-            try:
-                await update_task_progress(db, task_id, status="running", progress=0, current_step="初始化任务")
-
-                batch_result = await db.execute(select(Batch).where(Batch.id == batch_id))
-                batch_record = batch_result.scalar_one_or_none()
-                if batch_record:
-                    batch_record.script_status = "processing"
-                    await db.commit()
-
-                task_result = await db.execute(select(AITask).where(AITask.id == task_id))
-                task_record = task_result.scalar_one_or_none()
-                task_config = task_record.config if task_record else {}
-
-                from app.ai.adapters import get_adapter
-                model_id = task_config.get("model_id")
-                model_adapter = await get_adapter(model_id=model_id, user_id=user_id, db=db)
-
-                async def progress_callback(step: str, progress: int):
-                    await update_task_progress(db, task_id, progress=progress, current_step=step)
-
-                await progress_callback("加载拆解数据", 10)
-
-                from app.ai.pipeline_executor import PipelineExecutor
-                executor = PipelineExecutor(db=db, model_adapter=model_adapter, user_id=user_id)
-
-                await executor.run_script(
-                    project_id=project_id,
-                    batch_id=batch_id,
-                    breakdown_id=breakdown_id,
-                    pipeline_id=task_config.get("pipeline_id"),
-                    selected_skills=task_config.get("selected_skills"),
-                    progress_callback=progress_callback
-                )
-
-                await update_task_progress(db, task_id, status="completed", progress=100, current_step="任务完成")
-
-                if batch_record:
-                    batch_record.script_status = "completed"
-                    await db.commit()
-
-                # 扣除积分（使用数据库配置）
-                credits_service = CreditsService(db)
-                credits_result = await credits_service.consume_credits_for_task(
-                    user=await db.get(User, user_id),
-                    task_type="script",
-                    reference_id=task_id
-                )
-                if not credits_result["success"]:
-                    logger.error(f"积分扣费失败: user={user_id}, task={task_id}, reason={credits_result['message']}")
-                await db.commit()
-
-                return {"status": "completed"}
-
-            except Exception as e:
-                await update_task_progress(db, task_id, status="failed", error_message=str(e))
-                if batch_record:
-                    batch_record.script_status = "failed"
-                    await db.commit()
-                raise
-
-    return asyncio.run(_run())
 
 
 @celery_app.task(**CELERY_TASK_CONFIG)

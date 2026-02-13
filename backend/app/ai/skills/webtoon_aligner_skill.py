@@ -64,7 +64,7 @@ class WebtoonAlignerSkill(BaseSkill):
         response = await model_adapter.generate_async(
             prompt=prompt,
             temperature=0.3,  # 低温度确保稳定输出
-            max_tokens=4096
+            max_tokens=100000
         )
 
         try:

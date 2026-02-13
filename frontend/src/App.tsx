@@ -20,7 +20,6 @@ import AdminDashboard from './pages/admin/Dashboard';
 import UserManagement from './pages/admin/UserManagement';
 import ModelManagement from './pages/admin/ModelManagement';
 import ResourcesPage from './pages/admin/Resources';
-import ResourceEditor from './pages/admin/Resources/ResourceEditor';
 import SystemSettings from './pages/admin/SystemSettings';
 import SystemConfiguration from './pages/admin/ModelManagement/SystemConfiguration';
 import { UserTier } from './types';
@@ -85,8 +84,6 @@ const AppContent: React.FC = () => {
             <Route path="/admin/agents" element={<AgentsPage />} />
             <Route path="/admin/logs" element={<LogsPage />} />
             <Route path="/admin/resources" element={<ResourcesPage />} />
-            <Route path="/admin/resources/new" element={<ResourceEditor />} />
-            <Route path="/admin/resources/:resourceId/edit" element={<ResourceEditor />} />
             <Route path="/admin/configurations" element={<SystemConfiguration />} />
             <Route path="/admin/settings" element={<SystemSettings />} />
           </Route>

@@ -14,6 +14,164 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger(__name__)
 
 
+def _try_fix_incomplete_json(json_str: str) -> str:
+    """尝试修复不完整的 JSON 字符串
+
+    常见问题：
+    - 缺少结尾的 } 或 ]
+    - 字符串未闭合
+    - 尾部有多余字符
+
+    Args:
+        json_str: 可能不完整的 JSON 字符串
+
+    Returns:
+        修复后的 JSON 字符串
+    """
+    # 移除尾部的 ``` 标记
+    json_str = re.sub(r'`+\s*$', '', json_str)
+
+    # 统计括号
+    open_braces = json_str.count('{')
+    close_braces = json_str.count('}')
+    open_brackets = json_str.count('[')
+    close_brackets = json_str.count(']')
+
+    # 补充缺失的闭合括号
+    if open_braces > close_braces:
+        # 检查是否在字符串中间被截断（查找未闭合的引号）
+        # 简单处理：如果最后一个字符不是 } 或 ]，尝试截断到最后一个完整的值
+        last_valid_pos = max(
+            json_str.rfind('},'),
+            json_str.rfind('}]'),
+            json_str.rfind('"}'),
+            json_str.rfind('"]'),
+            json_str.rfind('" }'),
+            json_str.rfind('" ]'),
+        )
+        if last_valid_pos > 0:
+            # 截断到最后一个完整的位置
+            json_str = json_str[:last_valid_pos + 1]
+            # 重新统计
+            open_braces = json_str.count('{')
+            close_braces = json_str.count('}')
+            open_brackets = json_str.count('[')
+            close_brackets = json_str.count(']')
+
+        # 补充缺失的 }
+        json_str += '}' * (open_braces - close_braces)
+
+    if open_brackets > close_brackets:
+        json_str += ']' * (open_brackets - close_brackets)
+
+    return json_str
+
+
+def parse_llm_response(
+    response: str,
+    default: Any = None,
+    logger_obj=None,
+    raise_on_empty: bool = False
+) -> Any:
+    """解析 LLM 响应文本为 JSON（高度容错版本）
+
+    这是统一的 JSON 解析函数，建议在整个项目中优先使用。
+
+    解析策略（按优先级）：
+    1. 直接解析整个响应
+    2. 提取 ```json ... ``` 代码块
+    3. 提取 ``` ... ```（无语言标记）
+    4. 提取 { ... } JSON 对象
+    5. 提取 [ ... ] JSON 数组
+    6. 尝试修复不完整的 JSON
+    7. 如果以上都失败，返回默认值
+
+    Args:
+        response: LLM 响应文本
+        default: 解析失败时返回的默认值（默认为空列表）
+        logger_obj: 日志对象，如果提供则记录错误
+        raise_on_empty: 是否在空响应时抛出异常
+
+    Returns:
+        解析后的 JSON 对象，或默认值
+
+    Raises:
+        ValueError: 当 raise_on_empty=True 且响应为空时
+    """
+    if default is None:
+        default = []
+
+    # 检查响应是否为空
+    if not response or not isinstance(response, str):
+        if raise_on_empty:
+            raise ValueError("LLM 返回空响应")
+        return default
+
+    response = response.strip()
+    if not response:
+        if raise_on_empty:
+            raise ValueError("LLM 返回空字符串")
+        return default
+
+    # 策略1：直接解析
+    try:
+        return json.loads(response)
+    except json.JSONDecodeError:
+        pass
+
+    # 策略2：提取 ```json ... ``` 代码块
+    json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
+    if json_match:
+        json_str = json_match.group(1).strip()
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            json_str = _try_fix_incomplete_json(json_str)
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                pass
+
+    # 策略3：提取 ``` ... ```（无语言标记）
+    json_match = re.search(r'```\s*(.*?)\s*```', response, re.DOTALL)
+    if json_match:
+        json_str = json_match.group(1).strip()
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            json_str = _try_fix_incomplete_json(json_str)
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                pass
+
+    # 策略4：提取 { ... } 或 [ ... ]
+    json_match = re.search(r'(\{[\s\S]*\}|\[[\s\S]*\])', response)
+    if json_match:
+        json_str = json_match.group(1).strip()
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            json_str = _try_fix_incomplete_json(json_str)
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                pass
+
+    # 策略5：检查是否包含空响应关键词
+    if any(keyword in response for keyword in ['没有', '无', '空', 'null', 'None', '[]', '{}']):
+        return []
+
+    # 解析失败
+    if logger_obj:
+        logger_obj.error(
+            f"JSON 解析失败，响应内容共 {len(response)} 字符:\n"
+            f"--- 开始响应 ---\n{response[:500]}\n"
+            f"{'... (截断)' if len(response) > 500 else '--- 结束响应 ---'}"
+        )
+    return default
+
+
 class SimpleSkillExecutor:
     """简化的 Skill 执行器
 
@@ -92,25 +250,57 @@ class SimpleSkillExecutor:
             )
 
         # 5. 调用模型
-        model_config = skill.model_config or {}
-        temperature = model_config.get("temperature", 0.7)
-        max_tokens = model_config.get("max_tokens", 2000)
+        # 优先级：Skill 配置 > 模型默认配置 > 硬编码默认值
+        skill_config = skill.model_config or {}
+
+        # 从 model_adapter 获取模型默认配置
+        model_defaults = getattr(self.model_adapter, 'model_config', {}) or {}
+        model_max_output = model_defaults.get('max_output_tokens') or model_defaults.get('max_tokens')
+        model_temperature = model_defaults.get('temperature_default') or model_defaults.get('temperature')
+
+        # 合并配置：Skill 覆盖 > 模型默认 > 硬编码默认
+        temperature = skill_config.get("temperature") or model_temperature or 0.7
+        max_tokens = skill_config.get("max_tokens") or model_max_output or 1000000
+
+        # 确保 temperature 是 float 类型
+        if hasattr(temperature, '__float__'):
+            temperature = float(temperature)
 
         try:
-            # 使用流式生成
+            # 尝试使用流式生成
             full_response = ""
-            for chunk in self.model_adapter.stream_generate(
-                prompt,
-                temperature=temperature,
-                max_tokens=max_tokens
-            ):
-                if self.log_publisher and task_id:
-                    self.log_publisher.publish_stream_chunk(
-                        task_id,
-                        skill.display_name or skill.name,
-                        chunk
-                    )
-                full_response += chunk
+            stream_failed = False
+
+            try:
+                for chunk in self.model_adapter.stream_generate(
+                    prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                ):
+                    if chunk:  # 确保 chunk 不为 None
+                        if self.log_publisher and task_id:
+                            self.log_publisher.publish_stream_chunk(
+                                task_id,
+                                skill.display_name or skill.name,
+                                chunk
+                            )
+                        full_response += chunk
+            except Exception as stream_error:
+                # 流式调用失败，回退到非流式
+                logger.warning(f"流式调用失败，回退到非流式: {stream_error}")
+                stream_failed = True
+
+            # 如果流式失败或响应为空，使用非流式调用
+            if stream_failed or not full_response.strip():
+                logger.info("使用非流式调用...")
+                full_response = self.model_adapter.generate(
+                    prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                )
+                # 确保响应是字符串
+                if isinstance(full_response, dict) and "content" in full_response:
+                    full_response = full_response["content"]
 
             # 6. 解析 JSON 响应
             result = self._parse_json(full_response)
@@ -126,52 +316,44 @@ class SimpleSkillExecutor:
             return result
 
         except Exception as e:
+            # 获取模型信息
+            model_info = ""
+            if hasattr(self.model_adapter, 'model_name'):
+                model_info = f" [模型: {self.model_adapter.model_name}]"
+            if hasattr(self.model_adapter, 'provider_name'):
+                model_info += f" [提供商: {self.model_adapter.provider_name}]"
+
+            error_msg = f"执行失败: {str(e)}{model_info}"
+
             # 发布错误
             if self.log_publisher and task_id:
                 self.log_publisher.publish_error(
                     task_id,
-                    f"执行失败: {str(e)}",
+                    error_msg,
                     error_code="SKILL_EXECUTION_ERROR",
                     step_name=skill.display_name or skill.name
                 )
-            raise
+            raise Exception(error_msg) from e
 
     def _parse_json(self, response: str) -> Any:
-        """解析 JSON 响应
+        """解析 JSON 响应（使用通用解析函数）
 
         Args:
             response: AI 模型的响应文本
 
         Returns:
-            解析后的 JSON 对象
+            解析后的 JSON 对象（列表或字典）
 
         Raises:
-            ValueError: 无法解析 JSON
+            ValueError: 响应为空或解析失败
         """
-        # 尝试直接解析
-        try:
-            return json.loads(response)
-        except json.JSONDecodeError:
-            pass
-
-        # 提取 JSON 代码块
-        json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
-        if json_match:
-            try:
-                return json.loads(json_match.group(1))
-            except json.JSONDecodeError:
-                pass
-
-        # 提取任何 JSON 数组或对象
-        json_match = re.search(r'(\[.*\]|\{.*\})', response, re.DOTALL)
-        if json_match:
-            try:
-                return json.loads(json_match.group(0))
-            except json.JSONDecodeError:
-                pass
-
-        # 解析失败
-        raise ValueError(f"无法解析 JSON 响应: {response[:200]}...")
+        # 使用通用解析函数，自动处理各种边缘情况
+        return parse_llm_response(
+            response=response,
+            default=None,  # 不使用默认值，让函数在失败时抛出异常
+            logger_obj=logger,
+            raise_on_empty=True  # 空响应时抛出异常
+        )
 
 
 class SimpleAgentExecutor:

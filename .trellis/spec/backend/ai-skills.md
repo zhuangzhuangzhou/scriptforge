@@ -989,3 +989,181 @@ with llm_context(task_id=task_id, user_id=user_id, project_id=project_id):
     adapter = get_adapter_sync(db, model_id=model_id)
     result = adapter.generate(prompt)
 ```
+
+---
+
+## 14. 常见问题与解决方案
+
+### 14.1 批次拆解集数不顺延
+
+> **2026-02-13 新增**
+
+**问题**：批次拆解时，大模型不知道前一批次已经拆到第几集，导致每次都从第1集开始编号。
+
+**原因**：Skill 的 prompt_template 中没有告诉大模型"从第几集开始编号"。
+
+**解决方案**：
+1. 在 Skill 的 `input_schema` 中添加 `start_episode` 参数
+2. 在 `prompt_template` 中明确说明集数编号规则
+3. 在 Celery 任务中查询该项目之前批次的最大集数
+
+```python
+# breakdown_tasks.py
+start_episode = 1
+previous_breakdowns = db.query(PlotBreakdown).filter(
+    PlotBreakdown.project_id == project_id,
+    PlotBreakdown.batch_id != batch_id
+).all()
+
+for prev_bd in previous_breakdowns:
+    if prev_bd.plot_points:
+        for pp in prev_bd.plot_points:
+            if isinstance(pp, dict) and pp.get("episode"):
+                ep = pp.get("episode")
+                if isinstance(ep, int) and ep >= start_episode:
+                    start_episode = ep + 1
+```
+
+### 14.2 Skill/Agent 初始化不更新
+
+**问题**：修改 `init_simple_system.py` 中的 Skill 定义后，数据库中的记录不会更新。
+
+**原因**：原始逻辑是"存在则跳过"。
+
+**解决方案**：改为"存在则更新"策略：
+```python
+if not existing_skill:
+    # 创建新的 Skill
+    skill = Skill(...)
+    db.add(skill)
+else:
+    # 更新已存在的内置 Skill
+    existing_skill.prompt_template = skill_data["prompt_template"]
+    existing_skill.input_schema = skill_data["input_schema"]
+    existing_skill.model_config = skill_data["model_config"]
+```
+
+### 14.3 配置优先级设计
+
+**模式**：`Skill 配置 > 模型数据库配置 > 硬编码默认值`
+
+```python
+# simple_executor.py
+skill_config = skill.model_config or {}
+model_defaults = getattr(self.model_adapter, 'model_config', {}) or {}
+
+# 合并配置
+temperature = skill_config.get("temperature") or model_defaults.get("temperature_default") or 0.7
+max_tokens = skill_config.get("max_tokens") or model_defaults.get("max_output_tokens") or 1000000
+```
+
+### 14.4 Token 超限错误处理
+
+**问题**：JSON 响应被截断时，错误信息不友好。
+
+**解决方案**：添加 `TokenLimitExceededError` 异常类：
+```python
+# exceptions.py
+class TokenLimitExceededError(AITaskException):
+    def __init__(self, message: str, limit: int = None, actual: int = None):
+        super().__init__(message, code="TOKEN_LIMIT_EXCEEDED")
+
+# classify_exception 中识别
+token_limit_keywords = [
+    "context_length_exceeded", "maximum context length",
+    "token limit", "too many tokens", "input is too long"
+]
+if any(keyword in error_message for keyword in token_limit_keywords):
+    return TokenLimitExceededError("内容超过模型 Token 限制，请减少输入内容或分批处理")
+```
+
+---
+
+**最后更新**: 2026-02-13
+
+### 14.5 多提供商 API 适配模式
+
+**问题**：不同模型提供商的 API 接口格式不同，导致同一套代码无法兼容多个提供商。
+
+**常见差异**：
+| 提供商 | 认证方式 | API 路径 |
+|--------|----------|----------|
+| Anthropic 官方 | `x-api-key` header | `/v1/messages` |
+| 第三方代理 (autocode) | `Authorization: Bearer` | `/v1/messages` |
+| Gemini 官方 | URL query param `?key=API_KEY` | `/v1beta/models/{model}:generateContent` |
+
+**解决方案**：在适配器中自动检测并适配
+
+```python
+# anthropic_adapter.py
+def stream_generate(self, prompt: str, **kwargs) -> Iterator[str]:
+    # 构建 API URL：根据 base_url 自动适配路径
+    base = self.base_url.rstrip('/')
+    if '/v1' in base or '/messages' in base:
+        url = base  # 用户提供了完整路径
+    else:
+        # 用户只提供了域名，自动补全路径
+        if 'anthropic' in base.lower():
+            url = f"{base}/anthropic/v1/messages"
+        else:
+            url = f"{base}/v1/messages"
+
+    # 根据提供商选择认证方式
+    headers = {"Content-Type": "application/json", "anthropic-version": "2023-06-01"}
+    if "anthropic.com" not in url:
+        # 第三方代理使用 Bearer token
+        headers["Authorization"] = f"Bearer {self.api_key}"
+    else:
+        # 官方 API 使用 x-api-key
+        headers["x-api-key"] = self.api_key
+
+    # 使用 httpx 发送请求
+    with self.http_client.stream("POST", url, json=request_body, headers=headers) as response:
+        # 处理 SSE 流...
+```
+
+**注意事项**：
+1. 用户在提供商管理中填写 `api_endpoint` 时只需填写到域名（如 `https://api.autocode.space`）
+2. 适配器自动补全完整的 API 路径
+3. 第三方代理可能返回 HTML 错误页面而非 JSON，需要检查响应格式
+
+**为什么需要这样做**：
+1. 简化用户配置：只需填写域名，无需了解各提供商的具体 API 路径
+2. 兼容性：同一套代码可兼容官方 API 和第三方代理
+3. 灵活性：未来新增提供商时只需更新适配逻辑
+
+### 14.6 流式响应与 SDK 兼容性
+
+**问题**：某些第三方代理的流式响应格式与官方 SDK 不兼容，导致 SDK 内部解析失败。
+
+**错误表现**：
+```
+AttributeError: 'NoneType' object has no attribute 'append'
+# SDK 的 accumulate_event 函数中 current_snapshot.content 为 None
+```
+
+**解决方案**：使用原始 HTTP 请求绕过 SDK
+
+```python
+# anthropic_adapter.py - 使用 httpx 替代 SDK 处理流式响应
+def stream_generate(self, prompt: str, **kwargs) -> Iterator[str]:
+    # 使用 httpx 发送原始 HTTP 请求
+    with self.http_client.stream("POST", url, json=request_body, headers=headers) as response:
+        response.raise_for_status()
+        for line in response.iter_lines():
+            if line.startswith("data: "):
+                data = json.loads(line[6:])
+                if data.get("type") == "content_block_delta":
+                    text = data.get("delta", {}).get("text", "")
+                    if text:
+                        yield text
+```
+
+**为什么需要这样做**：
+1. 第三方代理的响应格式可能与官方 API 有细微差异
+2. SDK 对响应格式有严格假设，容错性差
+3. 原始 HTTP 请求可以更灵活地处理各种响应格式
+
+---
+
+**最后更新**: 2026-02-14
