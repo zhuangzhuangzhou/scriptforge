@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Button, Form, Input, InputNumber, message, Space, Switch, Popconfirm, DatePicker, Alert, Progress, Tooltip, Select } from 'antd';
-import { EditOutlined, DeleteOutlined, PlusOutlined, CheckCircleOutlined, CloseCircleOutlined, CopyOutlined, SafetyOutlined, ApiOutlined } from '@ant-design/icons';
+import { Button, Form, Input, InputNumber, message, Space, Switch, Popconfirm, DatePicker, Progress, Tooltip } from 'antd';
+import { EditOutlined, DeleteOutlined, PlusOutlined, CheckCircleOutlined, CloseCircleOutlined, CopyOutlined, SafetyOutlined, ApiOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import { GlassTable } from '../../../components/ui/GlassTable';
 import { GlassModal } from '../../../components/ui/GlassModal';
 import { GlassCard } from '../../../components/ui/GlassCard';
@@ -9,6 +9,58 @@ import { GlassSelect } from '../../../components/ui/GlassSelect';
 import { credentialApi, providerApi, Credential, CredentialCreate, CredentialUpdate, Provider } from '../../../services/modelManagementApi';
 import { extractArrayData } from '../../../utils/apiHelpers';
 import dayjs from 'dayjs';
+
+// 深色主题提示框组件
+const GlassAlert: React.FC<{
+  type?: 'info' | 'warning' | 'error';
+  title: string;
+  description?: string;
+}> = ({ type = 'info', title, description }) => {
+  const colorMap = {
+    info: {
+      bg: 'bg-cyan-500/10',
+      border: 'border-cyan-500/30',
+      icon: 'text-cyan-400',
+      title: 'text-cyan-300',
+    },
+    warning: {
+      bg: 'bg-amber-500/10',
+      border: 'border-amber-500/30',
+      icon: 'text-amber-400',
+      title: 'text-amber-300',
+    },
+    error: {
+      bg: 'bg-red-500/10',
+      border: 'border-red-500/30',
+      icon: 'text-red-400',
+      title: 'text-red-300',
+    },
+  };
+
+  const colors = colorMap[type];
+
+  return (
+    <div className={`${colors.bg} ${colors.border} border rounded-lg p-4 flex items-start gap-3`}>
+      <InfoCircleOutlined className={`${colors.icon} text-lg mt-0.5`} />
+      <div>
+        <div className={`${colors.title} font-medium`}>{title}</div>
+        {description && (
+          <div className="text-slate-400 text-sm mt-1">{description}</div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// 表单样式
+const FORM_STYLES = `
+  .credential-form .ant-form-item-label > label {
+    color: #cbd5e1 !important;
+  }
+  .credential-form .ant-form-item-extra {
+    color: #64748b !important;
+  }
+`;
 
 const CredentialManagement: React.FC = () => {
   // 状态管理
@@ -300,25 +352,23 @@ const CredentialManagement: React.FC = () => {
 
   // 渲染
   return (
-    <div style={{ padding: '24px' }}>
+    <div className="p-6">
       <GlassCard>
-        <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Space>
-            <h2 style={{ margin: 0 }}>凭证管理</h2>
-            <Select
+        <div className="mb-4 flex justify-between items-center">
+          <div className="flex items-center gap-4">
+            <h2 className="m-0 text-xl font-semibold text-slate-100">凭证管理</h2>
+            <GlassSelect
               style={{ width: 200 }}
               placeholder="筛选提供商"
               allowClear
               value={selectedProviderId}
               onChange={setSelectedProviderId}
-            >
-              {providers.map(p => (
-                <Select.Option key={p.id} value={p.id}>
-                  {p.display_name}
-                </Select.Option>
-              ))}
-            </Select>
-          </Space>
+              options={providers.map(p => ({
+                label: p.display_name,
+                value: p.id,
+              }))}
+            />
+          </div>
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -328,13 +378,13 @@ const CredentialManagement: React.FC = () => {
           </Button>
         </div>
 
-        <Alert
-          message="安全提示"
-          description="API Key 将使用 AES-256-GCM 加密存储，传输过程使用 HTTPS 加密。请妥善保管您的 API Key。"
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-        />
+        <div className="mb-4">
+          <GlassAlert
+            type="info"
+            title="安全提示"
+            description="API Key 将使用 AES-256-GCM 加密存储，传输过程使用 HTTPS 加密。请妥善保管您的 API Key。"
+          />
+        </div>
 
         <GlassTable
           columns={columns}
@@ -359,10 +409,11 @@ const CredentialManagement: React.FC = () => {
         okText="保存"
         cancelText="取消"
       >
+        <style>{FORM_STYLES}</style>
         <Form
           form={form}
           layout="vertical"
-          style={{ marginTop: 24 }}
+          className="credential-form mt-6"
         >
           <Form.Item
             label="提供商"
@@ -397,11 +448,12 @@ const CredentialManagement: React.FC = () => {
           >
             <Input.Password
               placeholder="输入 API Key"
+              className="glass-password-input"
               style={{
-                background: 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid rgba(255, 255, 255, 0.1)',
-                borderRadius: '8px',
-                color: '#fff',
+                background: 'rgba(2, 6, 23, 0.5)',
+                border: '1px solid rgba(51, 65, 85, 0.6)',
+                borderRadius: '6px',
+                color: '#e2e8f0',
               }}
             />
           </Form.Item>
@@ -413,11 +465,12 @@ const CredentialManagement: React.FC = () => {
           >
             <Input.Password
               placeholder="输入 API Secret（如需要）"
+              className="glass-password-input"
               style={{
-                background: 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid rgba(255, 255, 255, 0.1)',
-                borderRadius: '8px',
-                color: '#fff',
+                background: 'rgba(2, 6, 23, 0.5)',
+                border: '1px solid rgba(51, 65, 85, 0.6)',
+                borderRadius: '6px',
+                color: '#e2e8f0',
               }}
             />
           </Form.Item>
@@ -428,7 +481,7 @@ const CredentialManagement: React.FC = () => {
           >
             <InputNumber
               placeholder="不限制"
-              style={{ width: '100%' }}
+              className="w-full"
               min={0}
             />
           </Form.Item>
@@ -438,7 +491,7 @@ const CredentialManagement: React.FC = () => {
             name="expires_at"
           >
             <DatePicker
-              style={{ width: '100%' }}
+              className="w-full"
               placeholder="选择过期时间（可选）"
             />
           </Form.Item>

@@ -1,16 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Button, Form, Input, InputNumber, message, Space, Switch, Popconfirm, Select, Tag } from 'antd';
+import { Button, Form, InputNumber, message, Space, Switch, Popconfirm, Tag } from 'antd';
 import { EditOutlined, DeleteOutlined, PlusOutlined, CheckCircleOutlined, CloseCircleOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
 import { GlassTable } from '../../../components/ui/GlassTable';
 import { GlassModal } from '../../../components/ui/GlassModal';
 import { GlassCard } from '../../../components/ui/GlassCard';
-import { GlassInput } from '../../../components/ui/GlassInput';
+import { GlassInput, GlassTextArea } from '../../../components/ui/GlassInput';
 import { GlassSelect } from '../../../components/ui/GlassSelect';
 import { modelApi, providerApi, AIModel, AIModelCreate, AIModelUpdate, Provider } from '../../../services/modelManagementApi';
 import { extractArrayData } from '../../../utils/apiHelpers';
-import styles from './ModelConfiguration.module.css';
 
-const { TextArea } = Input;
+// 表单样式
+const FORM_STYLES = `
+  .model-form .ant-form-item-label > label {
+    color: #cbd5e1 !important;
+  }
+  .model-form .ant-form-item-extra {
+    color: #64748b !important;
+  }
+`;
 
 const ModelConfiguration: React.FC = () => {
   // 状态管理
@@ -302,25 +309,23 @@ const ModelConfiguration: React.FC = () => {
 
   // 渲染
   return (
-    <div className={styles.container}>
+    <div className="p-6">
       <GlassCard>
-        <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Space>
-            <h2 style={{ margin: 0 }}>模型配置</h2>
-            <Select
+        <div className="mb-4 flex justify-between items-center">
+          <div className="flex items-center gap-4">
+            <h2 className="m-0 text-xl font-semibold text-slate-100">模型配置</h2>
+            <GlassSelect
               style={{ width: 200 }}
               placeholder="筛选提供商"
               allowClear
               value={selectedProviderId}
               onChange={setSelectedProviderId}
-            >
-              {providers.map(p => (
-                <Select.Option key={p.id} value={p.id}>
-                  {p.display_name}
-                </Select.Option>
-              ))}
-            </Select>
-          </Space>
+              options={providers.map(p => ({
+                label: p.display_name,
+                value: p.id,
+              }))}
+            />
+          </div>
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -352,13 +357,13 @@ const ModelConfiguration: React.FC = () => {
         width={700}
         okText="保存"
         cancelText="取消"
-        style={{ maxHeight: '90vh' }}
       >
-        <div className={styles.modalContent}>
+        <style>{FORM_STYLES}</style>
+        <div className="max-h-[70vh] overflow-y-auto">
           <Form
             form={form}
             layout="vertical"
-            style={{ marginTop: 24 }}
+            className="model-form mt-6"
           >
             <Form.Item
               label="提供商"
@@ -408,15 +413,14 @@ const ModelConfiguration: React.FC = () => {
               />
             </Form.Item>
 
-            <Space style={{ width: '100%' }} size="large">
+            <div className="grid grid-cols-3 gap-4">
               <Form.Item
                 label="最大 Token 数"
                 name="max_tokens"
-                style={{ flex: 1 }}
               >
                 <InputNumber
                   placeholder="128000"
-                  style={{ width: '100%' }}
+                  className="w-full"
                   min={0}
                 />
               </Form.Item>
@@ -424,11 +428,10 @@ const ModelConfiguration: React.FC = () => {
               <Form.Item
                 label="最大输入 Token"
                 name="max_input_tokens"
-                style={{ flex: 1 }}
               >
                 <InputNumber
                   placeholder="120000"
-                  style={{ width: '100%' }}
+                  className="w-full"
                   min={0}
                 />
               </Form.Item>
@@ -436,25 +439,23 @@ const ModelConfiguration: React.FC = () => {
               <Form.Item
                 label="最大输出 Token"
                 name="max_output_tokens"
-                style={{ flex: 1 }}
               >
                 <InputNumber
                   placeholder="4096"
-                  style={{ width: '100%' }}
+                  className="w-full"
                   min={0}
                 />
               </Form.Item>
-            </Space>
+            </div>
 
-            <Space style={{ width: '100%' }} size="large">
+            <div className="grid grid-cols-2 gap-4">
               <Form.Item
                 label="超时时间（秒）"
                 name="timeout_seconds"
-                style={{ flex: 1 }}
               >
                 <InputNumber
                   placeholder="120"
-                  style={{ width: '100%' }}
+                  className="w-full"
                   min={1}
                 />
               </Form.Item>
@@ -462,19 +463,18 @@ const ModelConfiguration: React.FC = () => {
               <Form.Item
                 label="默认温度"
                 name="temperature_default"
-                style={{ flex: 1 }}
               >
                 <InputNumber
                   placeholder="0.7"
-                  style={{ width: '100%' }}
+                  className="w-full"
                   min={0}
                   max={2}
                   step={0.1}
                 />
               </Form.Item>
-            </Space>
+            </div>
 
-            <Space style={{ width: '100%' }} size="large">
+            <div className="flex gap-8">
               <Form.Item
                 label="支持流式输出"
                 name="supports_streaming"
@@ -490,21 +490,15 @@ const ModelConfiguration: React.FC = () => {
               >
                 <Switch />
               </Form.Item>
-            </Space>
+            </div>
 
             <Form.Item
               label="描述"
               name="description"
             >
-              <TextArea
+              <GlassTextArea
                 rows={3}
                 placeholder="模型描述（可选）"
-                style={{
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  border: '1px solid rgba(255, 255, 255, 0.1)',
-                  borderRadius: '8px',
-                  color: '#fff',
-                }}
               />
             </Form.Item>
           </Form>

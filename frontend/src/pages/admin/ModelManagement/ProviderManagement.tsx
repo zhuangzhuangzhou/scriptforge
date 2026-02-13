@@ -1,15 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Button, Form, Input, message, Space, Switch, Popconfirm } from 'antd';
+import { Button, Form, message, Space, Switch, Popconfirm } from 'antd';
 import { EditOutlined, DeleteOutlined, PlusOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import { GlassTable } from '../../../components/ui/GlassTable';
 import { GlassModal } from '../../../components/ui/GlassModal';
 import { GlassCard } from '../../../components/ui/GlassCard';
-import { GlassInput } from '../../../components/ui/GlassInput';
+import { GlassInput, GlassTextArea } from '../../../components/ui/GlassInput';
 import { GlassSelect } from '../../../components/ui/GlassSelect';
 import { providerApi, Provider, ProviderCreate, ProviderUpdate } from '../../../services/modelManagementApi';
 import { extractArrayData } from '../../../utils/apiHelpers';
 
-const { TextArea } = Input;
+// 表单样式
+const FORM_STYLES = `
+  .provider-form .ant-form-item-label > label {
+    color: #cbd5e1 !important;
+  }
+  .provider-form .ant-form-item-extra {
+    color: #64748b !important;
+  }
+`;
 
 const ProviderManagement: React.FC = () => {
   // 状态管理
@@ -214,10 +222,10 @@ const ProviderManagement: React.FC = () => {
 
   // 渲染
   return (
-    <div style={{ padding: '24px' }}>
+    <div className="p-6">
       <GlassCard>
-        <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 style={{ margin: 0 }}>提供商管理</h2>
+        <div className="mb-4 flex justify-between items-center">
+          <h2 className="m-0 text-xl font-semibold text-slate-100">提供商管理</h2>
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -250,10 +258,11 @@ const ProviderManagement: React.FC = () => {
         okText="保存"
         cancelText="取消"
       >
+        <style>{FORM_STYLES}</style>
         <Form
           form={form}
           layout="vertical"
-          style={{ marginTop: 24 }}
+          className="provider-form mt-6"
         >
           <Form.Item
             label="提供商标识"
@@ -313,15 +322,9 @@ const ProviderManagement: React.FC = () => {
             label="描述"
             name="description"
           >
-            <TextArea
+            <GlassTextArea
               rows={3}
               placeholder="提供商描述（可选）"
-              style={{
-                background: 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid rgba(255, 255, 255, 0.1)',
-                borderRadius: '8px',
-                color: '#fff',
-              }}
             />
           </Form.Item>
         </Form>

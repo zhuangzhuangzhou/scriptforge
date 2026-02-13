@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Alert } from 'antd';
+import { InfoCircleOutlined } from '@ant-design/icons';
 import { GlassCard } from '../../components/ui/GlassCard';
 import { GlassTabs } from '../../components/ui/GlassTabs';
 import ProviderManagement from './ModelManagement/ProviderManagement';
@@ -7,6 +7,48 @@ import ModelConfiguration from './ModelManagement/ModelConfiguration';
 import CredentialManagement from './ModelManagement/CredentialManagement';
 import PricingManagement from './ModelManagement/PricingManagement';
 import SystemConfiguration from './ModelManagement/SystemConfiguration';
+
+// 深色主题提示框组件
+const GlassAlert: React.FC<{
+  type?: 'info' | 'warning' | 'error';
+  title: string;
+  description?: string;
+}> = ({ type = 'error', title, description }) => {
+  const colorMap = {
+    info: {
+      bg: 'bg-cyan-500/10',
+      border: 'border-cyan-500/30',
+      icon: 'text-cyan-400',
+      title: 'text-cyan-300',
+    },
+    warning: {
+      bg: 'bg-amber-500/10',
+      border: 'border-amber-500/30',
+      icon: 'text-amber-400',
+      title: 'text-amber-300',
+    },
+    error: {
+      bg: 'bg-red-500/10',
+      border: 'border-red-500/30',
+      icon: 'text-red-400',
+      title: 'text-red-300',
+    },
+  };
+
+  const colors = colorMap[type];
+
+  return (
+    <div className={`${colors.bg} ${colors.border} border rounded-lg p-4 flex items-start gap-3 my-5`}>
+      <InfoCircleOutlined className={`${colors.icon} text-lg mt-0.5`} />
+      <div>
+        <div className={`${colors.title} font-medium`}>{title}</div>
+        {description && (
+          <div className="text-slate-400 text-sm mt-1">{description}</div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 // 错误边界组件
 class ErrorBoundary extends React.Component<
@@ -29,12 +71,10 @@ class ErrorBoundary extends React.Component<
   render() {
     if (this.state.hasError) {
       return (
-        <Alert
-          message="组件加载失败"
-          description={this.state.error?.message || '未知错误'}
+        <GlassAlert
           type="error"
-          showIcon
-          style={{ margin: '20px 0' }}
+          title="组件加载失败"
+          description={this.state.error?.message || '未知错误'}
         />
       );
     }
@@ -90,7 +130,7 @@ const ModelManagement: React.FC = () => {
 
   // 渲染
   return (
-    <div className="p-6 h-full overflow-y-auto">
+    <div className="p-6 h-full overflow-y-auto bg-slate-950">
       <GlassCard>
         <div className="mb-6">
           <h1 className="m-0 text-2xl font-semibold text-white">

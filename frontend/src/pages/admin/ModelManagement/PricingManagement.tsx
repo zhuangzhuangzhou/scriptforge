@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Button, Form, InputNumber, message, Space, Popconfirm, DatePicker, Tag, Select } from 'antd';
+import { Button, Form, InputNumber, message, Space, Popconfirm, DatePicker, Tag } from 'antd';
 import { EditOutlined, DeleteOutlined, PlusOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import { GlassTable } from '../../../components/ui/GlassTable';
 import { GlassModal } from '../../../components/ui/GlassModal';
@@ -7,6 +7,13 @@ import { GlassCard } from '../../../components/ui/GlassCard';
 import { GlassSelect } from '../../../components/ui/GlassSelect';
 import { pricingApi, modelApi, Pricing, PricingCreate, PricingUpdate, AIModel } from '../../../services/modelManagementApi';
 import dayjs from 'dayjs';
+
+// 表单样式
+const FORM_STYLES = `
+  .pricing-form .ant-form-item-label > label {
+    color: #cbd5e1 !important;
+  }
+`;
 
 const PricingManagement: React.FC = () => {
   // 状态管理
@@ -242,25 +249,23 @@ const PricingManagement: React.FC = () => {
 
   // 渲染
   return (
-    <div style={{ padding: '24px' }}>
+    <div className="p-6">
       <GlassCard>
-        <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Space>
-            <h2 style={{ margin: 0 }}>计费规则</h2>
-            <Select
+        <div className="mb-4 flex justify-between items-center">
+          <div className="flex items-center gap-4">
+            <h2 className="m-0 text-xl font-semibold text-slate-100">计费规则</h2>
+            <GlassSelect
               style={{ width: 200 }}
               placeholder="筛选模型"
               allowClear
               value={selectedModelId}
               onChange={setSelectedModelId}
-            >
-              {models.map(m => (
-                <Select.Option key={m.id} value={m.id}>
-                  {m.display_name}
-                </Select.Option>
-              ))}
-            </Select>
-          </Space>
+              options={models.map(m => ({
+                label: m.display_name,
+                value: m.id,
+              }))}
+            />
+          </div>
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -293,10 +298,11 @@ const PricingManagement: React.FC = () => {
         okText="保存"
         cancelText="取消"
       >
+        <style>{FORM_STYLES}</style>
         <Form
           form={form}
           layout="vertical"
-          style={{ marginTop: 24 }}
+          className="pricing-form mt-6"
         >
           <Form.Item
             label="模型"
@@ -320,7 +326,7 @@ const PricingManagement: React.FC = () => {
           >
             <InputNumber
               placeholder="1.5"
-              style={{ width: '100%' }}
+              className="w-full"
               min={0}
               step={0.1}
               addonAfter="积分"
@@ -334,7 +340,7 @@ const PricingManagement: React.FC = () => {
           >
             <InputNumber
               placeholder="3.0"
-              style={{ width: '100%' }}
+              className="w-full"
               min={0}
               step={0.1}
               addonAfter="积分"
@@ -347,7 +353,7 @@ const PricingManagement: React.FC = () => {
           >
             <InputNumber
               placeholder="0"
-              style={{ width: '100%' }}
+              className="w-full"
               min={0}
               step={0.1}
               addonAfter="积分"
@@ -359,7 +365,7 @@ const PricingManagement: React.FC = () => {
             name="effective_from"
           >
             <DatePicker
-              style={{ width: '100%' }}
+              className="w-full"
               placeholder="立即生效"
               showTime
             />
@@ -370,7 +376,7 @@ const PricingManagement: React.FC = () => {
             name="effective_until"
           >
             <DatePicker
-              style={{ width: '100%' }}
+              className="w-full"
               placeholder="永久有效"
               showTime
             />

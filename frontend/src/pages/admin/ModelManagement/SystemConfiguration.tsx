@@ -1,13 +1,29 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Button, Form, Input, InputNumber, message, Switch, Descriptions } from 'antd';
+import { Button, Form, InputNumber, message, Switch, Descriptions } from 'antd';
 import { EditOutlined, SettingOutlined } from '@ant-design/icons';
 import { GlassTable } from '../../../components/ui/GlassTable';
 import { GlassModal } from '../../../components/ui/GlassModal';
 import { GlassCard } from '../../../components/ui/GlassCard';
-import { GlassInput } from '../../../components/ui/GlassInput';
+import { GlassInput, GlassTextArea } from '../../../components/ui/GlassInput';
 import { systemConfigApi, SystemConfig, SystemConfigUpdate } from '../../../services/modelManagementApi';
 
-const { TextArea } = Input;
+// 表单样式
+const FORM_STYLES = `
+  .system-config-form .ant-form-item-label > label {
+    color: #cbd5e1 !important;
+  }
+  .system-config-descriptions .ant-descriptions-item-label {
+    color: #94a3b8 !important;
+    background: rgba(51, 65, 85, 0.3) !important;
+  }
+  .system-config-descriptions .ant-descriptions-item-content {
+    color: #e2e8f0 !important;
+    background: rgba(15, 23, 42, 0.5) !important;
+  }
+  .system-config-descriptions {
+    border-color: rgba(51, 65, 85, 0.5) !important;
+  }
+`;
 
 const SystemConfiguration: React.FC = () => {
   // 状态管理
@@ -156,11 +172,11 @@ const SystemConfiguration: React.FC = () => {
 
   // 渲染
   return (
-    <div style={{ padding: '24px' }}>
+    <div className="p-6">
       <GlassCard>
-        <div style={{ marginBottom: 16 }}>
-          <h2 style={{ margin: 0, display: 'flex', alignItems: 'center' }}>
-            <SettingOutlined style={{ marginRight: 8 }} />
+        <div className="mb-4">
+          <h2 className="m-0 text-xl font-semibold text-slate-100 flex items-center">
+            <SettingOutlined className="mr-2" />
             系统配置
           </h2>
         </div>
@@ -184,11 +200,12 @@ const SystemConfiguration: React.FC = () => {
         okText="保存"
         cancelText="取消"
       >
+        <style>{FORM_STYLES}</style>
         {editingConfig && (
-          <div style={{ marginTop: 24 }}>
-            <Descriptions column={1} bordered size="small" style={{ marginBottom: 24 }}>
+          <div className="mt-6">
+            <Descriptions column={1} bordered size="small" className="system-config-descriptions mb-6">
               <Descriptions.Item label="配置项">
-                <code>{editingConfig.config_key}</code>
+                <code className="text-cyan-400">{editingConfig.config_key}</code>
               </Descriptions.Item>
               <Descriptions.Item label="类型">
                 {editingConfig.value_type}
@@ -201,6 +218,7 @@ const SystemConfiguration: React.FC = () => {
             <Form
               form={form}
               layout="vertical"
+              className="system-config-form"
             >
               <Form.Item
                 label="配置值"
@@ -213,7 +231,7 @@ const SystemConfiguration: React.FC = () => {
                 {(editingConfig.value_type === 'integer' || editingConfig.value_type === 'number') && (
                   <InputNumber
                     placeholder="输入数值"
-                    style={{ width: '100%' }}
+                    className="w-full"
                     step={editingConfig.value_type === 'integer' ? 1 : 0.1}
                   />
                 )}
@@ -221,16 +239,10 @@ const SystemConfiguration: React.FC = () => {
                   <Switch />
                 )}
                 {editingConfig.value_type === 'json' && (
-                  <TextArea
+                  <GlassTextArea
                     rows={8}
                     placeholder="输入 JSON 格式的配置值"
-                    style={{
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      border: '1px solid rgba(255, 255, 255, 0.1)',
-                      borderRadius: '8px',
-                      color: '#fff',
-                      fontFamily: 'monospace',
-                    }}
+                    className="font-mono"
                   />
                 )}
               </Form.Item>
