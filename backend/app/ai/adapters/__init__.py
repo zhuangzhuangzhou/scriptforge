@@ -16,7 +16,8 @@ async def get_adapter(
     provider: Optional[str] = None,
     model_id: Optional[str] = None,
     user_id: Optional[str] = None,
-    db: Optional[AsyncSession] = None
+    db: Optional[AsyncSession] = None,
+    log_enabled: bool = True
 ) -> BaseModelAdapter:
     """
     获取模型适配器实例
@@ -28,7 +29,8 @@ async def get_adapter(
                   如果为 None，则使用默认配置
         model_id: 模型ID（UUID），如果指定则使用该模型
         user_id: 用户ID，用于获取用户自定义 API Key
-        db: 数据库会话，如果提供则从数据库读取配置
+        db: 数据库会话，如果提供则从数据库读取配置，同时用于记录 LLM 调用日志
+        log_enabled: 是否启用 LLM 调用日志记录，默认启用
 
     Returns:
         BaseModelAdapter: 模型适配器实例
@@ -49,13 +51,15 @@ async def get_adapter(
             if provider_type == "anthropic" or config["provider_key"] == "anthropic":
                 return AnthropicAdapter(
                     api_key=config["api_key"],
-                    model_name=config["model_key"]
+                    model_name=config["model_key"],
+                    log_enabled=log_enabled
                 )
             else:
                 # 默认使用 OpenAI 兼容适配器
                 return OpenAIAdapter(
                     api_key=config["api_key"],
-                    model_name=config["model_key"]
+                    model_name=config["model_key"],
+                    log_enabled=log_enabled
                 )
 
     # 2. 降级到环境变量配置（向后兼容）
@@ -64,12 +68,12 @@ async def get_adapter(
     if use_provider == "anthropic":
         api_key = settings.ANTHROPIC_API_KEY
         model_name = settings.ANTHROPIC_MODEL
-        return AnthropicAdapter(api_key=api_key, model_name=model_name)
+        return AnthropicAdapter(api_key=api_key, model_name=model_name, log_enabled=log_enabled)
     else:
         # 默认使用 OpenAI
         api_key = settings.OPENAI_API_KEY
         model_name = settings.OPENAI_MODEL
-        return OpenAIAdapter(api_key=api_key, model_name=model_name)
+        return OpenAIAdapter(api_key=api_key, model_name=model_name, log_enabled=log_enabled)
 
 
 # ============================================================================
@@ -85,7 +89,8 @@ from app.models.ai_model_credential import AIModelCredential
 def get_adapter_sync(
     db: Session,
     model_id: Optional[str] = None,
-    user_id: Optional[str] = None
+    user_id: Optional[str] = None,
+    log_enabled: bool = True
 ) -> BaseModelAdapter:
     """
     获取模型适配器实例（同步版本，用于 Celery）
@@ -94,6 +99,7 @@ def get_adapter_sync(
         db: 同步数据库会话
         model_id: 模型ID（UUID），必须指定
         user_id: 用户ID（预留，用于获取用户自定义配置）
+        log_enabled: 是否启用 LLM 调用日志记录，默认启用
 
     Returns:
         BaseModelAdapter: 模型适配器实例
@@ -133,13 +139,13 @@ def get_adapter_sync(
 
     # 根据提供商类型创建适配器
     provider_type = provider.provider_type.lower()
-    
+
     # 从提供商获取额外配置（如果有）
-    extra_config = {}
+    extra_config = {"db": db, "log_enabled": log_enabled}
     if hasattr(provider, 'config_schema') and provider.config_schema:
         if isinstance(provider.config_schema, dict):
-            extra_config = provider.config_schema
-    
+            extra_config.update(provider.config_schema)
+
     # 如果提供商有自定义 API 端点，添加到配置中
     if hasattr(provider, 'api_endpoint') and provider.api_endpoint:
         extra_config['base_url'] = provider.api_endpoint
