@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, Tag, message, Drawer, Descriptions, Tooltip } from 'antd';
+import { Button, Tag, message, Descriptions, Tooltip } from 'antd';
 import { ReloadOutlined, SearchOutlined, EyeOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../../services/api';
@@ -8,6 +8,7 @@ import { GlassTable } from '../../../components/ui/GlassTable';
 import { GlassInput } from '../../../components/ui/GlassInput';
 import { GlassSelect } from '../../../components/ui/GlassSelect';
 import { GlassRangePicker } from '../../../components/ui/GlassDatePicker';
+import { GlassModal } from '../../../components/ui/GlassModal';
 
 interface LLMLogEntry {
   id: string;
@@ -79,8 +80,8 @@ const LLMLogsTab: React.FC = () => {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
 
-  // 详情抽屉
-  const [drawerVisible, setDrawerVisible] = useState(false);
+  // 详情弹窗
+  const [modalVisible, setModalVisible] = useState(false);
   const [selectedLog, setSelectedLog] = useState<LLMLogDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
@@ -129,7 +130,7 @@ const LLMLogsTab: React.FC = () => {
     try {
       const response = await api.get(`/admin/llm-logs/${logId}`);
       setSelectedLog(response.data);
-      setDrawerVisible(true);
+      setModalVisible(true);
     } catch (error: unknown) {
       const err = error as { response?: { data?: { detail?: string } } };
       message.error(err.response?.data?.detail || '加载详情失败');
@@ -398,17 +399,13 @@ const LLMLogsTab: React.FC = () => {
         )}
       </GlassCard>
 
-      {/* 详情抽屉 */}
-      <Drawer
+      {/* 详情弹窗 */}
+      <GlassModal
         title="LLM 调用详情"
-        placement="right"
+        open={modalVisible}
+        onCancel={() => { setModalVisible(false); setSelectedLog(null); }}
         width={800}
-        open={drawerVisible}
-        onClose={() => { setDrawerVisible(false); setSelectedLog(null); }}
-        styles={{
-          body: { background: '#0f172a', padding: '16px' },
-          header: { background: '#1e293b', borderBottom: '1px solid #334155' }
-        }}
+        footer={null}
       >
         {selectedLog && (
           <div className="space-y-4">
@@ -481,7 +478,7 @@ const LLMLogsTab: React.FC = () => {
             )}
           </div>
         )}
-      </Drawer>
+      </GlassModal>
     </div>
   );
 };

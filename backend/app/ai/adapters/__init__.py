@@ -52,6 +52,7 @@ async def get_adapter(
                 return AnthropicAdapter(
                     api_key=config["api_key"],
                     model_name=config["model_key"],
+                    db=db,
                     log_enabled=log_enabled
                 )
             else:
@@ -59,6 +60,7 @@ async def get_adapter(
                 return OpenAIAdapter(
                     api_key=config["api_key"],
                     model_name=config["model_key"],
+                    db=db,
                     log_enabled=log_enabled
                 )
 

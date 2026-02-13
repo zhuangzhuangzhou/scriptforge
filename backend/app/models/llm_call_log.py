@@ -42,7 +42,7 @@ class LLMCallLog(Base):
     latency_ms = Column(Integer)                   # 响应延迟（毫秒）
 
     # 额外元数据
-    extra_metadata = Column(JSONB)                 # 其他信息（如 function_call 等）
+    extra_metadata = Column("metadata", JSONB)                 # 其他信息（如 function_call 等）
 
     created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, index=True)
 

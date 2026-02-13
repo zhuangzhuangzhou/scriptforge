@@ -22,11 +22,20 @@ class AnthropicAdapter(BaseModelAdapter):
         temperature = kwargs.get('temperature', 0.7)
         max_tokens = kwargs.get('max_tokens', 2000)
 
+        # 构建原始请求（用于日志）
+        request_body = {
+            "model": self.model_name,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": [{"role": "user", "content": prompt}]
+        }
+
         start_time = time.time()
         error_msg = None
         response_content = None
         prompt_tokens = None
         response_tokens = None
+        raw_response = None
 
         try:
             message = self.client.messages.create(
@@ -35,6 +44,9 @@ class AnthropicAdapter(BaseModelAdapter):
                 temperature=temperature,
                 messages=[{"role": "user", "content": prompt}]
             )
+
+            # 保存原始响应对象
+            raw_response = message.model_dump()
 
             # Anthropic 返回的是 content blocks 列表
             response_content = message.content[0].text
@@ -67,7 +79,12 @@ class AnthropicAdapter(BaseModelAdapter):
                 max_tokens=max_tokens,
                 latency_ms=latency_ms,
                 status="error" if error_msg else "success",
-                error_message=error_msg
+                error_message=error_msg,
+                metadata={
+                    "request": request_body,
+                    "response": raw_response,
+                    "stream": False
+                }
             )
 
     def stream_generate(self, prompt: str, **kwargs) -> Iterator[str]:
@@ -75,9 +92,19 @@ class AnthropicAdapter(BaseModelAdapter):
         temperature = kwargs.get('temperature', 0.7)
         max_tokens = kwargs.get('max_tokens', 2000)
 
+        # 构建原始请求（用于日志）
+        request_body = {
+            "model": self.model_name,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": True
+        }
+
         start_time = time.time()
         collected_content = []
         error_msg = None
+        raw_response = None
 
         try:
             with self.client.messages.stream(
@@ -89,6 +116,16 @@ class AnthropicAdapter(BaseModelAdapter):
                 for text in stream.text_stream:
                     collected_content.append(text)
                     yield text
+
+            # 流结束后构建完整响应
+            raw_response = {
+                "id": "stream-complete",
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "".join(collected_content)}],
+                "model": self.model_name,
+                "usage": None  # 流式响应不包含 usage
+            }
 
         except Exception as e:
             error_msg = str(e)
@@ -105,5 +142,9 @@ class AnthropicAdapter(BaseModelAdapter):
                 latency_ms=latency_ms,
                 status="error" if error_msg else "success",
                 error_message=error_msg,
-                metadata={"stream": True}
+                metadata={
+                    "request": request_body,
+                    "response": raw_response,
+                    "stream": True
+                }
             )

@@ -441,6 +441,39 @@ def _execute_breakdown_sync(
             logger.error(f"Skill 执行失败: {e}")
             raise AITaskException(code="SKILL_EXECUTION_ERROR", message=str(e))
 
+        # 回退模式：执行 QA 质检
+        logger.info("回退到 Skill 模式，执行 QA 质检...")
+        qa_result = _run_breakdown_qa_sync(
+            db=db,
+            task_id=task_id,
+            plot_points=plot_points,
+            chapters_text=chapters_text,
+            adapt_method=adapt_method,
+            model_adapter=model_adapter,
+            log_publisher=log_publisher
+        )
+        qa_status = qa_result.get("status", "pending")
+        qa_score = qa_result.get("score")
+        qa_report = qa_result
+        logger.info(f"Skill + QA 模式完成，qa_status: {qa_status}, qa_score: {qa_score}")
+
+    # 如果 Agent 模式执行成功，检查是否已有 qa_result
+    if use_agent and qa_status == "pending" and not qa_report:
+        # Agent 模式下 QA 可能被跳过，补充执行
+        logger.info("Agent 模式无 QA 结果，补充执行质检...")
+        qa_result = _run_breakdown_qa_sync(
+            db=db,
+            task_id=task_id,
+            plot_points=plot_points,
+            chapters_text=chapters_text,
+            adapt_method=adapt_method,
+            model_adapter=model_adapter,
+            log_publisher=log_publisher
+        )
+        qa_status = qa_result.get("status", "pending")
+        qa_score = qa_result.get("score")
+        qa_report = qa_result
+
     # 确保 plot_points 是列表
     if not isinstance(plot_points, list):
         plot_points = [plot_points] if plot_points else []
@@ -1754,3 +1787,90 @@ def _parse_json_response_sync(response: str, default=None):
 
     # 解析失败，返回默认值
     return default
+
+
+def _run_breakdown_qa_sync(
+    db: Session,
+    task_id: str,
+    plot_points: list,
+    chapters_text: str,
+    adapt_method: str,
+    model_adapter,
+    log_publisher=None
+) -> dict:
+    """执行剧情拆解 QA 质检（v2 版本）
+
+    调用 breakdown_aligner skill 对拆解结果进行质量检查。
+
+    Args:
+        db: 数据库会话
+        task_id: 任务 ID
+        plot_points: 剧情点列表
+        chapters_text: 章节文本
+        adapt_method: 改编方法论
+        model_adapter: 模型适配器
+        log_publisher: 日志发布器
+
+    Returns:
+        dict: 质检结果
+    """
+    from app.ai.simple_executor import SimpleSkillExecutor
+
+    try:
+        # 格式化剧情点为 JSON 字符串
+        plot_points_json = json.dumps(plot_points, ensure_ascii=False)
+
+        # 发布 QA 开始
+        if log_publisher:
+            log_publisher.publish_step_start(task_id, "质检检查")
+
+        # 调用 breakdown_aligner skill
+        skill_executor = SimpleSkillExecutor(db, model_adapter, log_publisher)
+        result = skill_executor.execute_skill(
+            skill_name="breakdown_aligner",
+            inputs={
+                "plot_points": plot_points_json,
+                "chapters_text": chapters_text,
+                "adapt_method": adapt_method or ""
+            },
+            task_id=task_id
+        )
+
+        # 解析结果
+        qa_status = "pending"
+        qa_score = None
+
+        if isinstance(result, dict):
+            qa_status = result.get("status", "pending")
+            qa_score = result.get("score")
+
+        # 发布 QA 完成
+        if log_publisher:
+            if qa_status == "PASS":
+                log_publisher.publish_success(
+                    task_id,
+                    f"质检通过！得分: {qa_score}"
+                )
+            else:
+                log_publisher.publish_warning(
+                    task_id,
+                    f"质检未通过，得分: {qa_score}"
+                )
+
+        logger.info(f"QA 质检完成: status={qa_status}, score={qa_score}")
+
+        return result if isinstance(result, dict) else {"status": "pending", "score": None}
+
+    except Exception as e:
+        logger.error(f"QA 质检失败: {e}")
+        if log_publisher:
+            log_publisher.publish_error(
+                task_id,
+                f"质检失败: {str(e)}",
+                error_code="QA_ERROR"
+            )
+        return {
+            "status": "ERROR",
+            "score": 0,
+            "error": str(e)
+        }

@@ -9,7 +9,7 @@ import { GlassInput } from '../../../components/ui/GlassInput';
 import { GlassSelect } from '../../../components/ui/GlassSelect';
 import { GlassTabs } from '../../../components/ui/GlassTabs';
 import { GlassRangePicker } from '../../../components/ui/GlassDatePicker';
-import TaskDetailDrawer from './TaskDetailDrawer';
+import TaskDetailModal from './TaskDetailModal';
 import APILogsTab from './APILogsTab';
 import LLMLogsTab from './LLMLogsTab';
 
@@ -67,8 +67,8 @@ const TaskLogsTab: React.FC = () => {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
 
-  // 详情抽屉
-  const [drawerVisible, setDrawerVisible] = useState(false);
+  // 详情弹窗
+  const [modalVisible, setModalVisible] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   // 加载任务列表
@@ -126,11 +126,11 @@ const TaskLogsTab: React.FC = () => {
 
   const handleViewDetail = (taskId: string) => {
     setSelectedTaskId(taskId);
-    setDrawerVisible(true);
+    setModalVisible(true);
   };
 
-  const handleCloseDrawer = () => {
-    setDrawerVisible(false);
+  const handleCloseModal = () => {
+    setModalVisible(false);
     setSelectedTaskId(null);
   };
 
@@ -346,11 +346,11 @@ const TaskLogsTab: React.FC = () => {
         />
       </GlassCard>
 
-      {/* 详情抽屉 */}
-      <TaskDetailDrawer
-        visible={drawerVisible}
+      {/* 详情弹窗 */}
+      <TaskDetailModal
+        open={modalVisible}
         taskId={selectedTaskId}
-        onClose={handleCloseDrawer}
+        onClose={handleCloseModal}
       />
     </div>
   );
