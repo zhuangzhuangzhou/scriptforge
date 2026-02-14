@@ -371,7 +371,34 @@ async def get_project_chapters(
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
-    items = chapters_result.scalars().all()
+    chapters = chapters_result.scalars().all()
+
+    # 批量获取章节对应的批次状态
+    batch_ids = [ch.batch_id for ch in chapters if ch.batch_id]
+    batch_status_map = {}
+    if batch_ids:
+        batches_result = await db.execute(
+            select(Batch).where(Batch.id.in_(batch_ids))
+        )
+        for batch in batches_result.scalars().all():
+            batch_status_map[batch.id] = batch.breakdown_status
+
+    # 根据批次状态动态计算章节 status
+    items = []
+    for ch in chapters:
+        # 判断状态：batch_id 存在且对应批次已完成才标记为 processed
+        if ch.batch_id and batch_status_map.get(ch.batch_id) == "completed":
+            status = "processed"
+        else:
+            status = "unprocessed"
+        items.append({
+            "id": str(ch.id),
+            "chapter_number": ch.chapter_number,
+            "title": ch.title,
+            "content": ch.content,
+            "word_count": ch.word_count,
+            "status": status
+        })
 
     return {
         "items": items,
