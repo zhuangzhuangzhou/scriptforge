@@ -4,16 +4,15 @@ import {
   Settings, FileEdit, Play,
   BrainCircuit, Layers, Users,
   Terminal, LayoutTemplate,
-  BookText, Save, Sparkles, Loader2, X,
-  RotateCcw, PlayCircle, FastForward, Repeat, Zap,
-  Upload
+  BookText, Save, Loader2, X,
+  RotateCcw, PlayCircle, FastForward, Zap,
+  Upload, AlertTriangle
 } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
 import ConsoleLogger from '../../../components/ConsoleLogger';
 import AICopilot from '../../../components/AICopilot';
-import SkillSelector from '../../../components/SkillSelector';
-import ConfigSelector from '../../../components/ConfigSelector';
 import AgentConfigModal from '../../../components/modals/AgentConfigModal';
+import ConfirmModal from '../../../components/modals/ConfirmModal';
 import { UserTier, Batch, PlotBreakdown } from '../../../types';
 import { projectApi, breakdownApi } from '../../../services/api';
 import { message, Modal } from 'antd';
@@ -27,6 +26,7 @@ import PlotTab from './PlotTab';
 import ScriptTab from './ScriptTab';
 import AgentsTab from './AgentsTab';
 import SkillsTab from './SkillsTab';
+import MethodViewModal from './PlotTab/MethodViewModal';
 
 interface ProjectWorkspaceProps {
   userTier: UserTier;
@@ -141,6 +141,10 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     } | null>(null);
     const [isBatchRunning, setIsBatchRunning] = useState(false);
 
+    // 停止任务状态
+    const [isStopping, setIsStopping] = useState(false);
+    const [showStopConfirmModal, setShowStopConfirmModal] = useState(false);
+
     // 错误提示状态
     const [showErrorModal, setShowErrorModal] = useState(false);
     const [parsedError, setParsedError] = useState<{
@@ -150,11 +154,29 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         action?: 'upgrade' | 'retry' | 'skip' | 'configure';
     } | null>(null);
 
-    // Breakdown Config Modal State
-    const [isBreakdownModalOpen, setIsBreakdownModalOpen] = useState(false);
-    const [targetBatchId, setTargetBatchId] = useState<string | null>(null);
-    const [selectedBreakdownSkills, setSelectedBreakdownSkills] = useState<string[]>([]);
-    const [breakdownConfig, setBreakdownConfig] = useState<string[]>([]);
+    // 存储键
+    const STORAGE_KEY = 'breakdown_config';
+
+    // 从 localStorage 读取拆解配置
+    const loadBreakdownConfig = () => {
+        try {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved) {
+                const config = JSON.parse(saved);
+                return {
+                    selectedBreakdownSkills: config.selectedBreakdownSkills || [],
+                    breakdownConfig: config.breakdownConfig || []
+                };
+            }
+        } catch (err) {
+            console.error('加载拆解配置失败:', err);
+        }
+        return { selectedBreakdownSkills: [], breakdownConfig: [] };
+    };
+
+    // Method View Modal State
+    const [methodViewModalOpen, setMethodViewModalOpen] = useState(false);
+    const [viewingMethodId, setViewingMethodId] = useState<string | null>(null);
 
     // PLOT Pagination State
     const [batchPage, setBatchPage] = useState(1);
@@ -166,7 +188,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         logs,
         llmStats,
         addLog,
-        updateStreamLog,
+        appendStreamLog,
         clearLogs
     } = useConsoleLogger(null, { enableWebSocket: false });
 
@@ -206,7 +228,12 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     );
 
     // 流式日志 WebSocket（接收大模型返回的实时流式数据）
-    const { isConnected: logsConnected, streamContent, currentStep: logsCurrentStep } = useBreakdownLogs(
+    const {
+        isConnected: logsConnected,
+        currentStep: logsCurrentStep,
+        currentRound,
+        totalRounds
+    } = useBreakdownLogs(
         breakdownTaskId,
         {
             onStepStart: (stepName, metadata) => {
@@ -214,9 +241,13 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 addLog('thinking', `🚀 ${stepName}`);
             },
             onStreamChunk: (stepName, chunk) => {
-                // 实时显示流式内容 - 不再每次创建新日志，而是更新同一行
-                console.log('[StreamLogs] 流式内容:', chunk);
-                // 注意：这里不调用 addLog，而是依赖 streamContent 的更新
+                // RAW 模式：直接追加内容，确保 JSON 连续显示
+                appendStreamLog(chunk);
+            },
+            onFormattedChunk: (stepName, chunk) => {
+                // 实时显示格式化内容（Formatted 模式）
+                console.log('[StreamLogs] 格式化内容:', chunk);
+                addLog('formatted', chunk);
             },
             onStepEnd: (stepName, result) => {
                 console.log('[StreamLogs] 步骤完成:', stepName, result);
@@ -245,21 +276,20 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             onComplete: () => {
                 console.log('[StreamLogs] 任务完成');
                 setBreakdownTaskId(null);
+                setBreakdownProgress(100);
                 message.success('拆解完成');
+                // 更新 selectedBatch 状态为 completed
                 if (selectedBatch) {
+                    setSelectedBatch({
+                        ...selectedBatch,
+                        breakdown_status: 'completed'
+                    });
                     fetchBreakdownResults(selectedBatch.id);
                 }
                 fetchBatches();
             }
         }
     );
-
-    // 监听 streamContent 变化，实时更新流式日志
-    useEffect(() => {
-        if (streamContent) {
-            updateStreamLog(streamContent);
-        }
-    }, [streamContent, updateStreamLog]);
 
     // 监听 selectedBatch 变化，自动加载拆解结果
     useEffect(() => {
@@ -731,32 +761,36 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         }
     };
 
-    // 启动拆解任务 (打开配置弹窗)
-    const handleStartBreakdownClick = (batchId: string) => {
-        setTargetBatchId(batchId);
-        // 默认全选或根据上次选择，这里暂时留空让用户选，或者 Fetch 默认 skills
-        setIsBreakdownModalOpen(true);
-    };
-
-    // 确认启动拆解
-    const handleConfirmBreakdown = async () => {
-        if (!targetBatchId) return;
-        setIsBreakdownModalOpen(false);
+    // 启动拆解任务 (使用已保存的配置)
+    const handleStartBreakdownClick = async (batchId: string) => {
+        // 从 SkillsTab 保存的配置中读取
+        const config = loadBreakdownConfig();
 
         try {
             // 自动弹出 Console
             setShowConsole(true);
             clearLogs();
             lastStepRef.current = ''; // 重置步骤记录
-            addLog('info', `配置已应用，开始拆解批次 ${selectedBatch?.batch_number || ''}...`);
+            addLog('info', `配置已加载，开始拆解批次 ${selectedBatch?.batch_number || ''}...`);
 
-            const res = await breakdownApi.startBreakdown(targetBatchId, {
-                selectedSkills: selectedBreakdownSkills,
-                resourceIds: breakdownConfig,
+            const res = await breakdownApi.startBreakdown(batchId, {
+                selectedSkills: config.selectedBreakdownSkills,
+                resourceIds: config.breakdownConfig,
                 novelType: formData.novel_type
             });
             setBreakdownTaskId(res.data.task_id);
             message.info('拆解任务已启动');
+
+            // 刷新批次列表，显示当前正在拆解的批次
+            fetchBatches();
+
+            // 更新 selectedBatch 状态为 processing/queued，使按钮显示"停止拆解"
+            if (selectedBatch && selectedBatch.id === batchId) {
+                setSelectedBatch({
+                    ...selectedBatch,
+                    breakdown_status: 'processing'
+                });
+            }
 
             // WebSocket 会自动连接，如果失败会降级到轮询
         } catch (err: any) {
@@ -766,16 +800,10 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         }
     };
 
-    // 以前的直接启动函数保留给 Loop/All 使用，但需要改造支持参数
-    const internalStartBreakdown = async (batchId: string) => {
-        const res = await breakdownApi.startBreakdown(batchId); // 使用默认配置
-        return res;
-    };
-
-    // 全部拆解：一次性启动所有 pending 批次（增强版）
+    // 全部拆解：一次性启动所有 pending 和 failed 批次（增强版）
     const handleAllBreakdown = async () => {
         if (!projectId) return;
-        const pendingBatches = batches.filter(b => b.breakdown_status === 'pending');
+        const pendingBatches = batches.filter(b => b.breakdown_status === 'pending' || b.breakdown_status === 'failed');
         if (pendingBatches.length === 0) {
             message.info('没有待拆解的批次');
             return;
@@ -794,13 +822,16 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         });
 
         try {
+            const config = loadBreakdownConfig();
             const res = await breakdownApi.startBatchBreakdown({
                 projectId,
-                resourceIds: breakdownConfig
+                resourceIds: config.breakdownConfig
             });
 
             if (res.data.total > 0) {
                 message.info(`已启动 ${res.data.total} 个拆解任务`);
+                // 刷新批次列表，显示当前正在拆解的批次
+                fetchBatches();
                 // 开始轮询批量进度
                 pollBatchProgress();
             } else {
@@ -838,6 +869,20 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     overall_progress: progress.overall_progress
                 });
 
+                // 检查是否有 QA 重试 3 次仍失败的任务（自动停止）
+                if (progress.task_details && progress.task_details.length > 0) {
+                    const qaFailedTask = progress.task_details.find(
+                        (task: any) => task.status === 'failed' && task.qa_retry_count >= 3
+                    );
+                    if (qaFailedTask) {
+                        clearInterval(interval);
+                        setIsBatchRunning(false);
+                        message.warning(`批次 ${qaFailedTask.batch_number || ''} QA 重试 3 次仍失败，已自动停止批量拆解`);
+                        fetchBatches();
+                        return;
+                    }
+                }
+
                 // 检查是否全部完成
                 const allDone = progress.completed + progress.failed === progress.total_batches;
                 if (allDone) {
@@ -855,6 +900,9 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 console.error('获取批量进度失败:', err);
             }
         }, 3000);
+
+        // 保存 interval ID 以便取消
+        return interval;
     };
 
     // 取消批量拆解
@@ -887,26 +935,67 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         setShowErrorModal(true);
     };
 
-    // 继续拆解：从第一个 pending 批次开始
+    // 继续拆解：从第一个 pending 或 failed 批次开始
     const handleContinueBreakdown = async () => {
         if (!projectId) return;
-        const firstPending = batches.find(b => b.breakdown_status === 'pending');
-        if (!firstPending) {
+        const firstNeedBreakdown = batches.find(b => b.breakdown_status === 'pending' || b.breakdown_status === 'failed');
+        if (!firstNeedBreakdown) {
             message.info('没有待拆解的批次');
             return;
         }
-        setSelectedBatch(firstPending);
+        // 先更新选中批次并设置状态为 processing
+        setSelectedBatch({
+            ...firstNeedBreakdown,
+            breakdown_status: 'processing'
+        });
         try {
              setShowConsole(true);
              clearLogs();
              lastStepRef.current = '';
-             const res = await internalStartBreakdown(firstPending.id);
+             const res = await internalStartBreakdown(firstNeedBreakdown.id);
              setBreakdownTaskId(res.data.task_id);
+             // 刷新批次列表，显示当前正在拆解的批次
+             fetchBatches();
              // WebSocket 会自动连接
         } catch (err: any) {
+             // 失败时恢复状态
+             setSelectedBatch(firstNeedBreakdown);
              const errorMsg = err.response?.data?.detail || '启动失败';
              message.error(errorMsg);
              showError({ code: 'START_FAILED', message: errorMsg });
+        }
+    };
+
+    // 停止当前拆解任务
+    const handleStopCurrentBreakdown = () => {
+        if (!breakdownTaskId) return;
+        setShowStopConfirmModal(true);
+    };
+
+    // 执行停止操作
+    const handleConfirmStop = async () => {
+        setIsStopping(true);
+        try {
+            const res = await breakdownApi.stopBreakdown(breakdownTaskId);
+            const { message: resMessage, token_deducted } = res.data;
+
+            // 构建成功消息
+            let successMsg = resMessage || '已停止拆解任务';
+            if (token_deducted > 0) {
+                successMsg += `（扣除 ${token_deducted} 积分）`;
+            }
+            message.success(successMsg);
+
+            setBreakdownTaskId(null);
+            setBreakdownProgress(0);
+            setShowStopConfirmModal(false);
+            // 刷新批次列表以更新状态
+            fetchBatches();
+        } catch (err: any) {
+            const errorMsg = err.response?.data?.detail || '停止任务失败';
+            message.error(errorMsg);
+        } finally {
+            setIsStopping(false);
         }
     };
 
@@ -1034,6 +1123,10 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                         breakdownResult={breakdownResult}
                         breakdownLoading={breakdownLoading}
                         onBatchScroll={handleBatchScroll}
+                        onViewMethod={(methodId) => {
+                            setViewingMethodId(methodId);
+                            setMethodViewModalOpen(true);
+                        }}
                     />
                 );
             case 'SCRIPT':
@@ -1138,7 +1231,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                                 {isAllBreakdownRunning ? '处理中' : '拆解进度'}
                                             </span>
                                             <span className={`text-[10px] font-mono font-bold ${isAllBreakdownRunning ? 'text-cyan-400' : 'text-emerald-500'}`}>
-                                                {Math.round((batches.filter(b => b.breakdown_status === 'completed').length / batches.length) * 100)}%
+                                                {batches.filter(b => b.breakdown_status === 'completed').length}/{batchTotal}
                                             </span>
                                         </div>
                                         <div className="h-1.5 w-full bg-slate-800/80 rounded-full overflow-hidden border border-slate-700/30 p-[1px]">
@@ -1148,7 +1241,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                                     ? 'bg-gradient-to-r from-cyan-500 to-blue-500'
                                                     : 'bg-gradient-to-r from-emerald-600 to-teal-400'
                                                 }`}
-                                                style={{width: `${(batches.filter(b => b.breakdown_status === 'completed').length / batches.length) * 100}%`}}
+                                                style={{width: `${batchTotal > 0 ? (batches.filter(b => b.breakdown_status === 'completed').length / batchTotal) * 100 : 0}%`}}
                                             >
                                                 {/* 流光特效 */}
                                                 {isAllBreakdownRunning && (
@@ -1235,35 +1328,45 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
                                     <button
                                         onClick={handleAllBreakdown}
-                                        disabled={!!breakdownTaskId || isAllBreakdownRunning || isBatchRunning || batches.filter(b => b.breakdown_status === 'pending').length === 0}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                        title="依次拆解所有待处理批次"
-                                    >
-                                        <Repeat size={14} />
-                                        循环
-                                    </button>
-                                    <button
-                                        onClick={handleAllBreakdown}
-                                        disabled={!!breakdownTaskId || isAllBreakdownRunning || isBatchRunning || batches.filter(b => b.breakdown_status === 'pending').length === 0}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                        disabled={!!breakdownTaskId || isAllBreakdownRunning || isBatchRunning || batches.filter(b => b.breakdown_status === 'pending' || b.breakdown_status === 'failed').length === 0}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white border border-purple-500/30 rounded-lg text-xs font-bold shadow-lg shadow-purple-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
                                         title="一次性启动所有待处理批次"
                                     >
                                         <FastForward size={14} />
-                                        全部
+                                        全部拆解
                                     </button>
                                     <button
                                         onClick={handleContinueBreakdown}
-                                        disabled={!!breakdownTaskId || isAllBreakdownRunning || isBatchRunning || batches.filter(b => b.breakdown_status === 'pending').length === 0}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                        title="从第一个待处理批次开始"
+                                        disabled={!!breakdownTaskId || isAllBreakdownRunning || isBatchRunning || batches.filter(b => b.breakdown_status === 'pending' || b.breakdown_status === 'failed').length === 0}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-500 hover:to-cyan-500 text-white border border-teal-500/30 rounded-lg text-xs font-bold shadow-lg shadow-teal-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                                        title="跳转到第一个待处理批次并开始拆解"
                                     >
                                         <PlayCircle size={14} />
-                                        继续
+                                        继续拆解
                                     </button>
 
                                     <div className="w-px h-4 bg-slate-700 mx-1"></div>
 
-                                    {selectedBatch && selectedBatch.breakdown_status === 'pending' ? (
+                                    {/* 当前有任务在执行时显示停止按钮 */}
+                                    {breakdownTaskId ? (
+                                        <button
+                                            onClick={handleStopCurrentBreakdown}
+                                            disabled={isStopping}
+                                            className="flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-red-900/20 transition-all hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed"
+                                        >
+                                            {isStopping ? (
+                                                <>
+                                                    <Loader2 size={14} className="animate-spin" />
+                                                    停止中...
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <X size={14} />
+                                                    停止拆解
+                                                </>
+                                            )}
+                                        </button>
+                                    ) : selectedBatch && selectedBatch.breakdown_status === 'pending' ? (
                                         <button
                                             onClick={() => handleStartBreakdownClick(selectedBatch.id)}
                                             disabled={!!breakdownTaskId || isAllBreakdownRunning || isBatchRunning}
@@ -1325,6 +1428,8 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     isProcessing={!!breakdownTaskId}
                     progress={breakdownProgress}
                     currentStep={logsCurrentStep || wsCurrentStep}
+                    currentRound={currentRound}
+                    totalRounds={totalRounds}
                     onClose={() => setShowConsole(false)}
                 />
 
@@ -1470,107 +1575,6 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 </div>
             </Modal>
 
-            {/* Breakdown Config Modal */}
-            <Modal
-                open={isBreakdownModalOpen}
-                onCancel={() => setIsBreakdownModalOpen(false)}
-                onOk={handleConfirmBreakdown}
-                title={
-                    <div className="flex items-center gap-2 text-white">
-                        <BrainCircuit size={18} className="text-cyan-400" />
-                        <span>剧情拆解配置</span>
-                    </div>
-                }
-                okText="开始拆解"
-                cancelText="取消"
-                centered
-                width={500}
-                closeIcon={<X size={18} className="text-slate-500 hover:text-white transition-colors" />}
-                className="dark-modal"
-                styles={{
-                    mask: { backgroundColor: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(4px)' },
-                    content: {
-                        backgroundColor: '#0f172a',
-                        border: '1px solid #334155',
-                        borderRadius: '16px',
-                        padding: '0',
-                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 40px rgba(6, 182, 212, 0.1)'
-                    },
-                    header: {
-                        backgroundColor: '#0f172a',
-                        borderBottom: '1px solid #1e293b',
-                        padding: '16px 24px',
-                        borderRadius: '16px 16px 0 0',
-                        marginBottom: '0'
-                    },
-                    body: {
-                        backgroundColor: '#0f172a',
-                        padding: '24px'
-                    },
-                    footer: {
-                        backgroundColor: '#0f172a',
-                        borderTop: '1px solid #1e293b',
-                        padding: '16px 24px',
-                        borderRadius: '0 0 16px 16px'
-                    }
-                }}
-                okButtonProps={{
-                    className: "bg-cyan-600 hover:bg-cyan-500 border-cyan-600 hover:border-cyan-500 text-white font-semibold shadow-lg shadow-cyan-500/20"
-                }}
-                cancelButtonProps={{
-                    className: "bg-slate-800 hover:bg-slate-700 border-slate-700 hover:border-slate-600 text-slate-300 hover:text-white"
-                }}
-            >
-                <div className="space-y-4">
-                    {/* 积分说明提示 */}
-                    <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 flex gap-3 items-start">
-                        <div className="mt-0.5">
-                            <Zap size={16} className="text-amber-400" />
-                        </div>
-                        <div className="text-xs text-amber-300 leading-relaxed">
-                            <span className="font-bold block mb-1 text-amber-200">积分扣除说明</span>
-                            任务启动时会预扣剧集配额，<span className="font-bold text-amber-100">积分将在任务成功完成后扣除</span>（基础消耗 10 积分）。如果任务失败，配额和积分都会自动回滚。
-                        </div>
-                    </div>
-
-                    <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3 flex gap-3 items-start">
-                        <div className="mt-0.5">
-                            <Sparkles size={16} className="text-blue-400" />
-                        </div>
-                        <div className="text-xs text-blue-300 leading-relaxed">
-                            <span className="font-bold block mb-1 text-blue-200">选择挂载的 AI 技能</span>
-                            不同的技能组合会影响拆解的维度和消耗的 Token。建议根据小说类型选择合适的技能。
-                        </div>
-                    </div>
-
-                    <div className="bg-slate-950/50 p-4 rounded-xl border border-slate-800">
-                        <SkillSelector
-                            category="breakdown"
-                            selectedSkillIds={selectedBreakdownSkills}
-                            onChange={setSelectedBreakdownSkills}
-                        />
-                    </div>
-
-                    {/* 配置选择器 */}
-                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl p-3 flex gap-3 items-start">
-                        <div className="mt-0.5">
-                            <Settings size={16} className="text-purple-400" />
-                        </div>
-                        <div className="text-xs text-purple-300 leading-relaxed">
-                            <span className="font-bold block mb-1 text-purple-200">改编方法与质检规则</span>
-                            选择适配方法（冲突提取标准）、质检规则（8维度评分）和输出风格（起承转钩）。可使用系统默认配置或自定义配置。
-                        </div>
-                    </div>
-
-                    <div className="bg-slate-950/50 p-4 rounded-xl border border-slate-800">
-                        <ConfigSelector
-                            value={breakdownConfig}
-                            onChange={setBreakdownConfig}
-                        />
-                    </div>
-                </div>
-            </Modal>
-
             {/* 错误提示模态框 */}
             <Modal
                 open={showErrorModal}
@@ -1667,6 +1671,49 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     </div>
                 </div>
             </Modal>
+
+            {/* 方法论查看弹窗 */}
+            <AnimatePresence>
+                {methodViewModalOpen && viewingMethodId && (
+                    <MethodViewModal
+                        methodId={viewingMethodId}
+                        onClose={() => {
+                            setMethodViewModalOpen(false);
+                            setViewingMethodId(null);
+                        }}
+                    />
+                )}
+            </AnimatePresence>
+
+            {/* 确认弹窗 */}
+            <ConfirmModal
+                open={showStopConfirmModal}
+                onCancel={() => setShowStopConfirmModal(false)}
+                onConfirm={handleConfirmStop}
+                title="确认停止拆解"
+                content={
+                    <div className="text-left">
+                        <p className="text-slate-300 mb-4">
+                            确定要停止当前拆解任务吗？
+                        </p>
+                        <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4">
+                            <div className="flex gap-3 items-start">
+                                <div className="mt-0.5">
+                                    <AlertTriangle size={16} className="text-amber-400" />
+                                </div>
+                                <div className="text-xs text-amber-300 leading-relaxed">
+                                    <span className="font-semibold block mb-1 text-amber-200">停止后将取消排队中的后续任务</span>
+                                    已排队的批次将自动取消，您可以稍后重新启动拆解流程。
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+                confirmText="确认停止"
+                confirmType="danger"
+                iconType="danger"
+                loading={isStopping}
+            />
         </div>
 
     );

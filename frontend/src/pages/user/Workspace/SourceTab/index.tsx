@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Search, X, Loader2, Trash2, BookOpen, Download, Eye, BookText, Upload,
   CheckCircle2, CircleDashed
 } from 'lucide-react';
+import ConfirmModal from '../../../components/modals/ConfirmModal';
 
 interface SourceTabProps {
   project: any;
@@ -45,6 +46,30 @@ const SourceTab: React.FC<SourceTabProps> = ({
   onDownloadChapter,
   onUploadChapter
 }) => {
+  // 删除确认弹窗状态
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deletingChapterId, setDeletingChapterId] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // 处理删除点击
+  const handleDeleteClick = (e: React.MouseEvent, chapterId: string) => {
+    e.stopPropagation();
+    setDeletingChapterId(chapterId);
+    setDeleteModalOpen(true);
+  };
+
+  // 执行删除
+  const handleConfirmDelete = async () => {
+    if (!deletingChapterId) return;
+    setIsDeleting(true);
+    try {
+      await onDeleteChapter({ stopPropagation: () => {} } as React.MouseEvent, deletingChapterId);
+      setDeleteModalOpen(false);
+      setDeletingChapterId(null);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
   return (
     <div className="h-full flex gap-0 animate-in fade-in slide-in-from-bottom-4 duration-300 overflow-hidden bg-slate-950">
       {/* LEFT COLUMN: Chapter List */}
@@ -114,7 +139,7 @@ const SourceTab: React.FC<SourceTabProps> = ({
                         Chapter {String(ch.chapter_number).padStart(2, '0')}
                       </div>
                       <button
-                        onClick={(e) => onDeleteChapter(e, String(ch.id))}
+                        onClick={(e) => handleDeleteClick(e, String(ch.id))}
                         className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-red-400 transition-all"
                       >
                         <Trash2 size={12} />
@@ -212,7 +237,37 @@ const SourceTab: React.FC<SourceTabProps> = ({
         </div>
       </div>
     </div>
-  );
-};
+
+    {/* 删除确认弹窗 */}
+    <ConfirmModal
+      open={deleteModalOpen}
+      onCancel={() => {
+        setDeleteModalOpen(false);
+        setDeletingChapterId(null);
+      }}
+      onConfirm={handleConfirmDelete}
+      title="确认删除章节"
+      content={
+        <div className="text-left">
+          <p className="text-slate-300 mb-3">
+            确定要删除该章节吗？此操作不可撤销。
+          </p>
+          <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3">
+            <div className="flex gap-2 items-start">
+              <Trash2 size={14} className="text-amber-400 mt-0.5 shrink-0" />
+              <p className="text-xs text-amber-300 leading-relaxed">
+                删除章节后将无法恢复，请确认操作。
+              </p>
+            </div>
+          </div>
+        </div>
+      }
+      confirmText="确认删除"
+      confirmType="danger"
+      iconType="danger"
+      loading={isDeleting}
+    />
+  </div>
+);
 
 export default SourceTab;

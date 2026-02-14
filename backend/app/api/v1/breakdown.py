@@ -549,6 +549,7 @@ async def start_all_breakdowns(
     - 使用事务保证原子性
     - 防止重复提交
     - 更新批次状态
+    - 校验批次连续性（防止跳集拆解）
     """
     # 验证项目归属
     project_result = await db.execute(
@@ -563,7 +564,7 @@ async def start_all_breakdowns(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="项目不存在或无权访问"
         )
-    
+
     # 检查项目是否配置了拆解模型
     if not project.breakdown_model_id:
         raise HTTPException(
@@ -582,6 +583,22 @@ async def start_all_breakdowns(
 
     if not batches:
         return {"task_ids": [], "total": 0, "message": "没有待拆解的批次"}
+
+    # 校验第一个批次与上一批次的连续性
+    first_batch = batches[0]
+    prev_batch_result = await db.execute(
+        select(Batch).where(
+            Batch.project_id == project_id,
+            Batch.batch_number < first_batch.batch_number
+        ).order_by(Batch.batch_number.desc()).limit(1)
+    )
+    prev_batch = prev_batch_result.scalar_one_or_none()
+
+    if prev_batch and prev_batch.breakdown_status != 'completed':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"上一批次（第{prev_batch.batch_number}集）尚未完成拆解，无法批量拆解"
+        )
 
     # 检查每个批次是否已有任务在执行
     batch_ids = [batch.id for batch in batches]
@@ -707,6 +724,7 @@ async def start_continue_breakdown(
     - 使用事务保证数据一致性
     - 防止重复提交
     - 更新批次状态
+    - 校验上一批次是否已完成（防止跳集拆解）
     """
     # 验证项目归属
     project_result = await db.execute(
@@ -721,7 +739,7 @@ async def start_continue_breakdown(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="项目不存在或无权访问"
         )
-    
+
     # 检查项目是否配置了拆解模型
     if not project.breakdown_model_id:
         raise HTTPException(
@@ -741,6 +759,21 @@ async def start_continue_breakdown(
     if not batch:
         return {"task_id": None, "batch_id": None, "message": "没有待拆解的批次"}
 
+    # 校验上一批次是否已完成（防止跳集拆解）
+    prev_batch_result = await db.execute(
+        select(Batch).where(
+            Batch.project_id == project_id,
+            Batch.batch_number < batch.batch_number
+        ).order_by(Batch.batch_number.desc()).limit(1)
+    )
+    prev_batch = prev_batch_result.scalar_one_or_none()
+
+    if prev_batch and prev_batch.breakdown_status != 'completed':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"上一批次（第{prev_batch.batch_number}集）尚未完成拆解，请先完成后再继续"
+        )
+
     # 检查是否已有任务在执行
     existing_task_result = await db.execute(
         select(AITask).where(
@@ -755,7 +788,7 @@ async def start_continue_breakdown(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"该批次已有任务在执行中，任务ID: {existing_task.id}"
         )
-    
+
     # 如果批次状态是 failed，允许重新提交
     if batch.breakdown_status == "failed":
         # 允许创建新任务，不删除失败任务记录（保留历史）
@@ -815,7 +848,7 @@ async def start_continue_breakdown(
 
     # 更新批次状态
     batch.breakdown_status = "queued"
-    
+
     # 提交事务
     await db.commit()
     await db.refresh(task)
@@ -1363,6 +1396,7 @@ async def retry_failed_task(
     - 支持修改配置重试
     - 限制重试次数（最多3次）
     - 自动检查配额
+    - 校验上一批次是否已完成（防止跳集拆解）
     """
     # 验证任务归属
     result = await db.execute(
@@ -1390,6 +1424,28 @@ async def retry_failed_task(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="任务已重试3次，无法继续重试"
         )
+
+    # 获取批次信息
+    batch_result = await db.execute(
+        select(Batch).where(Batch.id == task.batch_id)
+    )
+    batch = batch_result.scalar_one_or_none()
+
+    if batch:
+        # 校验上一批次是否已完成（防止跳集拆解）
+        prev_batch_result = await db.execute(
+            select(Batch).where(
+                Batch.project_id == batch.project_id,
+                Batch.batch_number < batch.batch_number
+            ).order_by(Batch.batch_number.desc()).limit(1)
+        )
+        prev_batch = prev_batch_result.scalar_one_or_none()
+
+        if prev_batch and prev_batch.breakdown_status != 'completed':
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"上一批次（第{prev_batch.batch_number}集）尚未完成拆解，无法重新拆解"
+            )
 
     # 检查积分（纯积分制，重试半价）
     quota_service = QuotaService(db)
@@ -1465,6 +1521,227 @@ async def retry_failed_task(
         )
 
 
+@router.get("/results/{batch_id}/detail")
+async def get_breakdown_detail(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取拆解详情（包括模型、资源、质检信息等）
+
+    返回：
+    - breakdown_id: 拆解记录 ID
+    - created_at: 创建时间
+    - model_info: 使用的模型信息
+    - resource_info: 使用的资源信息（改编方法论等）
+    - qa_status: 质检状态
+    - qa_score: 质检分数
+    - qa_report: 质检报告
+    - qa_retry_count: 质检重试次数
+    - task_info: 任务执行信息
+    """
+    from app.models.plot_breakdown import PlotBreakdown
+    from app.models.llm_call_log import LLMCallLog
+    from app.models.model_config import ModelConfig
+
+    # 验证批次属于当前用户，并获取最新的拆解结果
+    result = await db.execute(
+        select(PlotBreakdown).join(Batch).join(Project).where(
+            PlotBreakdown.batch_id == batch_id,
+            Project.user_id == current_user.id
+        ).order_by(PlotBreakdown.created_at.desc())
+    )
+    breakdown = result.scalars().first()
+
+    if not breakdown:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="拆解结果不存在"
+        )
+
+    # 获取关联的任务信息
+    task_result = await db.execute(
+        select(AITask).where(
+            AITask.batch_id == batch_id,
+            AITask.task_type == "breakdown"
+        ).order_by(AITask.created_at.desc())
+    )
+    task = task_result.scalars().first()
+
+    # 构建任务信息
+    task_info = None
+    model_info = None
+    if task:
+        # 计算执行时长
+        duration_seconds = None
+        if task.started_at and task.completed_at:
+            duration_seconds = int((task.completed_at - task.started_at).total_seconds())
+
+        task_info = {
+            "task_id": str(task.id),
+            "status": task.status,
+            "started_at": task.started_at.isoformat() if task.started_at else None,
+            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+            "duration_seconds": duration_seconds,
+            "retry_count": task.retry_count or 0
+        }
+
+        # 从任务配置中获取模型信息
+        if task.config and task.config.get("model_config_id"):
+            model_config_id = task.config.get("model_config_id")
+            model_result = await db.execute(
+                select(ModelConfig).where(ModelConfig.id == model_config_id)
+            )
+            model_config = model_result.scalar_one_or_none()
+            if model_config:
+                model_info = {
+                    "provider": model_config.provider,
+                    "model_name": model_config.model_name,
+                    "display_name": model_config.display_name
+                }
+
+    # 如果没有从任务配置获取到模型信息，尝试从 LLM 调用日志获取
+    if not model_info and task:
+        llm_log_result = await db.execute(
+            select(LLMCallLog).where(
+                LLMCallLog.task_id == task.id
+            ).order_by(LLMCallLog.created_at.desc()).limit(1)
+        )
+        llm_log = llm_log_result.scalar_one_or_none()
+        if llm_log:
+            model_info = {
+                "provider": llm_log.provider,
+                "model_name": llm_log.model_name,
+                "display_name": f"{llm_log.provider}/{llm_log.model_name}"
+            }
+
+    # 获取资源信息（改编方法论）
+    resource_info = {}
+    if breakdown.used_adapt_method_id:
+        adapt_method_result = await db.execute(
+            select(AIResource).where(AIResource.id == breakdown.used_adapt_method_id)
+        )
+        adapt_method = adapt_method_result.scalar_one_or_none()
+        if adapt_method:
+            resource_info["adapt_method"] = {
+                "id": str(adapt_method.id),
+                "name": adapt_method.name,
+                "display_name": adapt_method.display_name
+            }
+
+    return {
+        "breakdown_id": str(breakdown.id),
+        "batch_id": str(breakdown.batch_id),
+        "created_at": breakdown.created_at.isoformat() if breakdown.created_at else None,
+        "format_version": breakdown.format_version,
+        "model_info": model_info,
+        "resource_info": resource_info,
+        "qa_status": breakdown.qa_status,
+        "qa_score": breakdown.qa_score,
+        "qa_report": breakdown.qa_report,
+        "qa_retry_count": breakdown.qa_retry_count or 0,
+        "task_info": task_info
+    }
+
+
+@router.get("/results/{batch_id}/history")
+async def get_breakdown_history(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取批次的拆解历史列表（同一批次的多次拆解记录）
+
+    返回按创建时间倒序排列的拆解记录列表。
+    """
+    from app.models.plot_breakdown import PlotBreakdown
+    from app.models.model_config import ModelConfig
+
+    # 验证批次属于当前用户，并获取所有拆解记录
+    result = await db.execute(
+        select(PlotBreakdown).join(Batch).join(Project).where(
+            PlotBreakdown.batch_id == batch_id,
+            Project.user_id == current_user.id
+        ).order_by(PlotBreakdown.created_at.desc())
+    )
+    breakdowns = result.scalars().all()
+
+    if not breakdowns:
+        return {"items": []}
+
+    items = []
+    for breakdown in breakdowns:
+        task_info = None
+        model_info = None
+
+        # 直接通过 task_id 获取任务信息（新字段）
+        if breakdown.task_id:
+            task_result = await db.execute(
+                select(AITask).where(AITask.id == breakdown.task_id)
+            )
+            task = task_result.scalar_one_or_none()
+            if task:
+                duration_seconds = None
+                if task.started_at and task.completed_at:
+                    duration_seconds = int((task.completed_at - task.started_at).total_seconds())
+
+                task_info = {
+                    "task_id": str(task.id),
+                    "status": task.status,
+                    "started_at": task.started_at.isoformat() if task.started_at else None,
+                    "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+                    "duration_seconds": duration_seconds,
+                    "retry_count": task.retry_count or 0
+                }
+
+        # 直接通过 model_config_id 获取模型信息（新字段）
+        if breakdown.model_config_id:
+            model_result = await db.execute(
+                select(ModelConfig).where(ModelConfig.id == breakdown.model_config_id)
+            )
+            model_config = model_result.scalar_one_or_none()
+            if model_config:
+                model_info = {
+                    "provider": model_config.provider,
+                    "model_name": model_config.model_name,
+                    "display_name": model_config.display_name
+                }
+
+        # 获取资源信息
+        resource_info = {}
+        if breakdown.used_adapt_method_id:
+            adapt_method_result = await db.execute(
+                select(AIResource).where(AIResource.id == breakdown.used_adapt_method_id)
+            )
+            adapt_method = adapt_method_result.scalar_one_or_none()
+            if adapt_method:
+                resource_info["adapt_method"] = {
+                    "id": str(adapt_method.id),
+                    "name": adapt_method.name,
+                    "display_name": adapt_method.display_name
+                }
+
+        # 计算剧情点数量
+        plot_points_count = len(breakdown.plot_points) if breakdown.plot_points else 0
+
+        items.append({
+            "breakdown_id": str(breakdown.id),
+            "batch_id": str(breakdown.batch_id),
+            "created_at": breakdown.created_at.isoformat() if breakdown.created_at else None,
+            "format_version": breakdown.format_version,
+            "model_info": model_info,
+            "resource_info": resource_info,
+            "qa_status": breakdown.qa_status,
+            "qa_score": breakdown.qa_score,
+            "qa_report": breakdown.qa_report,
+            "qa_retry_count": breakdown.qa_retry_count or 0,
+            "plot_points_count": plot_points_count,
+            "task_info": task_info
+        })
+
+    return {"items": items}
+
+
 @router.post("/tasks/{task_id}/stop")
 async def stop_breakdown_task(
     task_id: str,
@@ -1478,6 +1755,7 @@ async def stop_breakdown_task(
     - 更新任务状态为 cancelled
     - 返还已扣除的配额
     - 更新批次状态为 pending（允许重新提交）
+    - 取消后续排队中的批次任务
     """
     # 验证任务归属
     result = await db.execute(
@@ -1501,6 +1779,8 @@ async def stop_breakdown_task(
             detail=f"只有正在执行的任务可以停止，当前状态: {task.status}"
         )
 
+    cancelled_count = 0  # 取消的任务数量
+
     try:
         # 1. 使用 Celery revoke 停止任务（如果任务已在队列中）
         if task.celery_task_id:
@@ -1511,6 +1791,7 @@ async def stop_breakdown_task(
         task.status = "cancelled"
         task.current_step = "用户手动停止"
         task.error_message = None  # 清除错误信息
+        cancelled_count += 1
 
         # 3. 获取批次信息
         batch_result = await db.execute(
@@ -1522,7 +1803,41 @@ async def stop_breakdown_task(
             # 更新批次状态为 pending（允许重新提交）
             batch.breakdown_status = "pending"
 
-        # 4. 返还配额（使用同步方法，避免 greenlet 问题）
+            # 4. 取消该批次之后所有 queued/running 状态的任务
+            subsequent_tasks_result = await db.execute(
+                select(AITask).join(Batch).where(
+                    Batch.project_id == batch.project_id,
+                    Batch.batch_number > batch.batch_number,
+                    AITask.status.in_(["queued", "running"])
+                )
+            )
+            subsequent_tasks = subsequent_tasks_result.scalars().all()
+
+            for subsequent_task in subsequent_tasks:
+                # 撤销 Celery 任务
+                if subsequent_task.celery_task_id:
+                    celery_app.control.revoke(subsequent_task.celery_task_id, terminate=True)
+                    print(f"已撤销后续排队任务: {subsequent_task.celery_task_id}")
+
+                # 更新任务状态
+                subsequent_task.status = "cancelled"
+                subsequent_task.current_step = "因前置任务停止而被取消"
+                subsequent_task.error_message = None
+
+                # 更新对应批次状态为 pending
+                subsequent_batch_result = await db.execute(
+                    select(Batch).where(Batch.id == subsequent_task.batch_id)
+                )
+                subsequent_batch = subsequent_batch_result.scalar_one_or_none()
+                if subsequent_batch:
+                    subsequent_batch.breakdown_status = "pending"
+
+                cancelled_count += 1
+
+            if subsequent_tasks:
+                print(f"已取消 {len(subsequent_tasks)} 个后续排队任务")
+
+        # 5. 返还配额（使用同步方法，避免 greenlet 问题）
         try:
             from app.core.database import SyncSessionLocal
             sync_db = SyncSessionLocal()
@@ -1535,7 +1850,7 @@ async def stop_breakdown_task(
         except Exception as refund_error:
             print(f"返还配额失败: {refund_error}")
 
-        # 5. 扣除已消耗的 Token 费用（即使任务被停止，也需要扣费）
+        # 6. 扣除已消耗的 Token 费用（即使任务被停止，也需要扣费）
         token_deducted = 0
         try:
             from app.core.credits import consume_token_credits_sync
@@ -1556,16 +1871,21 @@ async def stop_breakdown_task(
         except Exception as token_error:
             print(f"扣除 Token 费用失败: {token_error}")
 
-        # 提交事务
+        # 7. 提交事务
         await db.commit()
 
-        message = "任务已停止"
+        # 构建返回消息
+        message_parts = [f"已停止任务"]
+        if cancelled_count > 1:
+            message_parts.append(f"（含 {cancelled_count - 1} 个后续排队任务）")
         if token_deducted > 0:
-            message += f"，已扣除 Token 费用 {token_deducted} 积分"
+            message_parts.append(f"，已扣除 Token 费用 {token_deducted} 积分")
+        message = "".join(message_parts)
 
         return {
             "task_id": str(task.id),
             "status": "cancelled",
+            "cancelled_count": cancelled_count,
             "message": message,
             "token_deducted": token_deducted
         }

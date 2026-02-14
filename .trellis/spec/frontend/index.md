@@ -88,28 +88,93 @@ src/
 - **扫描光效 (Scanning Light)**: 在卡片悬停时显示顶部渐变扫描条。
 
 ### 🧩 Glass UI 组件库 (Glass Components)
+
 为了避免全局 CSS 污染并保持样式统一，请使用以下封装组件替代原生 Ant Design 组件：
 
-- **GlassTabs**: 替代 `Tabs`，提供透明背景卡片式切换。
-- **GlassInput / GlassTextArea**: 替代 `Input` / `Input.TextArea`，提供毛玻璃背景与发光边框。
-- **GlassSelect**: 替代 `Select`，解决 Dropdown 挂载点样式问题，提供统一的暗色下拉菜单。
-- **GlassTable**: 替代 `Table`，提供透明背景数据表格。
-- **GlassModal**: 替代 `Modal` 和 `Drawer`，提供磨砂玻璃背景弹窗。
-- **GlassRangePicker**: 替代 `RangePicker`，提供深色主题日期范围选择器。
+#### 基础 UI 组件
+| 组件 | 替代组件 | 用途 |
+|------|---------|------|
+| `GlassInput` | `Input` | 毛玻璃背景输入框 |
+| `GlassTextArea` | `Input.TextArea` | 毛玻璃背景文本域 |
+| `GlassSelect` | `Select` | 统一的暗色下拉菜单 |
+| `GlassTable` | `Table` | 透明背景数据表格 |
+| `GlassDatePicker` | `DatePicker` | 深色主题日期选择器 |
+| `GlassRangePicker` | `RangePicker` | 深色主题日期范围选择器 |
+| `GlassTabs` | `Tabs` | 透明背景卡片式标签切换 |
+| `GlassCard` | `Card` | 玻璃拟态卡片容器 |
+
+#### 弹窗组件
+| 组件 | 用途 |
+|------|------|
+| `GlassModal` | 详情展示弹窗（替代 Drawer） |
+| `ConfirmModal` | 确认操作弹窗（删除、停止等危险操作） |
+
+#### 功能弹窗组件
+| 组件 | 用途 |
+|------|------|
+| `CreateProjectModal` | 创建项目弹窗 |
+| `RechargeModal` | 积分充值弹窗 |
+| `BillingModal` | 账单管理弹窗 |
+| `TierComparisonModal` | 套餐对比弹窗 |
+| `AgentConfigModal` | Agent 配置弹窗 |
+| `GlobalSettingsModal` | 全局设置弹窗 |
+| `QuotaLimitModal` | 配额限制提示弹窗 |
+
+#### 功能组件
+| 组件 | 用途 |
+|------|------|
+| `ConsoleLogger` | 控制台日志显示组件 |
+| `ConfigSelector` | 配置选择器 |
+| `SkillSelector` | 技能选择器 |
+| `WorkflowEditor` | 工作流可视化编辑器 |
+| `AICopilot` | AI 助手组件 |
+| `MarkdownEditor` | Markdown 编辑器 |
 
 > **注意**: 详情展示类场景（如日志详情、任务详情）应使用 `GlassModal` 而非 `Drawer`，以保持 UI 风格统一。
+
+**组件目录结构**:
+```text
+src/
+├── components/
+│   ├── ui/                    # Glass UI 基础组件
+│   │   ├── GlassInput.tsx
+│   │   ├── GlassSelect.tsx
+│   │   ├── GlassTable.tsx
+│   │   ├── GlassTabs.tsx
+│   │   ├── GlassModal.tsx
+│   │   ├── GlassCard.tsx
+│   │   └── GlassDatePicker.tsx
+│   ├── modals/                # 功能弹窗组件
+│   │   ├── ConfirmModal.tsx
+│   │   ├── CreateProjectModal.tsx
+│   │   ├── RechargeModal.tsx
+│   │   ├── BillingModal.tsx
+│   │   └── ...
+│   └── ...
+```
 
 **使用示例**:
 ```tsx
 import { GlassTabs } from '../ui/GlassTabs';
 import { GlassInput } from '../ui/GlassInput';
 import { GlassSelect } from '../ui/GlassSelect';
-import { GlassRangePicker } from '../ui/GlassDatePicker';
+import { GlassDatePicker } from '../ui/GlassDatePicker';
+import { GlassCard } from '../ui/GlassCard';
+import { ConfirmModal } from '../modals/ConfirmModal';
 
 <GlassTabs items={...} />
 <GlassInput placeholder="搜索..." />
 <GlassSelect options={...} />
-<GlassRangePicker onChange={...} />
+<GlassDatePicker onChange={...} />
+<GlassCard>内容</GlassCard>
+
+<ConfirmModal
+  open={showModal}
+  onCancel={() => setShowModal(false)}
+  onConfirm={handleConfirm}
+  title="确认操作"
+  content="确定要执行此操作吗？"
+/>
 ```
 
 **Drawer → GlassModal 迁移指南**:
@@ -362,11 +427,399 @@ return (
 { id: string, timestamp: string, type: 'info'|'thinking'|'success'|'error', message: string }
 ```
 
+## 9. 状态管理最佳实践 (State Management Best Practices)
+
+### 9.1 乐观更新模式 (Optimistic Update)
+
+**问题**: 调用 API 启动任务后，按钮状态没有立即更新，用户体验不佳
+
+**解决方案**: 在 API 调用成功后，立即更新本地状态，不等待后端轮询
+
+```tsx
+// ✅ 正确：乐观更新
+const handleStartTask = async () => {
+  try {
+    const res = await api.startTask(taskId);
+    setTaskId(res.data.task_id);
+
+    // 立即更新本地状态，使 UI 响应更快
+    if (selectedItem && selectedItem.id === taskId) {
+      setSelectedItem({
+        ...selectedItem,
+        status: 'processing'  // 乐观更新状态
+      });
+    }
+  } catch (err) {
+    // 失败时恢复原状态
+    setSelectedItem(originalItem);
+    message.error('启动失败');
+  }
+};
+
+// ❌ 错误：仅依赖轮询更新状态
+const handleStartTask = async () => {
+  const res = await api.startTask(taskId);
+  setTaskId(res.data.task_id);
+  // 按钮状态要等轮询才能更新，用户体验差
+};
+```
+
+**适用场景**:
+- 启动/停止任务按钮
+- 状态切换操作
+- 任何需要即时反馈的交互
+
+### 9.2 按钮禁用条件设计
+
+**问题**: 按钮禁用条件过于严格，导致用户无法操作
+
+**最佳实践**: 明确列出所有需要启用按钮的状态
+
+```tsx
+// ✅ 正确：明确列出可操作的状态
+disabled={
+  !!taskId ||                    // 有任务正在执行
+  isRunning ||                   // 批量任务运行中
+  items.filter(i =>
+    i.status === 'pending' ||
+    i.status === 'failed'        // 包含失败状态，允许重试
+  ).length === 0
+}
+
+// ❌ 错误：只考虑 pending 状态
+disabled={items.filter(i => i.status === 'pending').length === 0}
+// 问题：failed 状态的项目无法重试
+```
+
 ---
 
-## 8. ⚠️ 铁律：禁止擅自修改 UI/UX
+## 10. 流式数据处理 (Streaming Data)
 
-### 8.1 绝对禁止的行为
+### 10.1 追加模式 vs 覆盖模式
+
+**问题**: 处理 WebSocket 流式数据时，使用覆盖模式会导致数据不连续
+
+**场景**: System Console raw 模式下，LLM 返回的 JSON 片段需要连续追加显示
+
+**错误示例**（覆盖模式）:
+```tsx
+// ❌ 错误：累积到中间状态，然后用完整内容覆盖
+const [streamContent, setStreamContent] = useState('');
+
+// onStreamChunk 回调中只做累积
+onStreamChunk: (chunk) => {
+  setStreamContent(prev => prev + chunk);  // 只累积
+},
+
+// useEffect 中覆盖更新
+useEffect(() => {
+  if (streamContent) {
+    updateStreamLog(streamContent);  // 每次都用完整内容覆盖旧内容
+  }
+}, [streamContent]);
+```
+
+**正确示例**（追加模式）:
+```tsx
+// ✅ 正确：直接追加内容到日志
+onStreamChunk: (stepName, chunk) => {
+  appendStreamLog(chunk);  // 直接追加，不经过中间状态
+},
+```
+
+**`appendStreamLog` 实现** (`useConsoleLogger.ts`):
+```tsx
+const appendStreamLog = useCallback((chunk: string) => {
+  setLogs(prev => {
+    const lastIndex = prev.length - 1;
+
+    if (lastIndex >= 0 && prev[lastIndex].type === 'stream') {
+      // 追加内容到最后一个流式日志
+      const updated = [...prev];
+      updated[lastIndex] = {
+        ...updated[lastIndex],
+        message: updated[lastIndex].message + chunk
+      };
+      return updated;
+    } else {
+      // 创建新的流式日志
+      return [...prev, {
+        id: `stream-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        type: 'stream',
+        message: chunk
+      }];
+    }
+  });
+}, []);
+```
+
+**为什么追加模式更好**:
+1. **实时性**: 每个片段立即显示，无需等待累积
+2. **减少状态**: 不需要额外的 `streamContent` 中间状态
+3. **避免覆盖**: 不会因 React 状态更新时机问题导致内容丢失
+
+### 10.2 回调 vs useEffect
+
+**推荐**: 在回调中直接处理，而非依赖 useEffect 累积
+
+| 方式 | 优点 | 缺点 |
+|------|------|------|
+| **回调直接处理** | 实时性高，状态少 | 需要确保回调稳定性 |
+| **useEffect 累积** | 逻辑集中 | 增加中间状态，可能有覆盖问题 |
+
+---
+
+## 11. 长时间操作的用户反馈规范
+
+### 11.1 核心原则
+
+**问题**: 后端操作（如停止任务、批量处理）可能需要较长时间，前端如果没有即时反馈，用户会感到困惑
+
+**解决方案**: 立即显示操作状态，提供清晰的进度反馈
+
+### 11.2 长时间操作的处理模式
+
+#### 模式一：确认对话框 + Loading 状态
+
+**适用场景**: 不可逆操作或需要用户确认的操作（如停止任务）
+
+```tsx
+// 状态定义
+const [isStopping, setIsStopping] = useState(false);
+
+// 处理函数
+const handleStopTask = async () => {
+  // 1. 弹出确认对话框
+  Modal.confirm({
+    title: '确认停止',
+    content: '确定要停止当前拆解任务吗？停止后已排队的后续任务也将被取消。',
+    okText: '确认停止',
+    okType: 'danger',
+    onOk: async () => {
+      // 2. 设置 loading 状态
+      setIsStopping(true);
+      try {
+        const res = await api.stopTask(taskId);
+
+        // 3. 显示操作结果消息
+        const { cancelled_count, token_deducted } = res.data;
+        let successMsg = res.data.message || '已停止拆解任务';
+        if (token_deducted > 0) {
+          successMsg += `（扣除 ${token_deducted} 积分）`;
+        }
+        message.success(successMsg);
+
+        // 4. 清理状态并刷新
+        setTaskId(null);
+        fetchBatches();
+      } catch (err) {
+        message.error('停止任务失败');
+      } finally {
+        setIsStopping(false);
+      }
+    }
+  });
+};
+
+// 按钮 UI
+<button
+  onClick={handleStopTask}
+  disabled={isStopping}
+  className="..."
+>
+  {isStopping ? (
+    <>
+      <Loader2 size={14} className="animate-spin" />
+      停止中...
+    </>
+  ) : (
+    <>
+      <X size={14} />
+      停止拆解
+    </>
+  )}
+</button>
+```
+
+#### 模式二：即时消息 + 后台处理
+
+**适用场景**: 可逆操作或不需要用户确认的操作
+
+```tsx
+const handleRefresh = async () => {
+  // 1. 立即显示 loading 消息
+  const hide = message.loading('正在刷新...', 0);
+
+  try {
+    await fetchBatches();
+  } finally {
+    // 2. 操作完成后隐藏 loading
+    hide();
+    // 3. 显示成功消息
+    message.success('刷新完成');
+  }
+};
+```
+
+### 11.3 后端响应设计
+
+**后端应返回详细的操作结果信息**，便于前端展示：
+
+```json
+{
+  "task_id": "xxx",
+  "status": "cancelled",
+  "cancelled_count": 3,
+  "message": "已停止任务（含 2 个后续排队任务），已扣除 Token 费用 50 积分",
+  "token_deducted": 50
+}
+```
+
+### 11.4 Loading 状态命名规范
+
+| 操作类型 | 状态变量 | 显示文案 |
+|---------|---------|---------|
+| 停止任务 | `isStopping` | "停止中..." |
+| 删除操作 | `isDeleting` | "删除中..." |
+| 保存操作 | `isSaving` | "保存中..." |
+| 上传操作 | `isUploading` | "上传中..." |
+| 批量处理 | `isProcessing` | "处理中..." |
+
+### 11.5 通用确认弹窗组件 (ConfirmModal)
+
+**组件位置**: `frontend/src/components/modals/ConfirmModal.tsx`
+
+**解决的问题**: 统一所有危险操作的确认弹窗样式，避免使用 `window.confirm` 和分散的 Modal.confirm
+
+**组件特性**:
+- 支持四种图标类型: `warning`, `success`, `info`, `danger`
+- 支持三种确认按钮: `primary`, `danger`, `success`
+- 自动居中显示，毛玻璃遮罩背景
+- 统一的 Glassmorphism 风格
+
+**Props 定义**:
+```typescript
+interface ConfirmModalProps {
+  open: boolean;                    // 控制弹窗显示
+  onCancel: () => void;            // 取消回调
+  onConfirm: () => void;           // 确认回调
+  title?: React.ReactNode;         // 弹窗标题
+  content?: React.ReactNode;        // 弹窗内容（支持 JSX）
+  confirmText?: string;            // 确认按钮文字
+  cancelText?: string;             // 取消按钮文字
+  confirmType?: 'primary' | 'danger' | 'success';  // 确认按钮类型
+  iconType?: 'warning' | 'success' | 'info' | 'danger';  // 图标类型
+  loading?: boolean;               // 加载状态
+  width?: number;                  // 弹窗宽度
+}
+```
+
+**使用示例**:
+
+```tsx
+// 1. 在组件中导入
+import ConfirmModal from '../../../components/modals/ConfirmModal';
+
+// 2. 添加状态
+const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+const [deletingId, setDeletingId] = useState<string | null>(null);
+const [isDeleting, setIsDeleting] = useState(false);
+
+// 3. 处理删除点击
+const handleDeleteClick = (e: React.MouseEvent, id: string) => {
+  e.stopPropagation();
+  setDeletingId(id);
+  setDeleteModalOpen(true);
+};
+
+// 4. 执行删除
+const handleConfirmDelete = async () => {
+  if (!deletingId) return;
+  setIsDeleting(true);
+  try {
+    await api.delete(deletingId);
+    message.success('删除成功');
+    setDeleteModalOpen(false);
+    fetchData();
+  } finally {
+    setIsDeleting(false);
+  }
+};
+
+// 5. 在 JSX 中添加弹窗
+<ConfirmModal
+  open={deleteModalOpen}
+  onCancel={() => {
+    setDeleteModalOpen(false);
+    setDeletingId(null);
+  }}
+  onConfirm={handleConfirmDelete}
+  title="确认删除"
+  content={
+    <div className="text-left">
+      <p className="text-slate-300 mb-3">
+        确定要删除该项目吗？此操作不可撤销。
+      </p>
+      <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3">
+        <div className="flex gap-2 items-start">
+          <Trash2 size={14} className="text-red-400 mt-0.5" />
+          <p className="text-xs text-red-300">
+            删除后数据将无法恢复。
+          </p>
+        </div>
+      </div>
+    </div>
+  }
+  confirmText="确认删除"
+  confirmType="danger"
+  iconType="danger"
+  loading={isDeleting}
+/>
+```
+
+**适用场景**:
+- ⚠️ 危险操作确认（删除、停止、取消）
+- ⚠️ 不可逆操作确认
+- ⚠️ 需要用户明确确认的操作
+
+**图标与按钮类型对应**:
+| 操作类型 | iconType | confirmType | 说明 |
+|---------|----------|-------------|------|
+| 删除 | `danger` | `danger` | 红色警告 |
+| 停止 | `danger` | `danger` | 红色警告 |
+| 成功提示 | `success` | `success` | 绿色确认 |
+| 普通确认 | `info` | `primary` | 蓝色默认 |
+
+### 10.7 禁止的行为
+
+```tsx
+// ❌ 错误：没有任何反馈
+const handleStopTask = async () => {
+  await api.stopTask(taskId);
+  fetchBatches();
+};
+
+// ❌ 错误：没有禁用按钮，用户可以重复点击
+const handleStopTask = async () => {
+  await api.stopTask(taskId);
+  message.success('已停止');
+};
+
+// ❌ 错误：只有文字提示，没有 loading 动画
+const handleStopTask = async () => {
+  message.loading('正在停止...');
+  await api.stopTask(taskId);
+  message.destroy();
+};
+```
+
+---
+
+## 12. ⚠️ 铁律：禁止擅自修改 UI/UX
+
+### 12.1 绝对禁止的行为
+
 除非用户**明确请求**，否则**严禁**修改：
 - 样式 (CSS, Tailwind classes)
 - 图标 (Lucide, Ant Design Icons)
@@ -374,16 +827,16 @@ return (
 - 字段名称或显示逻辑
 - 路由架构 (React Router 结构)
 
-### 8.2 如果认为需要修改
+### 12.2 如果认为需要修改
 1. **停止**
 2. **询问**: "这个改动会影响 UI/UX，您同意吗？"
 3. **等待明确许可**
 
-### 8.3 违反后果
+### 12.3 违反后果
 - 历史教训：一次"顺手优化"导致所有子页面乱套
 - 教训：设计风格是用户的选择，不应被 AI 擅自改变
 
-### 8.4 验证流程
+### 12.4 验证流程
 任何前端代码修改后：
 1. **手动打开所有页面**检查是否正常
 2. **检查路由跳转**是否正常

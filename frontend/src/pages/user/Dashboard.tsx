@@ -3,6 +3,7 @@ import { Plus, MoreVertical, FileText, Clock, CheckCircle2, Trash2, Sparkles, Lo
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import CreateProjectModal from '../../components/modals/CreateProjectModal';
+import ConfirmModal from '../../components/modals/ConfirmModal';
 import { UserTier } from '../../types';
 import { projectApi, USE_MOCK } from '../../services/api';
 import { message } from 'antd';
@@ -96,6 +97,11 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+
+  // 删除确认弹窗状态
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const navigate = useNavigate();
 
   // 获取真实项目列表
@@ -149,18 +155,27 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
     return configs[status] || { label: status, color: 'text-slate-500', icon: FileText, bgColor: 'bg-slate-800', borderColor: 'border-slate-700' };
   };
 
-  const handleDelete = async (e: React.MouseEvent, id: string) => {
+  const handleDeleteClick = (e: React.MouseEvent, projectId: string) => {
     e.stopPropagation();
-    if (window.confirm('确定要永久删除该项目吗？此操作不可撤销。')) {
-      try {
-        await projectApi.deleteProject(id);
-        message.success('项目已删除');
-        setProjects(projects.filter(p => p.id !== id));
-      } catch (err) {
-        message.error('删除项目失败');
-      }
-    }
+    setDeletingProjectId(projectId);
+    setDeleteModalOpen(true);
     setActiveMenuId(null);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deletingProjectId) return;
+    setIsDeleting(true);
+    try {
+      await projectApi.deleteProject(deletingProjectId);
+      message.success('项目已删除');
+      setProjects(projects.filter(p => p.id !== deletingProjectId));
+      setDeleteModalOpen(false);
+      setDeletingProjectId(null);
+    } catch (err) {
+      message.error('删除项目失败');
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   if (loading && !USE_MOCK) {
@@ -252,7 +267,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
                                         className="absolute right-0 mt-2 w-32 bg-slate-900 border border-slate-700 shadow-2xl rounded-xl z-50 overflow-hidden backdrop-blur-xl"
                                     >
                                         <button
-                                            onClick={(e) => handleDelete(e, project.id)}
+                                            onClick={(e) => handleDeleteClick(e, project.id)}
                                             className="w-full px-4 py-3 text-xs font-bold text-red-400 hover:bg-red-500/10 flex items-center gap-2 transition-colors"
                                         >
                                             <Trash2 size={14} /> 删除项目
@@ -389,6 +404,36 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
           </div>
         </div>
       </ProtocolModal>
+
+      {/* 删除确认弹窗 */}
+      <ConfirmModal
+        open={deleteModalOpen}
+        onCancel={() => {
+          setDeleteModalOpen(false);
+          setDeletingProjectId(null);
+        }}
+        onConfirm={handleConfirmDelete}
+        title="确认删除项目"
+        content={
+          <div className="text-left">
+            <p className="text-slate-300 mb-3">
+              确定要永久删除该项目吗？此操作不可撤销。
+            </p>
+            <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3">
+              <div className="flex gap-2 items-start">
+                <Trash2 size={14} className="text-red-400 mt-0.5 shrink-0" />
+                <p className="text-xs text-red-300 leading-relaxed">
+                  删除项目后，所有章节数据、拆解结果将永久清除，请确认操作。
+                </p>
+              </div>
+            </div>
+          </div>
+        }
+        confirmText="确认删除"
+        confirmType="danger"
+        iconType="danger"
+        loading={isDeleting}
+      />
     </div>
   );
 };
