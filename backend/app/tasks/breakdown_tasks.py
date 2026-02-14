@@ -641,14 +641,14 @@ def _execute_breakdown_sync(
     # 标准化 qa_status 为大写（前端期望 'PASS' | 'FAIL' | 'pending'）
     normalized_qa_status_for_db = qa_status.upper() if isinstance(qa_status, str) and qa_status.upper() in ("PASS", "FAIL") else "pending"
 
-    # 获取 model_config_id 用于数据分析
-    model_config_id = task_config.get("model_config_id")
+    # 获取 ai_model_id（来自 ai_models 表）
+    ai_model_id = task_config.get("model_config_id")
 
     breakdown = PlotBreakdown(
         batch_id=batch_id,
         project_id=project_id,
         task_id=task_id,  # 关联任务 ID
-        model_config_id=model_config_id,  # 关联模型配置 ID
+        ai_model_id=ai_model_id,  # 关联 AI 模型 ID（来自 ai_models 表）
         plot_points=plot_points,
         format_version=2,
         consistency_status="pending",

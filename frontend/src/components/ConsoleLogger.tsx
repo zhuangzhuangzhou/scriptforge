@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Terminal, X, ChevronDown, ChevronUp, Zap } from 'lucide-react';
-import { motion, AnimatePresence as _AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 
 export interface LogEntry {
   id: string;
@@ -8,6 +8,7 @@ export interface LogEntry {
   type: 'info' | 'success' | 'warning' | 'error' | 'thinking' | 'llm_call' | 'stream' | 'formatted';
   message: string;
   detail?: any;
+  finalized?: boolean; // 标记流式日志是否已完成
 }
 
 export interface LLMCallStats {
@@ -30,6 +31,7 @@ interface ConsoleLoggerProps {
   currentStep?: string;
   currentRound?: number;
   totalRounds?: number;
+  batchNumber?: number;
   onClose: () => void;
 }
 
@@ -41,7 +43,8 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
   progress = 0,
   currentStep = '',
   currentRound = 0,
-  totalRounds = 0,
+  totalRounds: _totalRounds = 0,
+  batchNumber = 0,
   onClose
 }) => {
   const [isMinimized, setIsMinimized] = useState(false);
@@ -103,23 +106,175 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
 
   if (!visible) return null;
 
-  // 构建标题信息
-  const buildHeaderInfo = () => {
-    const parts: string[] = [];
+  // 统一名称映射函数
+  const normalizeTaskName = (text: string): string => {
+    return text
+      .replace(/网文改编剧情拆解/g, '剧集拆解')
+      .replace(/剧情拆解质量校验/g, '质量检查')
+      .replace(/剧情拆解/g, '剧集拆解')
+      .replace(/质量校验/g, '质量检查');
+  };
 
-    if (currentRound > 0 && totalRounds > 0) {
-      parts.push(`第${currentRound}轮/共${totalRounds}轮`);
+  // 渲染格式化内容（颜色丰富化）
+  const renderFormattedContent = (message: string) => {
+    // 先统一名称
+    let text = normalizeTaskName(message);
+
+    // 去掉开头的 ◆ 符号
+    text = text.replace(/^◆\s*/, '');
+
+    // 处理质检维度格式：【维度名】xxx 得分:90 状态:通过
+    const qaDimensionRegex = /【([^】]+)】\s*([^\s]+)\s*得分[:：]\s*(\d+)\s*状态[:：]\s*(通过|未通过|失败)/g;
+    if (qaDimensionRegex.test(text)) {
+      qaDimensionRegex.lastIndex = 0;
+      const parts: React.ReactNode[] = [];
+      let lastIndex = 0;
+      let match;
+
+      while ((match = qaDimensionRegex.exec(text)) !== null) {
+        // 添加匹配之前的文本
+        if (match.index > lastIndex) {
+          parts.push(text.slice(lastIndex, match.index));
+        }
+
+        const [, dimensionNum, dimensionName, score, status] = match;
+        const isPassed = status === '通过';
+        const scoreNum = parseInt(score, 10);
+
+        parts.push(
+          <span key={match.index} className="inline-flex items-center gap-1">
+            <span className="text-purple-400">【{dimensionNum}】</span>
+            <span className="text-slate-300">{dimensionName}</span>
+            <span className="text-slate-500">得分:</span>
+            <span className={scoreNum >= 80 ? 'text-green-400' : scoreNum >= 60 ? 'text-yellow-400' : 'text-red-400'}>
+              {score}
+            </span>
+            <span className="text-slate-500">状态:</span>
+            <span className={isPassed ? 'text-green-400' : 'text-red-400'}>
+              {status}
+            </span>
+          </span>
+        );
+
+        lastIndex = match.index + match[0].length;
+      }
+
+      // 添加剩余文本
+      if (lastIndex < text.length) {
+        parts.push(text.slice(lastIndex));
+      }
+
+      return parts;
     }
 
-    if (currentStep) {
-      // 提取任务名称（去掉 emoji 和前缀）
-      const taskName = currentStep.replace(/^[🚀✅❌⚠️◈\s]+/u, '').trim();
-      if (taskName) {
-        parts.push(`任务: ${taskName}`);
+    // 处理【】包裹的关键动作
+    const parts: React.ReactNode[] = [];
+    let lastIndex = 0;
+    const bracketRegex = /【([^】]+)】/g;
+    let match;
+
+    while ((match = bracketRegex.exec(text)) !== null) {
+      // 添加【】之前的文本
+      if (match.index > lastIndex) {
+        parts.push(renderTextWithColors(text.slice(lastIndex, match.index)));
+      }
+
+      // 根据内容决定颜色
+      const content = match[1];
+      let colorClass = 'text-cyan-400'; // 默认颜色
+
+      if (content.includes('通过') || content.includes('成功') || content.includes('完成')) {
+        colorClass = 'text-green-400';
+      } else if (content.includes('失败') || content.includes('错误')) {
+        colorClass = 'text-red-400';
+      } else if (content.includes('警告') || content.includes('跳过')) {
+        colorClass = 'text-yellow-400';
+      } else if (content.includes('第') && content.includes('集')) {
+        colorClass = 'text-purple-400 font-semibold';
+      } else if (content.includes('维度') || content.match(/^维度\d+$/)) {
+        colorClass = 'text-purple-400';
+      }
+
+      parts.push(
+        <span key={match.index} className={colorClass}>
+          【{content}】
+        </span>
+      );
+
+      lastIndex = match.index + match[0].length;
+    }
+
+    // 添加剩余文本
+    if (lastIndex < text.length) {
+      parts.push(renderTextWithColors(text.slice(lastIndex)));
+    }
+
+    return parts.length > 0 ? parts : text;
+  };
+
+  // 渲染带颜色的文本（场景、角色、剧情、钩子）
+  const renderTextWithColors = (text: string): React.ReactNode => {
+    // 检测并着色特定关键词
+    const patterns = [
+      { regex: /(场景[:：]\s*)([^\n,，]+)/g, labelClass: 'text-slate-400', valueClass: 'text-blue-300' },
+      { regex: /(角色[:：]\s*)([^\n,，]+)/g, labelClass: 'text-slate-400', valueClass: 'text-amber-300' },
+      { regex: /(剧情[:：]\s*)([^\n,，]+)/g, labelClass: 'text-slate-400', valueClass: 'text-emerald-300' },
+      { regex: /(钩子[:：]\s*)([^\n,，]+)/g, labelClass: 'text-slate-400', valueClass: 'text-pink-300' },
+      { regex: /(剧情钩子[:：]\s*)([^\n,，]+)/g, labelClass: 'text-slate-400', valueClass: 'text-pink-300' },
+      { regex: /(事件[:：]\s*)([^\n,，]+)/g, labelClass: 'text-slate-400', valueClass: 'text-emerald-300' },
+      { regex: /(钩子类型[:：]\s*)([^\n,，]+)/g, labelClass: 'text-slate-400', valueClass: 'text-pink-300' },
+    ];
+
+    // 简单处理：直接返回文本，复杂着色在 CSS 中处理
+    for (const pattern of patterns) {
+      if (pattern.regex.test(text)) {
+        // 重置 regex
+        pattern.regex.lastIndex = 0;
+        return text;
       }
     }
 
-    return parts.join(' | ');
+    return text;
+  };
+
+  // 构建标题信息
+  // 格式: 批次:2   当前任务:剧集拆解/质量检查  次数:1
+  const buildHeaderInfo = () => {
+    const parts: string[] = [];
+
+    // 批次号
+    if (batchNumber > 0) {
+      parts.push(`批次:${batchNumber}`);
+    }
+
+    // 当前任务
+    if (currentStep) {
+      // 提取任务名称（去掉 emoji 和前缀）
+      const taskName = currentStep
+        .replace(/🚀/g, '')
+        .replace(/✅/g, '')
+        .replace(/❌/g, '')
+        .replace(/⚠️/g, '')
+        .replace(/◈/g, '')
+        .trim();
+
+      // 统一名称映射
+      let displayName = taskName;
+      if (taskName.includes('网文改编剧情拆解') || taskName.includes('剧情拆解') || taskName.includes('剧集拆解')) {
+        displayName = '剧集拆解';
+      } else if (taskName.includes('剧情拆解质量校验') || taskName.includes('质量校验') || taskName.includes('质量检查') || taskName.includes('质检')) {
+        displayName = '质量检查';
+      }
+
+      parts.push(`当前任务:${displayName}`);
+    }
+
+    // 次数
+    if (currentRound > 0) {
+      parts.push(`次数:${currentRound}`);
+    }
+
+    return parts.join('   ');
   };
 
   return (
@@ -149,14 +304,9 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
               </span>
 
-              {/* 轮次和任务信息 */}
+              {/* 批次和任务信息 */}
               <span className="text-xs text-slate-400 truncate">
                 {buildHeaderInfo()}
-              </span>
-
-              {/* 进度百分比 */}
-              <span className="text-xs text-cyan-400 font-mono flex-shrink-0 ml-auto">
-                {progress}%
               </span>
             </div>
           )}
@@ -174,7 +324,7 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
                     : 'bg-slate-700 text-slate-400 border-slate-600 hover:bg-slate-600'
                 }`}
               >
-                Formatted
+                Format
               </button>
               <button
                 onClick={() => setViewMode('raw')}
@@ -289,13 +439,15 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
                     log.type === 'warning' ? 'text-amber-400' :
                     log.type === 'thinking' ? 'text-cyan-300 italic' :
                     log.type === 'stream' ? 'text-purple-300 font-normal whitespace-pre-wrap leading-relaxed' :
-                    log.type === 'formatted' ? 'text-emerald-300 font-normal whitespace-pre-wrap leading-relaxed' :
+                    log.type === 'formatted' ? 'text-slate-200 font-normal whitespace-pre-wrap leading-relaxed' :
                     'text-slate-300'
                   }`}>
                     {log.type === 'thinking' && <span className="mr-1">◈</span>}
                     {log.type === 'stream' && <span className="mr-2 text-purple-400">▸</span>}
-                    {log.type === 'formatted' && <span className="mr-2 text-emerald-400">◆</span>}
-                    {log.message}
+                    {log.type === 'formatted'
+                      ? renderFormattedContent(log.message)
+                      : normalizeTaskName(log.message)
+                    }
                   </span>
                 )}
               </div>

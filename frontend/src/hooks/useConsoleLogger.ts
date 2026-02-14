@@ -7,6 +7,7 @@ export interface LogEntry {
   type: 'info' | 'success' | 'warning' | 'error' | 'thinking' | 'llm_call' | 'stream' | 'formatted';
   message: string;
   detail?: any;
+  finalized?: boolean; // 标记流式日志是否已完成
 }
 
 export interface LLMCallStats {
@@ -58,10 +59,10 @@ export const useConsoleLogger = (
   // 更新最后一个流式日志（追加模式，用于累积流式内容）
   const appendStreamLog = useCallback((chunk: string) => {
     setLogs(prev => {
-      // 查找最后一个 stream 类型的日志
+      // 查找最后一个未完成的 stream 类型的日志
       const lastIndex = prev.length - 1;
 
-      if (lastIndex >= 0 && prev[lastIndex].type === 'stream') {
+      if (lastIndex >= 0 && prev[lastIndex].type === 'stream' && !prev[lastIndex].finalized) {
         // 追加内容到最后一个流式日志
         const updated = [...prev];
         updated[lastIndex] = {
@@ -70,12 +71,13 @@ export const useConsoleLogger = (
         };
         return updated;
       } else {
-        // 如果没有流式日志，创建一个新的
+        // 如果没有未完成的流式日志，创建一个新的
         return [...prev, {
           id: `stream-${Date.now()}`,
           timestamp: new Date().toLocaleTimeString(),
           type: 'stream',
-          message: chunk
+          message: chunk,
+          finalized: false
         }];
       }
     });
@@ -111,6 +113,23 @@ export const useConsoleLogger = (
   const clearLogs = useCallback(() => {
     setLogs([]);
     setLlmStats({ total: 0, stages: [] });
+  }, []);
+
+  // 结束当前流式日志（用于步骤结束时，确保下一步骤的内容不会追加到当前日志）
+  const finalizeStreamLog = useCallback(() => {
+    setLogs(prev => {
+      // 如果最后一条是 stream 类型且未完成，将其标记为已完成
+      const lastIndex = prev.length - 1;
+      if (lastIndex >= 0 && prev[lastIndex].type === 'stream' && !prev[lastIndex].finalized) {
+        const updated = [...prev];
+        updated[lastIndex] = {
+          ...updated[lastIndex],
+          finalized: true
+        };
+        return updated;
+      }
+      return prev;
+    });
   }, []);
 
   // 获取 LLM 调用日志
@@ -286,6 +305,7 @@ export const useConsoleLogger = (
     appendStreamLog,
     updateStreamLog,
     clearLogs,
+    finalizeStreamLog,
     fetchLLMCallLogs
   };
 };

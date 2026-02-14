@@ -166,11 +166,17 @@ export const useBreakdownLogs = (
 
       case 'task_complete':
         console.log('[BreakdownLogs] 任务完成');
+        // 重置状态
+        setCurrentStep('');
+        setProgress(100);
         onComplete?.();
         break;
 
       case 'task_failed':
         console.log('[BreakdownLogs] 任务失败');
+        // 重置状态
+        setCurrentStep('');
+        setProgress(0);
         onError?.(data.message || '任务执行失败');
         break;
 
