@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { useWebSocket } from './useWebSocket';
 
 interface StreamMessage {
-  type: 'connected' | 'step_start' | 'stream_chunk' | 'step_end' | 'error' | 'progress' | 'task_complete' | 'task_failed' | 'info' | 'warning' | 'success' | 'qa_check';
+  type: 'connected' | 'step_start' | 'stream_chunk' | 'formatted_chunk' | 'step_end' | 'error' | 'progress' | 'task_complete' | 'task_failed' | 'info' | 'warning' | 'success' | 'qa_check' | 'round_info';
   task_id: string;
   step_name?: string;
   content?: string;
@@ -11,6 +11,8 @@ interface StreamMessage {
     progress?: number;
     current_step?: number;
     total_steps?: number;
+    current_round?: number;
+    total_rounds?: number;
     final?: boolean;
     error_code?: string;
     [key: string]: any;
@@ -22,8 +24,10 @@ interface StreamMessage {
 interface UseBreakdownLogsOptions {
   onStepStart?: (stepName: string, metadata?: any) => void;
   onStreamChunk?: (stepName: string, chunk: string) => void;
+  onFormattedChunk?: (stepName: string, chunk: string) => void;
   onStepEnd?: (stepName: string, result?: any) => void;
   onProgress?: (progress: number, currentStep: number, totalSteps: number) => void;
+  onRoundInfo?: (currentRound: number, totalRounds: number) => void;
   onError?: (error: string, errorCode?: string) => void;
   onWarning?: (warning: string) => void;
   onInfo?: (info: string) => void;
@@ -37,6 +41,7 @@ interface UseBreakdownLogsOptions {
  * 功能：
  * - 实时接收大模型返回的流式数据
  * - 支持步骤开始、流式内容、步骤结束等消息类型
+ * - 支持轮次信息（round_info）
  * - 自动处理任务完成和错误状态
  */
 export const useBreakdownLogs = (
@@ -46,8 +51,10 @@ export const useBreakdownLogs = (
   const {
     onStepStart,
     onStreamChunk,
+    onFormattedChunk,
     onStepEnd,
     onProgress,
+    onRoundInfo,
     onError,
     onWarning,
     onInfo,
@@ -57,8 +64,9 @@ export const useBreakdownLogs = (
 
   const [isConnected, setIsConnected] = useState(false);
   const [currentStep, setCurrentStep] = useState('');
-  const [streamContent, setStreamContent] = useState('');
   const [progress, setProgress] = useState(0);
+  const [currentRound, setCurrentRound] = useState(0);
+  const [totalRounds, setTotalRounds] = useState(0);
 
   // 构建 WebSocket URL
   const wsUrl = taskId ? `/api/v1/ws/breakdown-logs/${taskId}` : null;
@@ -75,15 +83,19 @@ export const useBreakdownLogs = (
       case 'step_start':
         if (data.step_name) {
           setCurrentStep(data.step_name);
-          setStreamContent(''); // 清空之前的流式内容
           onStepStart?.(data.step_name, data.metadata);
         }
         break;
 
       case 'stream_chunk':
         if (data.content) {
-          setStreamContent(prev => prev + data.content);
           onStreamChunk?.(data.step_name || '', data.content);
+        }
+        break;
+
+      case 'formatted_chunk':
+        if (data.content) {
+          onFormattedChunk?.(data.step_name || '', data.content);
         }
         break;
 
@@ -105,11 +117,27 @@ export const useBreakdownLogs = (
         }
         break;
 
-      case 'error':
+      case 'round_info':
+        if (data.metadata) {
+          const { current_round: cr, total_rounds: tr } = data.metadata;
+          if (cr !== undefined) {
+            setCurrentRound(cr);
+          }
+          if (tr !== undefined) {
+            setTotalRounds(tr);
+          }
+          if (cr !== undefined && tr !== undefined) {
+            onRoundInfo?.(cr, tr);
+          }
+        }
+        break;
+
+      case 'error': {
         const errorMsg = data.content || '任务执行出错';
         const errorCode = data.metadata?.error_code;
         onError?.(errorMsg, errorCode);
         break;
+      }
 
       case 'warning':
         if (data.content) {
@@ -149,7 +177,7 @@ export const useBreakdownLogs = (
       default:
         console.warn('[BreakdownLogs] 未知消息类型:', data.type);
     }
-  }, [onStepStart, onStreamChunk, onStepEnd, onProgress, onError, onWarning, onInfo, onSuccess, onComplete]);
+  }, [onStepStart, onStreamChunk, onFormattedChunk, onStepEnd, onProgress, onRoundInfo, onError, onWarning, onInfo, onSuccess, onComplete]);
 
   const { isConnected: wsConnected, lastMessage } = useWebSocket(wsUrl, {
     onMessage: (data) => handleMessage(data as StreamMessage),
@@ -173,8 +201,9 @@ export const useBreakdownLogs = (
   return {
     isConnected: isConnected && wsConnected,
     currentStep,
-    streamContent,
     progress,
+    currentRound,
+    totalRounds,
     lastMessage
   };
 };

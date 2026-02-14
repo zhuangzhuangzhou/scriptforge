@@ -4,7 +4,7 @@ import { breakdownApi } from '../services/api';
 export interface LogEntry {
   id: string;
   timestamp: string;
-  type: 'info' | 'success' | 'warning' | 'error' | 'thinking' | 'llm_call' | 'stream';
+  type: 'info' | 'success' | 'warning' | 'error' | 'thinking' | 'llm_call' | 'stream' | 'formatted';
   message: string;
   detail?: any;
 }
@@ -55,7 +55,33 @@ export const useConsoleLogger = (
     setLogs(prev => [...prev, newLog]);
   }, []);
 
-  // 更新最后一个流式日志（用于累积流式内容）
+  // 更新最后一个流式日志（追加模式，用于累积流式内容）
+  const appendStreamLog = useCallback((chunk: string) => {
+    setLogs(prev => {
+      // 查找最后一个 stream 类型的日志
+      const lastIndex = prev.length - 1;
+
+      if (lastIndex >= 0 && prev[lastIndex].type === 'stream') {
+        // 追加内容到最后一个流式日志
+        const updated = [...prev];
+        updated[lastIndex] = {
+          ...updated[lastIndex],
+          message: updated[lastIndex].message + chunk
+        };
+        return updated;
+      } else {
+        // 如果没有流式日志，创建一个新的
+        return [...prev, {
+          id: `stream-${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString(),
+          type: 'stream',
+          message: chunk
+        }];
+      }
+    });
+  }, []);
+
+  // 更新最后一个流式日志（覆盖模式，已废弃，请使用 appendStreamLog）
   const updateStreamLog = useCallback((message: string) => {
     setLogs(prev => {
       // 查找最后一个 stream 类型的日志
@@ -257,6 +283,7 @@ export const useConsoleLogger = (
     llmStats,
     isConnected,
     addLog,
+    appendStreamLog,
     updateStreamLog,
     clearLogs,
     fetchLLMCallLogs
