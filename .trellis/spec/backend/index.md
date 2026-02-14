@@ -131,4 +131,103 @@ python3 debug_api.py   # 调用实际接口，检查状态码和响应
 
 ---
 
-**最后更新**: 2026-02-08
+## 8. 常见错误与陷阱 (Common Mistakes)
+
+### 8.1 SQLAlchemy AsyncSession 方法
+
+**问题**: `expire_all()` 是同步方法，不能使用 `await`
+
+```python
+# ❌ 错误：会抛出 "object NoneType can't be used in 'await' expression"
+await db.expire_all()
+
+# ✅ 正确：直接调用，不使用 await
+db.expire_all()
+```
+
+**其他同步方法**（不要用 await）:
+- `db.expire_all()`
+- `db.expunge(obj)`
+- `db.expunge_all()`
+- `db.add(obj)`
+- `db.delete(obj)`
+
+**异步方法**（必须用 await）:
+- `await db.execute()`
+- `await db.commit()`
+- `await db.rollback()`
+- `await db.refresh(obj)`
+- `await db.flush()`
+
+### 8.2 WebSocket 双通道同步
+
+**问题**: 任务完成消息只发送到一个 Redis 频道，导致另一个 WebSocket 连接无法收到完成通知
+
+**场景**: 系统有两个 WebSocket 端点：
+- `/ws/breakdown/{task_id}` - 订阅 `breakdown:progress:{task_id}` 频道
+- `/ws/breakdown-logs/{task_id}` - 订阅 `breakdown:logs:{task_id}` 频道
+
+**解决方案**: 任务完成时，必须向两个频道都发送消息
+
+```python
+# ✅ 正确：向两个频道都发送完成消息
+async def on_task_complete(task_id: str, status: str):
+    # 1. 发送到 progress 频道
+    await publish_progress(task_id, {"status": status, "progress": 100})
+
+    # 2. 发送到 logs 频道
+    log_publisher.publish_task_complete(task_id, status)
+```
+
+### 8.3 状态字符串规范化
+
+**问题**: 前后端状态字符串大小写不一致，导致判断失败
+
+```python
+# ❌ 错误：直接比较，可能因大小写不匹配而失败
+if qa_status == "FAIL":
+    retry_qa()
+
+# ✅ 正确：规范化后再比较
+normalized_status = qa_status.upper() if isinstance(qa_status, str) else "PENDING"
+if normalized_status == "FAIL":
+    retry_qa()
+
+# ✅ 正确：保存到数据库时也要规范化
+task.qa_status = qa_status.upper() if qa_status else "PENDING"
+```
+
+**规范**: 状态字符串统一使用大写存储（`PASS`, `FAIL`, `PENDING`）
+
+### 8.4 WebSocket 消息处理优先级
+
+**问题**: WebSocket 循环中同时检查 Redis 消息和数据库状态，导致任务完成消息还没处理完就被数据库状态触发关闭
+
+```python
+# ❌ 错误：每次循环都检查数据库，可能提前关闭连接
+while True:
+    message = await pubsub.get_message(timeout=1.0)
+    if message:
+        await websocket.send_json(json.loads(message['data']))
+
+    # 问题：Redis 消息还没处理完，数据库状态已经是 completed
+    task = await db.get(task_id)
+    if task.status == "completed":
+        break  # 提前关闭，丢失最后的消息
+
+# ✅ 正确：处理完 Redis 消息后跳过数据库检查
+while True:
+    message = await pubsub.get_message(timeout=1.0)
+    if message:
+        await websocket.send_json(json.loads(message['data']))
+        continue  # 关键：跳过本次循环的数据库检查
+
+    # 只有没有 Redis 消息时才检查数据库（兜底）
+    task = await db.get(task_id)
+    if task.status == "completed":
+        break
+```
+
+---
+
+**最后更新**: 2026-02-14

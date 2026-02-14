@@ -17,6 +17,7 @@ interface PlotTabProps {
   breakdownResult: PlotBreakdown | null;
   breakdownLoading: boolean;
   onBatchScroll: (e: React.UIEvent<HTMLDivElement>) => void;
+  onViewMethod?: (methodId: string) => void;
 }
 
 const PlotTab: React.FC<PlotTabProps> = ({
@@ -30,7 +31,8 @@ const PlotTab: React.FC<PlotTabProps> = ({
   breakdownProgress,
   breakdownResult,
   breakdownLoading,
-  onBatchScroll
+  onBatchScroll,
+  onViewMethod
 }) => {
   // 使用轮询 hook 管理拆解任务状态
   const { stopBreakdown } = useBreakdownPolling({
@@ -76,6 +78,7 @@ const PlotTab: React.FC<PlotTabProps> = ({
             onStartBreakdown={onStartBreakdown}
             taskId={breakdownTaskId}
             onStopBreakdown={handleStopBreakdown}
+            onViewMethod={onViewMethod}
           />
         </div>
       </div>

@@ -166,6 +166,9 @@ async def websocket_breakdown_progress(websocket: WebSocket, task_id: str):
                 while True:
                     await asyncio.sleep(poll_interval)
 
+                    # 强制刷新 session 缓存，确保读取最新数据
+                    db.expire_all()
+
                     # 查询任务状态
                     result = await db.execute(select(AITask).where(AITask.id == task_id))
                     task = result.scalar_one_or_none()
@@ -475,13 +478,18 @@ async def websocket_breakdown_logs(websocket: WebSocket, task_id: str):
                     try:
                         # 解析消息
                         data = json.loads(message['data'])
-                        
+
                         # 转发到前端
                         await websocket.send_json(data)
-                        
+
                         # 检测任务完成状态
-                        # 如果收到 step_end 消息且 metadata 中包含 final=True，或者收到 error 消息
-                        if data.get('type') == 'step_end':
+                        # 1. 收到 task_complete 消息（新增）
+                        if data.get('type') == 'task_complete':
+                            # 任务完成消息，直接关闭连接
+                            break
+
+                        # 2. 收到 step_end 消息且 metadata 中包含 final=True
+                        elif data.get('type') == 'step_end':
                             metadata = data.get('metadata', {})
                             if metadata.get('final', False):
                                 # 任务完成，发送完成消息后关闭
@@ -491,7 +499,8 @@ async def websocket_breakdown_logs(websocket: WebSocket, task_id: str):
                                     "message": "任务执行完成"
                                 })
                                 break
-                        
+
+                        # 3. 收到 error 消息
                         elif data.get('type') == 'error':
                             # 发生错误，检查是否是致命错误
                             metadata = data.get('metadata', {})
@@ -503,18 +512,24 @@ async def websocket_breakdown_logs(websocket: WebSocket, task_id: str):
                                     "message": "任务执行失败"
                                 })
                                 break
-                    
+
                     except json.JSONDecodeError as e:
                         # JSON 解析失败，记录但不中断
                         print(f"[WebSocket] JSON 解析失败: {e}")
                         continue
-                
-                # 定期检查任务状态（每秒一次）
+
+                    # 收到消息后继续循环，不检查数据库
+                    continue
+
+                # 只有在没有收到 Redis 消息时才检查数据库状态
                 # 这是为了处理任务在 WebSocket 连接之前就已经完成的情况
                 async with AsyncSessionLocal() as db:
+                    # 强制刷新 session 缓存，确保读取最新数据
+                    db.expire_all()
+
                     result = await db.execute(select(AITask).where(AITask.id == task_id))
                     task = result.scalar_one_or_none()
-                    
+
                     if task:
                         if task.status in ["completed", "failed", "canceled"]:
                             # 任务已结束，发送最终状态并关闭

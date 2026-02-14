@@ -523,6 +523,88 @@ export const breakdownApi = {
       return { data: { success: true, point_id: pointId, status } };
     }
     return api.patch(`/breakdown/results/${batchId}/plot-points/${pointId}`, { status });
+  },
+
+  // 获取拆解详情（模型、资源、质检信息等）
+  getBreakdownDetail: async (batchId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return {
+        data: {
+          breakdown_id: 'mock-breakdown-1',
+          batch_id: batchId,
+          created_at: new Date().toISOString(),
+          format_version: 2,
+          model_info: {
+            provider: 'openai',
+            model_name: 'gpt-4-turbo',
+            display_name: 'GPT-4 Turbo'
+          },
+          resource_info: {
+            adapt_method: {
+              id: 'mock-resource-1',
+              name: 'adapt_method_default',
+              display_name: '默认改编方法论'
+            }
+          },
+          qa_status: 'PASS',
+          qa_score: 85,
+          qa_report: { score: 85, status: 'PASS' },
+          qa_retry_count: 1,
+          task_info: {
+            task_id: 'mock-task-1',
+            status: 'completed',
+            started_at: new Date(Date.now() - 120000).toISOString(),
+            completed_at: new Date().toISOString(),
+            duration_seconds: 120,
+            retry_count: 0
+          }
+        }
+      };
+    }
+    return api.get(`/breakdown/results/${batchId}/detail`);
+  },
+
+  // 获取拆解历史列表（同一批次的多次拆解记录）
+  getBreakdownHistory: async (batchId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return {
+        data: {
+          items: [
+            {
+              breakdown_id: 'mock-breakdown-2',
+              batch_id: batchId,
+              created_at: new Date().toISOString(),
+              format_version: 2,
+              model_info: { provider: 'openai', model_name: 'gpt-4-turbo', display_name: 'GPT-4 Turbo' },
+              resource_info: { adapt_method: { id: 'r1', name: 'default', display_name: '默认方法论' } },
+              qa_status: 'PASS',
+              qa_score: 85,
+              qa_report: null,
+              qa_retry_count: 1,
+              plot_points_count: 12,
+              task_info: { task_id: 't2', status: 'completed', started_at: null, completed_at: null, duration_seconds: 95, retry_count: 0 }
+            },
+            {
+              breakdown_id: 'mock-breakdown-1',
+              batch_id: batchId,
+              created_at: new Date(Date.now() - 3600000).toISOString(),
+              format_version: 2,
+              model_info: { provider: 'openai', model_name: 'gpt-4', display_name: 'GPT-4' },
+              resource_info: {},
+              qa_status: 'FAIL',
+              qa_score: 58,
+              qa_report: null,
+              qa_retry_count: 0,
+              plot_points_count: 8,
+              task_info: { task_id: 't1', status: 'completed', started_at: null, completed_at: null, duration_seconds: 120, retry_count: 0 }
+            }
+          ]
+        }
+      };
+    }
+    return api.get(`/breakdown/results/${batchId}/history`);
   }
 };
 
@@ -785,6 +867,128 @@ export const billingApi = {
       };
     }
     return api.post('/billing/recharge', { amount, payment_method: paymentMethod });
+  }
+};
+
+// 后台数据分析 API
+export const adminAnalyticsApi = {
+  // 获取拆解概览统计
+  getBreakdownOverview: async (period: string = 'week') => {
+    if (USE_MOCK) {
+      await delay(300);
+      return {
+        data: {
+          period,
+          total: 156,
+          passed: 128,
+          failed: 18,
+          pending: 10,
+          pass_rate: 87.7,
+          avg_score: 82.3,
+          avg_retry: 0.45
+        }
+      };
+    }
+    return api.get('/admin/analytics/breakdown/overview', { params: { period } });
+  },
+
+  // 按模型统计
+  getBreakdownByModel: async (period: string = 'week') => {
+    if (USE_MOCK) {
+      await delay(300);
+      return {
+        data: {
+          period,
+          models: [
+            { provider: 'openai', model_name: 'gpt-4-turbo', display_name: 'openai/gpt-4-turbo', total: 80, passed: 72, failed: 8, pass_rate: 90.0, avg_score: 85.2 },
+            { provider: 'anthropic', model_name: 'claude-3-sonnet', display_name: 'anthropic/claude-3-sonnet', total: 50, passed: 42, failed: 8, pass_rate: 84.0, avg_score: 80.5 },
+            { provider: 'openai', model_name: 'gpt-4o', display_name: 'openai/gpt-4o', total: 26, passed: 14, failed: 2, pass_rate: 87.5, avg_score: 81.0 }
+          ]
+        }
+      };
+    }
+    return api.get('/admin/analytics/breakdown/by-model', { params: { period } });
+  },
+
+  // 按资源统计
+  getBreakdownByResource: async (period: string = 'week') => {
+    if (USE_MOCK) {
+      await delay(300);
+      return {
+        data: {
+          period,
+          resources: [
+            { resource_id: 'r1', name: 'adapt_method_default', display_name: '默认改编方法论', total: 100, passed: 88, failed: 12, pass_rate: 88.0, avg_score: 83.5 },
+            { resource_id: 'r2', name: 'adapt_method_drama', display_name: '剧情向方法论', total: 56, passed: 40, failed: 6, pass_rate: 87.0, avg_score: 81.2 }
+          ]
+        }
+      };
+    }
+    return api.get('/admin/analytics/breakdown/by-resource', { params: { period } });
+  },
+
+  // 分数分布
+  getScoreDistribution: async (period: string = 'week') => {
+    if (USE_MOCK) {
+      await delay(300);
+      return {
+        data: {
+          period,
+          distribution: [
+            { range: '90-100', label: '优秀', count: 35, color: '#22c55e' },
+            { range: '80-89', label: '良好', count: 58, color: '#84cc16' },
+            { range: '70-79', label: '中等', count: 32, color: '#eab308' },
+            { range: '60-69', label: '及格', count: 18, color: '#f97316' },
+            { range: '0-59', label: '不及格', count: 8, color: '#ef4444' },
+            { range: '无分数', label: '未评分', count: 5, color: '#6b7280' }
+          ]
+        }
+      };
+    }
+    return api.get('/admin/analytics/breakdown/score-distribution', { params: { period } });
+  },
+
+  // 时间趋势
+  getBreakdownTrend: async (period: string = 'week') => {
+    if (USE_MOCK) {
+      await delay(300);
+      const now = new Date();
+      const trend = [];
+      for (let i = 6; i >= 0; i--) {
+        const date = new Date(now);
+        date.setDate(date.getDate() - i);
+        trend.push({
+          date: date.toISOString(),
+          total: Math.floor(Math.random() * 30) + 10,
+          passed: Math.floor(Math.random() * 25) + 8,
+          failed: Math.floor(Math.random() * 5) + 1,
+          pass_rate: Math.floor(Math.random() * 20) + 75,
+          avg_score: Math.floor(Math.random() * 15) + 75
+        });
+      }
+      return { data: { period, trend } };
+    }
+    return api.get('/admin/analytics/breakdown/trend', { params: { period } });
+  },
+
+  // 重试统计
+  getRetryStats: async (period: string = 'week') => {
+    if (USE_MOCK) {
+      await delay(300);
+      return {
+        data: {
+          period,
+          stats: [
+            { retry_count: '0次', count: 120, color: '#22c55e' },
+            { retry_count: '1次', count: 25, color: '#84cc16' },
+            { retry_count: '2次', count: 8, color: '#eab308' },
+            { retry_count: '3次+', count: 3, color: '#ef4444' }
+          ],
+          avg_retry: 0.45
+        }
+      };
+    }
+    return api.get('/admin/analytics/breakdown/retry-stats', { params: { period } });
   }
 };
 

@@ -143,7 +143,7 @@ class RedisLogPublisher:
         chunk: str
     ) -> None:
         """发布流式内容片段
-        
+
         Args:
             task_id: 任务 ID
             step_name: 步骤名称
@@ -154,6 +154,30 @@ class RedisLogPublisher:
             task_id=task_id,
             step_name=step_name,
             content=chunk
+        )
+        self.publish_log(task_id, message)
+
+    def publish_formatted_chunk(
+        self,
+        task_id: str,
+        step_name: str,
+        formatted_text: str
+    ) -> None:
+        """发布格式化的内容片段（与 stream_chunk 并行）
+
+        用于将 JSON 格式的 LLM 输出转换为人类可读的格式化文本。
+        前端可以根据视图模式选择显示原始 stream_chunk 或格式化的 formatted_chunk。
+
+        Args:
+            task_id: 任务 ID
+            step_name: 步骤名称
+            formatted_text: 格式化后的文本内容
+        """
+        message = self._build_message(
+            message_type="formatted_chunk",
+            task_id=task_id,
+            step_name=step_name,
+            content=formatted_text
         )
         self.publish_log(task_id, message)
     
@@ -302,6 +326,37 @@ class RedisLogPublisher:
         )
         self.publish_log(task_id, message)
 
+    def publish_round_info(
+        self,
+        task_id: str,
+        current_round: int,
+        total_rounds: int,
+        step_name: Optional[str] = None
+    ) -> None:
+        """发布轮次信息消息
+
+        用于通知前端当前处理轮次，以便在 Console 标题栏显示。
+
+        Args:
+            task_id: 任务 ID
+            current_round: 当前轮次（从 1 开始）
+            total_rounds: 总轮次
+            step_name: 当前步骤名称（可选）
+        """
+        metadata = {
+            "current_round": current_round,
+            "total_rounds": total_rounds
+        }
+
+        message = self._build_message(
+            message_type="round_info",
+            task_id=task_id,
+            step_name=step_name,
+            content=f"第 {current_round} 轮/共 {total_rounds} 轮",
+            metadata=metadata
+        )
+        self.publish_log(task_id, message)
+
     def publish_warning(
         self,
         task_id: str,
@@ -343,6 +398,29 @@ class RedisLogPublisher:
             content=success_message
         )
         self.publish_log(task_id, message)
+
+    def publish_task_complete(
+        self,
+        task_id: str,
+        status: str = "completed",
+        message: Optional[str] = None
+    ) -> None:
+        """发布任务完成消息
+
+        用于通知 WebSocket 客户端任务已完成，可以关闭连接。
+
+        Args:
+            task_id: 任务 ID
+            status: 最终状态（completed/failed/canceled）
+            message: 完成消息（可选）
+        """
+        msg = self._build_message(
+            message_type="task_complete",
+            task_id=task_id,
+            content=message or f"任务已{status}",
+            metadata={"final": True, "status": status}
+        )
+        self.publish_log(task_id, msg)
 
     def close(self) -> None:
         """关闭 Redis 连接"""

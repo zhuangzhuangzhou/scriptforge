@@ -2,11 +2,12 @@ import React, { useState } from 'react';
 import {
   Layers, Play, Loader2, X, Activity, Swords, Lightbulb, Clock,
   Film, ChevronDown, Users, MapPin, Heart, Table as TableIcon, Grid,
-  CheckCircle, AlertTriangle, XCircle, BarChart3, List
+  CheckCircle, AlertTriangle, XCircle, BarChart3, List, History
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Batch, PlotBreakdown, Episode, PlotPoint, QAReport } from '../../../../types';
 import { breakdownApi } from '../../../../services/api';
+import BreakdownDetailModal from './BreakdownDetailModal';
 
 interface BreakdownDetailProps {
   selectedBatch: Batch | null;
@@ -16,6 +17,7 @@ interface BreakdownDetailProps {
   onStartBreakdown?: (batchId: string) => void;
   taskId?: string | null;
   onStopBreakdown?: () => void;
+  onViewMethod?: (methodId: string) => void;
 }
 
 interface EpisodeCardProps {
@@ -293,18 +295,24 @@ const EpisodeTableRow: React.FC<EpisodeTableRowProps> = ({
 
 // 剧情点表格行组件（v2 格式）
 const PlotPointTableRow: React.FC<PlotPointTableRowProps> = ({
-  point,
-  onStatusChange
+  point
 }) => {
   return (
     <tr className="border-b border-slate-700/50 hover:bg-slate-800/30 transition-colors">
-      <td className="px-3 py-2 text-center">
+      {/* 序号 */}
+      <td className="px-3 py-3.5 text-center">
         <span className="text-cyan-400 font-semibold text-xs">{point.id}</span>
       </td>
-      <td className="px-3 py-2">
+      {/* 集数 */}
+      <td className="px-3 py-3.5 text-center">
+        <span className="text-xs text-slate-300">第 {point.episode} 集</span>
+      </td>
+      {/* 场景 */}
+      <td className="px-3 py-3.5">
         <span className="text-xs text-slate-300 line-clamp-2">{point.scene}</span>
       </td>
-      <td className="px-3 py-2">
+      {/* 角色 */}
+      <td className="px-3 py-3.5">
         <div className="flex flex-wrap gap-1 max-w-[150px]">
           {point.characters && point.characters.length > 0 ? (
             point.characters.map((char, idx) => (
@@ -317,31 +325,25 @@ const PlotPointTableRow: React.FC<PlotPointTableRowProps> = ({
           )}
         </div>
       </td>
-      <td className="px-3 py-2">
+      {/* 事件 */}
+      <td className="px-3 py-3.5">
         <span className="text-xs text-slate-300 line-clamp-2">{point.event}</span>
       </td>
-      <td className="px-3 py-2">
+      {/* 钩子类型 */}
+      <td className="px-3 py-3.5">
         <span className="text-[10px] px-1.5 py-0.5 bg-amber-500/20 text-amber-300 rounded border border-amber-500/30">
           {point.hook_type}
         </span>
       </td>
-      <td className="px-3 py-2 text-center">
-        <span className="text-xs text-slate-300">第 {point.episode} 集</span>
-      </td>
-      <td className="px-3 py-2 text-center">
-        <button
-          onClick={() => onStatusChange?.(point.id, point.status === 'used' ? 'unused' : 'used')}
-          className={`px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors ${
-            point.status === 'used'
-              ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-              : 'bg-slate-600/20 text-slate-400 border border-slate-600/30'
-          }`}
-        >
+      {/* 状态（纯展示） */}
+      <td className="px-3 py-3.5 text-center">
+        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+          point.status === 'used'
+            ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+            : 'bg-slate-600/20 text-slate-400 border border-slate-600/30'
+        }`}>
           {point.status === 'used' ? '已用' : '未用'}
-        </button>
-      </td>
-      <td className="px-3 py-2 text-center">
-        <span className="text-slate-500 text-xs">待接入</span>
+        </span>
       </td>
     </tr>
   );
@@ -531,13 +533,15 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   breakdownProgress,
   onStartBreakdown,
   taskId,
-  onStopBreakdown
+  onStopBreakdown,
+  onViewMethod
 }) => {
   const [expandedEpisodes, setExpandedEpisodes] = useState<Set<number>>(new Set([1])); // 默认展开第一集
   const [viewMode, setViewMode] = useState<'card' | 'table'>('card'); // 视图模式
   const [episodeStatus, setEpisodeStatus] = useState<Record<number, 'used' | 'unused'>>({}); // 剧集状态
   const [plotPointStatus, setPlotPointStatus] = useState<Record<number, 'used' | 'unused'>>({}); // 剧情点状态
   const [qaReportModalOpen, setQaReportModalOpen] = useState(false); // 质检报告弹窗
+  const [detailModalOpen, setDetailModalOpen] = useState(false); // 拆解详情弹窗
 
   const toggleEpisode = (episodeNumber: number) => {
     setExpandedEpisodes(prev => {
@@ -708,6 +712,14 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
           {/* 标题栏 */}
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-bold text-slate-200">剧情拆解结果</h2>
+            {/* 查看拆解详情按钮 */}
+            <button
+              onClick={() => setDetailModalOpen(true)}
+              className="p-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg border border-slate-600 transition-colors"
+              title="拆解历史"
+            >
+              <History className="w-4 h-4" />
+            </button>
           </div>
 
           {/* 质检信息卡片 */}
@@ -819,7 +831,10 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
               <thead className="bg-slate-900/50">
                 <tr className="border-b border-slate-700/50">
                   <th className="px-4 py-3 text-center text-xs font-semibold text-slate-400 uppercase tracking-wider w-16">
-                    ID
+                    序号
+                  </th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-slate-400 uppercase tracking-wider w-20">
+                    集数
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider w-40">
                     场景
@@ -833,14 +848,8 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider w-28">
                     钩子类型
                   </th>
-                  <th className="px-4 py-3 text-center text-xs font-semibold text-slate-400 uppercase tracking-wider w-24">
-                    集数
-                  </th>
                   <th className="px-4 py-3 text-center text-xs font-semibold text-slate-400 uppercase tracking-wider w-20">
                     状态
-                  </th>
-                  <th className="px-4 py-3 text-center text-xs font-semibold text-slate-400 uppercase tracking-wider w-20">
-                    剧本
                   </th>
                 </tr>
               </thead>
@@ -849,18 +858,10 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
                   <PlotPointTableRow
                     key={point.id}
                     point={{ ...point, status: plotPointStatus[point.id] || point.status }}
-                    onStatusChange={handlePlotPointStatusChange}
                   />
                 ))}
               </tbody>
             </table>
-
-            {/* 表格底部提示 */}
-            <div className="px-4 py-2 bg-slate-900/30 border-t border-slate-700/50">
-              <p className="text-[10px] text-slate-500">
-                提示：点击状态可切换"已用/未用"标记
-              </p>
-            </div>
           </div>
         </div>
 
@@ -870,6 +871,17 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
             <QAReportModal
               report={breakdownResult.qa_report || null}
               onClose={() => setQaReportModalOpen(false)}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* 拆解详情弹窗 */}
+        <AnimatePresence>
+          {detailModalOpen && selectedBatch && (
+            <BreakdownDetailModal
+              batchId={selectedBatch.id}
+              onClose={() => setDetailModalOpen(false)}
+              onViewMethod={onViewMethod}
             />
           )}
         </AnimatePresence>

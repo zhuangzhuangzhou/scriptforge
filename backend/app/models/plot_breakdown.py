@@ -14,6 +14,10 @@ class PlotBreakdown(Base):
     batch_id = Column(UUID(as_uuid=True), ForeignKey("batches.id", ondelete="CASCADE"), nullable=False, index=True)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
 
+    # 数据分析关联字段
+    task_id = Column(UUID(as_uuid=True), ForeignKey("ai_tasks.id", ondelete="SET NULL"), index=True)  # 关联的任务
+    model_config_id = Column(UUID(as_uuid=True), ForeignKey("model_configs.id", ondelete="SET NULL"), index=True)  # 使用的模型
+
     # 拆解结果
     conflicts = Column(JSONB)
     plot_hooks = Column(JSONB)

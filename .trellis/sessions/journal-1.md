@@ -990,3 +990,118 @@ const GlassAlert: React.FC<{
 
 ---
 
+
+## [20260214-110152] 添加停止拆解任务功能
+
+**时间**: 2026-02-14 11:01:52
+
+**提交**:
+- `43d6565` - feat: 添加停止拆解任务功能
+
+
+**摘要**: 实现前后端停止拆解任务功能，包括后端 API 端点、Celery 任务撤销、配额返还，以及前端停止按钮 UI
+
+---
+
+
+## [20260214-231740] 修复账单系统Token计费和UI优化
+
+**时间**: 2026-02-14 23:17:40
+
+**提交**:
+- `2544787` - fix: 修复账单系统三个问题
+- `442f7cd` - fix: 完善账单系统功能和UI优化
+- `670bf92` - style: 积分定价中Token费用改为动态计算说明
+
+
+## 修复内容
+
+### 1. Token 消费扣费问题
+- 添加 `consume_token_credits_sync()` 同步函数
+- 移除 `token_billing_enabled` 开关，有消耗即扣费
+- 任务完成/失败/停止时都扣除 Token 费用
+
+### 2. 本月消耗显示为0
+- `CreditsInfoResponse` 模型添加 `monthly_consumed` 字段
+
+### 3. 查看更多按钮
+- 实现分页加载逻辑
+- 无更多数据时显示"没有更多了"
+
+### 4. UI 优化
+- 时间格式改为 YYYY-MM-DD HH:mm:ss
+- 弹窗尺寸、间距、行高调整
+- Token 费用改为动态计算说明
+
+**修改文件**:
+- `backend/app/core/credits.py`
+- `backend/app/tasks/breakdown_tasks.py`
+- `backend/app/api/v1/billing.py`
+- `backend/app/api/v1/breakdown.py`
+- `frontend/src/components/modals/BillingModal.tsx`
+
+---
+
+
+## [20260215-021853] 批次连续性校验与确认弹窗组件
+
+**时间**: 2026-02-15 02:18:53
+
+**提交**:
+- `8540826` - feat: 批次连续性校验与确认弹窗组件
+
+
+## 核心功能
+
+| 功能 | 描述 |
+|------|------|
+| 批次连续性校验 | 后端4个接口增加校验逻辑，防止跳集拆解 |
+| ConfirmModal组件 | 新增通用确认弹窗组件，统一危险操作UI |
+| 弹窗统一 | 3处删除/停止操作使用统一组件 |
+| 规范文档 | 更新前端规范，新增组件使用指南 |
+
+## 改动文件
+
+### 后端
+- `backend/app/api/v1/breakdown.py` - 4个接口增加校验
+
+### 前端新增
+- `frontend/src/components/modals/ConfirmModal.tsx` - 通用确认弹窗
+
+### 前端修改
+- `frontend/src/pages/user/Workspace/index.tsx` - 使用ConfirmModal
+- `frontend/src/pages/user/Workspace/SourceTab/index.tsx` - 删除章节使用ConfirmModal
+- `frontend/src/pages/user/Dashboard.tsx` - 删除项目使用ConfirmModal
+
+### 文档
+- `docs/batch-continuity-validation.md` - 批次连续性校验方案文档
+- `.trellis/spec/frontend/index.md` - 更新组件规范
+
+## 校验规则
+
+1. **继续拆解** - 校验上一批次是否完成
+2. **全部拆解** - 校验连续性
+3. **停止拆解** - 取消后续排队任务
+4. **重新拆解** - 校验上一批次
+
+## UI改进
+
+- 停止/删除操作添加loading状态
+- 确认弹窗居中显示
+- 统一的毛玻璃风格
+
+---
+
+
+## [20260215-030927] 修复 ConfirmModal 和 SourceTab 组件问题
+
+**时间**: 2026-02-15 03:09:27
+
+**提交**:
+- `2592625` - fix: 修复 ConfirmModal 和 SourceTab 组件问题
+
+
+**摘要**: 修复 ConfirmModal loading 属性、调整弹窗背景透明度、修复 SourceTab 导入路径和 Workspace 类型错误
+
+---
+

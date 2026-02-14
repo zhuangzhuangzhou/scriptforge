@@ -271,6 +271,15 @@ class SimpleSkillExecutor:
             full_response = ""
             stream_failed = False
 
+            # 初始化流式 JSON 解析器（用于实时格式化输出）
+            from app.utils.stream_json_parser import StreamJsonParser
+            from app.utils.log_formatter import format_json_object, detect_content_type
+
+            json_parser = StreamJsonParser()
+            step_display_name = skill.display_name or skill.name
+            content_type = detect_content_type(step_display_name)
+            formatted_index = 0
+
             try:
                 for chunk in self.model_adapter.stream_generate(
                     prompt,
@@ -279,11 +288,26 @@ class SimpleSkillExecutor:
                 ):
                     if chunk:  # 确保 chunk 不为 None
                         if self.log_publisher and task_id:
+                            # 发送原始 JSON 片段
                             self.log_publisher.publish_stream_chunk(
                                 task_id,
-                                skill.display_name or skill.name,
+                                step_display_name,
                                 chunk
                             )
+
+                            # 解析并发送格式化内容
+                            parsed_objects = json_parser.feed(chunk)
+                            for obj in parsed_objects:
+                                formatted_text = format_json_object(
+                                    obj, content_type, formatted_index
+                                )
+                                self.log_publisher.publish_formatted_chunk(
+                                    task_id,
+                                    step_display_name,
+                                    formatted_text + "\n"
+                                )
+                                formatted_index += 1
+
                         full_response += chunk
             except Exception as stream_error:
                 # 流式调用失败，回退到非流式
@@ -500,6 +524,13 @@ class SimpleAgentExecutor:
             results["_iteration"] = iteration + 1
 
             if self.log_publisher and task_id:
+                # 发送结构化的轮次信息（供前端标题栏显示）
+                self.log_publisher.publish_round_info(
+                    task_id,
+                    current_round=iteration + 1,
+                    total_rounds=max_iterations
+                )
+                # 同时发送文本日志
                 self.log_publisher.publish_info(
                     task_id,
                     f"🔄 第 {iteration + 1} 轮处理（共 {max_iterations} 轮）"

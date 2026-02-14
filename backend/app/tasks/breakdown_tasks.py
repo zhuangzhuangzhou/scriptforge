@@ -641,9 +641,14 @@ def _execute_breakdown_sync(
     # 标准化 qa_status 为大写（前端期望 'PASS' | 'FAIL' | 'pending'）
     normalized_qa_status_for_db = qa_status.upper() if isinstance(qa_status, str) and qa_status.upper() in ("PASS", "FAIL") else "pending"
 
+    # 获取 model_config_id 用于数据分析
+    model_config_id = task_config.get("model_config_id")
+
     breakdown = PlotBreakdown(
         batch_id=batch_id,
         project_id=project_id,
+        task_id=task_id,  # 关联任务 ID
+        model_config_id=model_config_id,  # 关联模型配置 ID
         plot_points=plot_points,
         format_version=2,
         consistency_status="pending",
@@ -819,9 +824,14 @@ def _execute_breakdown_sync_v1(
     # 保存拆解结果
     update_task_progress_sync(db, task_id, progress=90, current_step="保存拆解结果中... (90%)")
 
+    # 获取 model_config_id 用于数据分析
+    model_config_id = task_config.get("model_config_id")
+
     breakdown = PlotBreakdown(
         batch_id=batch_id,
         project_id=project_id,
+        task_id=task_id,  # 关联任务 ID
+        model_config_id=model_config_id,  # 关联模型配置 ID
         conflicts=conflicts,
         plot_hooks=plot_hooks,
         characters=characters,
