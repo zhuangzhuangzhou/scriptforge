@@ -1535,13 +1535,39 @@ async def stop_breakdown_task(
         except Exception as refund_error:
             print(f"返还配额失败: {refund_error}")
 
+        # 5. 扣除已消耗的 Token 费用（即使任务被停止，也需要扣费）
+        token_deducted = 0
+        try:
+            from app.core.credits import consume_token_credits_sync
+            sync_db = SyncSessionLocal()
+            try:
+                token_result = consume_token_credits_sync(
+                    db=sync_db,
+                    user_id=str(current_user.id),
+                    task_id=task_id,
+                    task_type="breakdown"
+                )
+                if token_result.get("token_credits", 0) > 0:
+                    sync_db.commit()
+                    token_deducted = token_result.get("token_credits", 0)
+                    print(f"已扣除 Token 费用: {token_deducted} 积分")
+            finally:
+                sync_db.close()
+        except Exception as token_error:
+            print(f"扣除 Token 费用失败: {token_error}")
+
         # 提交事务
         await db.commit()
+
+        message = "任务已停止"
+        if token_deducted > 0:
+            message += f"，已扣除 Token 费用 {token_deducted} 积分"
 
         return {
             "task_id": str(task.id),
             "status": "cancelled",
-            "message": "任务已停止，配额已返还"
+            "message": message,
+            "token_deducted": token_deducted
         }
 
     except Exception as e:

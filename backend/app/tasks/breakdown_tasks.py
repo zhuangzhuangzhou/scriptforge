@@ -277,7 +277,7 @@ def _handle_task_failure_sync(
     """处理任务失败（同步版本）
 
     更新状态，记录错误信息。
-    注意：采用后扣费模式，任务失败时不需要回滚积分（因为还没扣费）。
+    注意：即使任务失败，也需要扣除已消耗的 Token 费用（因为实际调用了 API）。
     """
     # 更新任务状态
     error_info = error.to_dict()
@@ -294,6 +294,21 @@ def _handle_task_failure_sync(
     if batch_record:
         batch_record.breakdown_status = "failed"
         db.commit()
+
+    # Token 计费：即使任务失败，也需要扣除已消耗的 Token 费用
+    token_result = consume_token_credits_sync(
+        db=db,
+        user_id=user_id,
+        task_id=task_id,
+        task_type="breakdown"
+    )
+    if token_result.get("token_credits", 0) > 0:
+        db.commit()
+        logger.info(
+            f"任务失败但仍扣除 Token 费用: input={token_result.get('input_tokens', 0)}, "
+            f"output={token_result.get('output_tokens', 0)}, "
+            f"credits={token_result.get('token_credits', 0)}"
+        )
 
     # 发布错误消息
     if log_publisher:

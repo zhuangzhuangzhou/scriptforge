@@ -809,6 +809,9 @@ def consume_token_credits_sync(
     从 LLMCallLog 汇总该任务的 token 使用量，然后扣除积分。
     用于 Celery worker 中的同步操作。
 
+    注意：无论 token_billing_enabled 配置如何，只要有 token 消耗就会扣费。
+    这是因为实际消耗了 API 资源，必须计费。
+
     Args:
         db: 同步数据库会话
         user_id: 用户ID
@@ -825,19 +828,6 @@ def consume_token_credits_sync(
     # 从数据库读取 token 计费配置
     config = get_credits_config_sync(db)
     token_config = config.get("token", {})
-    token_billing_enabled = token_config.get("enabled", False)
-
-    # 检查 token 计费是否启用
-    if not token_billing_enabled:
-        return {
-            "success": True,
-            "balance": 0,
-            "token_credits": 0,
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "enabled": False,
-            "message": "Token 计费未启用"
-        }
 
     # 从 LLMCallLog 汇总该任务的 token 使用量
     task_uuid = UUID(task_id) if isinstance(task_id, str) else task_id
@@ -863,6 +853,17 @@ def consume_token_credits_sync(
                 input_tokens += len(log.prompt) // 2
             if log.response:
                 output_tokens += len(log.response) // 2
+
+    # 如果没有任何 token 消耗，直接返回
+    if input_tokens == 0 and output_tokens == 0:
+        return {
+            "success": True,
+            "balance": 0,
+            "token_credits": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "message": "无 Token 消耗"
+        }
 
     # 计算 token 积分
     input_per_1k = token_config.get("input_per_1k", 1)
