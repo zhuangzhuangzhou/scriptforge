@@ -2,7 +2,6 @@ import React from 'react';
 import { Batch, PlotBreakdown } from '../../../../types';
 import BatchList from './BatchList';
 import BreakdownDetail from './BreakdownDetail';
-import { useBreakdownPolling } from './hooks/useBreakdownPolling';
 
 interface PlotTabProps {
   projectId: string;
@@ -10,6 +9,7 @@ interface PlotTabProps {
   selectedBatch: Batch | null;
   onSelectBatch: (batch: Batch) => void;
   onStartBreakdown: (batchId: string) => void;
+  onStopBreakdown: () => void;
   isCreatingBatches: boolean;
   loadingBatches: boolean;
   breakdownTaskId: string | null;
@@ -25,6 +25,7 @@ const PlotTab: React.FC<PlotTabProps> = ({
   selectedBatch,
   onSelectBatch,
   onStartBreakdown,
+  onStopBreakdown,
   isCreatingBatches,
   loadingBatches,
   breakdownTaskId,
@@ -34,23 +35,6 @@ const PlotTab: React.FC<PlotTabProps> = ({
   onBatchScroll,
   onViewMethod
 }) => {
-  // 使用轮询 hook 管理拆解任务状态
-  const { stopBreakdown } = useBreakdownPolling({
-    onComplete: () => {
-      console.log('拆解任务完成');
-    },
-    onError: (error) => {
-      console.error('拆解任务错误:', error);
-    }
-  });
-
-  // 停止拆解处理函数
-  const handleStopBreakdown = () => {
-    if (breakdownTaskId) {
-      stopBreakdown();
-    }
-  };
-
   return (
     <div className="h-full flex gap-0 animate-in fade-in slide-in-from-bottom-4 duration-300 overflow-hidden bg-slate-950">
       {/* LEFT COLUMN: Batch List */}
@@ -77,7 +61,7 @@ const PlotTab: React.FC<PlotTabProps> = ({
             breakdownProgress={breakdownProgress}
             onStartBreakdown={onStartBreakdown}
             taskId={breakdownTaskId}
-            onStopBreakdown={handleStopBreakdown}
+            onStopBreakdown={onStopBreakdown}
             onViewMethod={onViewMethod}
           />
         </div>
