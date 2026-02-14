@@ -19,13 +19,51 @@ router = APIRouter(prefix="/ai-resources", tags=["AI资源文档"])
 
 # ==================== Pydantic Schemas ====================
 
-# 分类枚举定义
+# TODO: 后期升级 - 将分类配置迁移到数据库表，支持动态管理
+# 目前分类配置写死在代码中，通过 /categories 接口返回给前端
+# 升级方案：新建 ai_resource_categories 表，存储 key/label/icon/color/description/order/default_select_all
+# 分类枚举定义（包含图标和颜色信息供前端使用）
 RESOURCE_CATEGORIES = {
-    "methodology": "方法论",
-    "type_guide": "类型指南",
-    "output_style": "输出风格",
-    "qa_rules": "质检标准",
-    "template": "模板案例",
+    "methodology": {
+        "label": "方法论",
+        "icon": "BookOpen",
+        "color": "blue",
+        "description": "改编方法论，决定如何提取冲突、识别情绪钩子、应用压缩策略",
+        "order": 1,
+        "default_select_all": True,  # 默认全选
+    },
+    "type_guide": {
+        "label": "类型指南",
+        "icon": "Compass",
+        "color": "emerald",
+        "description": "不同小说类型的改编指南，针对悬疑、言情、玄幻等类型的专属策略",
+        "order": 2,
+        "default_select_all": False,
+    },
+    "output_style": {
+        "label": "输出风格",
+        "icon": "Palette",
+        "color": "purple",
+        "description": "剧本输出的风格规范（起承转钩、视觉化优先、快节奏无尿点）",
+        "order": 3,
+        "default_select_all": False,
+    },
+    "qa_rules": {
+        "label": "质检标准",
+        "icon": "Shield",
+        "color": "orange",
+        "description": "质量检查标准，决定拆解结果的通过阈值",
+        "order": 4,
+        "default_select_all": False,
+    },
+    "template": {
+        "label": "模板案例",
+        "icon": "FileText",
+        "color": "cyan",
+        "description": "输出格式模板和参考示例",
+        "order": 5,
+        "default_select_all": False,
+    },
 }
 
 
@@ -101,6 +139,25 @@ def _to_response(resource: AIResource) -> AIResourceResponse:
 
 
 # ==================== API Endpoints ====================
+
+@router.get("/categories")
+async def get_resource_categories():
+    """获取 AI 资源分类列表"""
+    categories = []
+    for key, config in RESOURCE_CATEGORIES.items():
+        categories.append({
+            "key": key,
+            "label": config["label"],
+            "icon": config["icon"],
+            "color": config["color"],
+            "description": config["description"],
+            "order": config["order"],
+            "default_select_all": config["default_select_all"],
+        })
+    # 按 order 排序
+    categories.sort(key=lambda x: x["order"])
+    return {"categories": categories}
+
 
 @router.get("", response_model=AIResourceListResponse)
 async def list_ai_resources(

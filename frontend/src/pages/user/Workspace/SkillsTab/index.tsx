@@ -1,89 +1,437 @@
-import React, { useState, useEffect } from 'react';
-import { Sparkles, Plus, Save, Loader2, Settings, Zap } from 'lucide-react';
-import SkillSelector from '../../../../components/SkillSelector';
-import ConfigSelector from '../../../../components/ConfigSelector';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Sparkles, Loader2, Eye, Check, BookOpen, Palette, Shield, FileText, HelpCircle, Compass } from 'lucide-react';
+import { GlassTabs } from '../../../../components/ui/GlassTabs';
+import { GlassModal } from '../../../../components/ui/GlassModal';
+import api from '../../../../services/api';
+import { message } from 'antd';
 
-interface Skill {
+interface AIResource {
   id: string;
   name: string;
-  trigger: string;
-  desc: string;
-  prompt: string;
+  display_name: string;
+  description: string;
+  category: string;
+  content?: string;
+  is_builtin: boolean;
+  is_active: boolean;
+}
+
+interface CategoryConfig {
+  key: string;
+  label: string;
+  icon: string;
+  color: string;
+  description: string;
+  order: number;
+  default_select_all: boolean;
 }
 
 interface SkillsTabProps {
-  skills: Skill[];
+  skills?: unknown[];
 }
 
 const STORAGE_KEY = 'breakdown_config';
 
 interface BreakdownConfig {
-  selectedBreakdownSkills: string[];
-  breakdownConfig: string[];
+  selectedResourceIds: string[];
   savedAt: string;
 }
 
-// 毛玻璃卡片组件
-const GlassCard: React.FC<{ children: React.ReactNode; className?: string }> = ({
-  children,
-  className = ''
-}) => (
-  <div className={`bg-slate-900/60 backdrop-blur-xl border border-slate-800/60 rounded-2xl shadow-xl ${className}`}>
-    {children}
-  </div>
-);
+// 图标映射
+const iconMap: Record<string, React.ReactNode> = {
+  BookOpen: <BookOpen size={16} />,
+  Compass: <Compass size={16} />,
+  Palette: <Palette size={16} />,
+  Shield: <Shield size={16} />,
+  FileText: <FileText size={16} />,
+};
 
-const SkillsTab: React.FC<SkillsTabProps> = ({
-  skills
+// 颜色映射
+const colorMap: Record<string, { bg: string; border: string; text: string; glow: string }> = {
+  blue: {
+    bg: 'bg-blue-500/10',
+    border: 'border-blue-500/30',
+    text: 'text-blue-400',
+    glow: 'shadow-blue-500/20',
+  },
+  emerald: {
+    bg: 'bg-emerald-500/10',
+    border: 'border-emerald-500/30',
+    text: 'text-emerald-400',
+    glow: 'shadow-emerald-500/20',
+  },
+  purple: {
+    bg: 'bg-purple-500/10',
+    border: 'border-purple-500/30',
+    text: 'text-purple-400',
+    glow: 'shadow-purple-500/20',
+  },
+  orange: {
+    bg: 'bg-orange-500/10',
+    border: 'border-orange-500/30',
+    text: 'text-orange-400',
+    glow: 'shadow-orange-500/20',
+  },
+  cyan: {
+    bg: 'bg-cyan-500/10',
+    border: 'border-cyan-500/30',
+    text: 'text-cyan-400',
+    glow: 'shadow-cyan-500/20',
+  },
+};
+
+// 资源卡片组件
+interface ResourceCardProps {
+  resource: AIResource;
+  isSelected: boolean;
+  color: string;
+  onSelect: () => void;
+  onViewDetail: () => void;
+}
+
+const ResourceCard: React.FC<ResourceCardProps> = ({
+  resource,
+  isSelected,
+  color,
+  onSelect,
+  onViewDetail,
 }) => {
-  const [selectedBreakdownSkills, setSelectedBreakdownSkills] = useState<string[]>([]);
-  const [breakdownConfig, setBreakdownConfig] = useState<string[]>([]);
-  const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const colors = colorMap[color] || colorMap.cyan;
 
-  // 加载保存的配置
-  useEffect(() => {
-    const loadConfig = () => {
-      try {
-        const saved = localStorage.getItem(STORAGE_KEY);
-        if (saved) {
-          const config: BreakdownConfig = JSON.parse(saved);
-          setSelectedBreakdownSkills(config.selectedBreakdownSkills || []);
-          setBreakdownConfig(config.breakdownConfig || []);
+  return (
+    <div
+      onClick={onSelect}
+      className={`
+        relative group p-4 rounded-xl border transition-all duration-300 cursor-pointer
+        ${isSelected
+          ? `${colors.bg} ${colors.border} shadow-lg ${colors.glow}`
+          : 'bg-slate-900/40 border-slate-800 hover:border-slate-700 hover:bg-slate-800/60'
         }
-      } catch (err) {
-        console.error('加载配置失败:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
+      `}
+    >
+      {/* 选中指示器 */}
+      <div className={`
+        absolute top-3 left-3 w-5 h-5 rounded-md flex items-center justify-center border transition-all
+        ${isSelected
+          ? `${colors.bg} ${colors.border} ${colors.text}`
+          : 'bg-slate-950 border-slate-700 group-hover:border-slate-500'
+        }
+      `}>
+        {isSelected && <Check size={12} strokeWidth={3} />}
+      </div>
 
-    loadConfig();
+      {/* 详情按钮 */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onViewDetail();
+        }}
+        className={`
+          absolute top-3 right-3 w-7 h-7 rounded-lg flex items-center justify-center
+          bg-slate-800/80 border border-slate-700 text-slate-400
+          hover:bg-slate-700 hover:text-white hover:border-slate-600
+          transition-all opacity-0 group-hover:opacity-100
+        `}
+        title="查看详情"
+      >
+        <Eye size={14} />
+      </button>
+
+      {/* 卡片内容 */}
+      <div className="pt-6">
+        <div className="flex items-center gap-2 mb-2">
+          <h4 className={`font-semibold text-sm ${isSelected ? 'text-white' : 'text-slate-300'}`}>
+            {resource.display_name}
+          </h4>
+          {resource.is_builtin ? (
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+              系统
+            </span>
+          ) : (
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30">
+              自定义
+            </span>
+          )}
+        </div>
+        <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">
+          {resource.description || '暂无描述'}
+        </p>
+      </div>
+    </div>
+  );
+};
+
+// 详情弹窗组件
+interface DetailModalProps {
+  open: boolean;
+  resource: AIResource | null;
+  color: string;
+  categoryConfig: CategoryConfig | null;
+  onClose: () => void;
+}
+
+const DetailModal: React.FC<DetailModalProps> = ({ open, resource, color, categoryConfig, onClose }) => {
+  const colors = colorMap[color] || colorMap.cyan;
+
+  return (
+    <GlassModal
+      open={open}
+      onCancel={onClose}
+      footer={null}
+      width={600}
+      title={
+        <div className="flex items-center gap-3">
+          <div className={`w-8 h-8 rounded-lg ${colors.bg} ${colors.border} border flex items-center justify-center ${colors.text}`}>
+            {categoryConfig ? iconMap[categoryConfig.icon] || <HelpCircle size={16} /> : <Sparkles size={16} />}
+          </div>
+          <span>{resource?.display_name || '详情'}</span>
+        </div>
+      }
+    >
+      {resource && (
+        <div className="space-y-4">
+          {/* 基本信息 */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`text-xs px-2 py-1 rounded ${colors.bg} ${colors.text} ${colors.border} border`}>
+              {categoryConfig?.label || resource.category}
+            </span>
+            {resource.is_builtin ? (
+              <span className="text-xs px-2 py-1 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+                系统内置
+              </span>
+            ) : (
+              <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                自定义
+              </span>
+            )}
+          </div>
+
+          {/* 描述 */}
+          <div>
+            <h4 className="text-xs font-semibold text-slate-400 mb-2">描述</h4>
+            <p className="text-sm text-slate-300 leading-relaxed">
+              {resource.description || '暂无描述'}
+            </p>
+          </div>
+
+          {/* 内容预览 */}
+          {resource.content && (
+            <div>
+              <h4 className="text-xs font-semibold text-slate-400 mb-2">内容预览</h4>
+              <div className="bg-slate-950/50 border border-slate-800 rounded-xl p-4 max-h-[300px] overflow-y-auto">
+                <pre className="text-xs text-slate-300 whitespace-pre-wrap font-mono leading-relaxed">
+                  {resource.content}
+                </pre>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </GlassModal>
+  );
+};
+
+// 自定义事件：通知父组件保存状态变化
+const SAVE_STATUS_EVENT = 'skillsTabSaveStatus';
+
+const SkillsTab: React.FC<SkillsTabProps> = () => {
+  const [categories, setCategories] = useState<CategoryConfig[]>([]);
+  const [activeTab, setActiveTab] = useState<string>('');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [resourcesByCategory, setResourcesByCategory] = useState<Record<string, AIResource[]>>({});
+  const [loading, setLoading] = useState(true);
+  const [detailModal, setDetailModal] = useState<{ open: boolean; resource: AIResource | null }>({
+    open: false,
+    resource: null,
+  });
+  const [hasChanges, setHasChanges] = useState(false);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const categoriesLoadedRef = useRef(false);
+
+  // 加载分类配置
+  const loadCategories = useCallback(async () => {
+    try {
+      const response = await api.get('/ai-resources/categories');
+      const cats: CategoryConfig[] = response.data.categories || [];
+      setCategories(cats);
+      // 设置默认激活的 Tab
+      if (cats.length > 0 && !activeTab) {
+        setActiveTab(cats[0].key);
+      }
+      categoriesLoadedRef.current = true;
+    } catch (error) {
+      console.error('加载分类失败:', error);
+      // 使用默认分类作为回退
+      const defaultCategories: CategoryConfig[] = [
+        { key: 'methodology', label: '方法论', icon: 'BookOpen', color: 'blue', description: '改编方法论', order: 1, default_select_all: true },
+        { key: 'output_style', label: '输出风格', icon: 'Palette', color: 'purple', description: '输出风格规范', order: 2, default_select_all: false },
+        { key: 'qa_rules', label: '质检标准', icon: 'Shield', color: 'orange', description: '质量检查标准', order: 3, default_select_all: false },
+        { key: 'template', label: '模板案例', icon: 'FileText', color: 'cyan', description: '输出格式模板', order: 4, default_select_all: false },
+      ];
+      setCategories(defaultCategories);
+      if (!activeTab) {
+        setActiveTab('methodology');
+      }
+      categoriesLoadedRef.current = true;
+    }
+  }, [activeTab]);
+
+  // 加载资源
+  const loadResources = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await api.get('/ai-resources', {
+        params: { page_size: 100 },
+      });
+      const items: AIResource[] = response.data.items || response.data;
+
+      // 按分类分组
+      const grouped: Record<string, AIResource[]> = {};
+      for (const item of items) {
+        if (!item.is_active) continue;
+        if (!grouped[item.category]) {
+          grouped[item.category] = [];
+        }
+        grouped[item.category].push(item);
+      }
+
+      setResourcesByCategory(grouped);
+    } catch (error) {
+      console.error('加载资源失败:', error);
+      message.error('无法加载配置列表');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  // 保存配置
-  const handleSave = async () => {
-    setSaving(true);
+  // 加载保存的配置
+  const loadSavedConfig = useCallback(() => {
     try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const config: BreakdownConfig = JSON.parse(saved);
+        // 兼容旧格式
+        if (config.selectedResourceIds) {
+          setSelectedIds(config.selectedResourceIds);
+        } else if ((config as unknown as { breakdownConfig?: string[] }).breakdownConfig) {
+          setSelectedIds((config as unknown as { breakdownConfig: string[] }).breakdownConfig);
+        }
+      }
+    } catch (err) {
+      console.error('加载配置失败:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCategories();
+    loadResources();
+    loadSavedConfig();
+  }, [loadCategories, loadResources, loadSavedConfig]);
+
+  // 自动选择默认配置（根据分类配置的 default_select_all 决定）
+  useEffect(() => {
+    if (!loading && selectedIds.length === 0 && Object.keys(resourcesByCategory).length > 0 && categories.length > 0) {
+      const defaultIds: string[] = [];
+      for (const cat of categories) {
+        const resources = resourcesByCategory[cat.key] || [];
+        if (cat.default_select_all) {
+          // 全选该分类
+          defaultIds.push(...resources.map((r) => r.id));
+        } else {
+          // 选第一个内置
+          const builtinResource = resources.find((r) => r.is_builtin);
+          if (builtinResource) {
+            defaultIds.push(builtinResource.id);
+          }
+        }
+      }
+      if (defaultIds.length > 0) {
+        setSelectedIds(defaultIds);
+      }
+    }
+  }, [loading, resourcesByCategory, selectedIds.length, categories]);
+
+  // 自动保存功能（防抖）
+  useEffect(() => {
+    if (!hasChanges) return;
+
+    // 清除之前的定时器
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+
+    // 通知父组件正在保存
+    window.dispatchEvent(new CustomEvent(SAVE_STATUS_EVENT, { detail: { saving: true } }));
+
+    // 延迟 800ms 后自动保存
+    autoSaveTimerRef.current = setTimeout(() => {
       const config: BreakdownConfig = {
-        selectedBreakdownSkills,
-        breakdownConfig,
-        savedAt: new Date().toISOString()
+        selectedResourceIds: selectedIds,
+        savedAt: new Date().toISOString(),
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
 
-      // 模拟保存延迟
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // 触发自定义事件
+      // 触发配置保存事件
       window.dispatchEvent(new CustomEvent('breakdownConfigSaved', { detail: config }));
 
-      console.log('[SkillsTab] 配置已保存:', config);
-    } catch (err) {
-      console.error('保存配置失败:', err);
-    } finally {
-      setSaving(false);
-    }
+      // 通知父组件保存完成
+      window.dispatchEvent(new CustomEvent(SAVE_STATUS_EVENT, { detail: { saving: false, savedAt: new Date() } }));
+
+      setHasChanges(false);
+    }, 800);
+
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, [selectedIds, hasChanges]);
+
+  // 切换选中状态
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+    );
+    setHasChanges(true);
+  };
+
+  // 手动保存配置（供父组件调用）
+  const handleSave = useCallback(() => {
+    const config: BreakdownConfig = {
+      selectedResourceIds: selectedIds,
+      savedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+
+    // 触发配置保存事件
+    window.dispatchEvent(new CustomEvent('breakdownConfigSaved', { detail: config }));
+
+    // 通知父组件保存完成
+    window.dispatchEvent(new CustomEvent(SAVE_STATUS_EVENT, { detail: { saving: false, savedAt: new Date() } }));
+
+    setHasChanges(false);
+  }, [selectedIds]);
+
+  // 暴露保存方法给父组件
+  useEffect(() => {
+    const handleManualSave = () => {
+      handleSave();
+    };
+    window.addEventListener('skillsTabManualSave', handleManualSave);
+    return () => {
+      window.removeEventListener('skillsTabManualSave', handleManualSave);
+    };
+  }, [handleSave]);
+
+  // 查看详情
+  const handleViewDetail = (resource: AIResource) => {
+    setDetailModal({ open: true, resource });
+  };
+
+  // 获取当前分类的选中数量
+  const getSelectedCount = (category: string) => {
+    const resources = resourcesByCategory[category] || [];
+    return resources.filter((r) => selectedIds.includes(r.id)).length;
   };
 
   if (loading) {
@@ -95,171 +443,116 @@ const SkillsTab: React.FC<SkillsTabProps> = ({
     );
   }
 
-  return (
-    <div className="h-full overflow-y-auto animate-in fade-in slide-in-from-bottom-4 duration-300 p-4 md:p-6">
-      {/* 顶部标题栏 */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 sticky top-0 bg-slate-950/95 backdrop-blur-md z-10 py-4 border-b border-slate-800/50">
-        <div>
-          <h2 className="text-2xl font-bold text-white flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500/20 to-cyan-500/20 border border-purple-500/30 flex items-center justify-center">
-              <Sparkles size={20} className="text-purple-400" />
-            </div>
-            技能库
-          </h2>
-          <p className="text-slate-400 mt-1 ml-1">为 Agent 挂载专业的编剧理论与技巧</p>
-        </div>
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-sm font-bold rounded-xl shadow-lg shadow-cyan-500/20 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {saving ? (
-            <>
-              <Loader2 size={16} className="animate-spin" />
-              保存中...
-            </>
-          ) : (
-            <>
-              <Save size={16} />
-              保存配置
-            </>
-          )}
-        </button>
-      </div>
+  // 获取分类配置的辅助函数
+  const getCategoryConfig = (key: string): CategoryConfig | undefined => {
+    return categories.find((c) => c.key === key);
+  };
 
-      <div className="space-y-6">
-        {/* 拆解任务配置卡片 */}
-        <GlassCard className="p-6">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/20 border border-amber-500/30 flex items-center justify-center">
-              <Zap size={20} className="text-amber-400" />
-            </div>
-            <div>
-              <h3 className="text-lg font-bold text-white">拆解任务配置</h3>
-              <p className="text-xs text-slate-400">选择技能和方法论来自定义拆解流程</p>
-            </div>
-          </div>
-
-          {/* AI 技能选择 */}
-          <div className="space-y-4">
-            <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4">
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5">
-                  <Sparkles size={18} className="text-blue-400" />
-                </div>
-                <div>
-                  <span className="font-bold block text-blue-200 mb-1">AI 技能选择</span>
-                  <p className="text-xs text-blue-300 leading-relaxed">
-                    不同的技能组合会影响拆解的维度和消耗的 Token。建议根据小说类型选择合适的技能。
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-slate-950/50 rounded-xl border border-slate-800/50">
-              <SkillSelector
-                category="breakdown"
-                selectedSkillIds={selectedBreakdownSkills}
-                onChange={setSelectedBreakdownSkills}
-              />
-            </div>
-          </div>
-
-          {/* 分割线 */}
-          <div className="my-6 border-t border-slate-800/50" />
-
-          {/* 改编方法与质检规则 */}
-          <div className="space-y-4">
-            <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl p-4">
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5">
-                  <Settings size={18} className="text-purple-400" />
-                </div>
-                <div>
-                  <span className="font-bold block text-purple-200 mb-1">改编方法与质检规则</span>
-                  <p className="text-xs text-purple-300 leading-relaxed">
-                    选择适配方法（冲突提取标准）、质检规则（8维度评分）和输出风格（起承转钩）。
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-slate-950/50 rounded-xl border border-slate-800/50">
-              <ConfigSelector
-                value={breakdownConfig}
-                onChange={setBreakdownConfig}
-              />
-            </div>
-          </div>
-
-          {/* 配置状态提示 */}
-          <div className="mt-4 pt-4 border-t border-slate-800/50">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${selectedBreakdownSkills.length > 0 || breakdownConfig.length > 0 ? 'bg-green-400 shadow-lg shadow-green-400/50' : 'bg-slate-600'}`} />
-                <span className="text-xs text-slate-400">
-                  {selectedBreakdownSkills.length > 0 || breakdownConfig.length > 0
-                    ? `已选择 ${selectedBreakdownSkills.length} 个技能，${breakdownConfig.length} 项配置`
-                    : '使用系统默认配置'}
-                </span>
-              </div>
-              <span className="text-xs text-slate-600">
-                {selectedBreakdownSkills.length > 0 || breakdownConfig.length > 0
-                  ? `最后保存: ${new Date().toLocaleTimeString()}`
-                  : ''}
+  // 构建 Tab 项
+  const tabItems = categories
+    .filter((cat) => resourcesByCategory[cat.key]?.length > 0)
+    .map((cat) => {
+      const count = getSelectedCount(cat.key);
+      const total = resourcesByCategory[cat.key]?.length || 0;
+      return {
+        key: cat.key,
+        label: (
+          <div className="flex items-center gap-2">
+            {iconMap[cat.icon] || <HelpCircle size={16} />}
+            <span>{cat.label}</span>
+            {count > 0 && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400">
+                {count}/{total}
               </span>
-            </div>
+            )}
           </div>
-        </GlassCard>
+        ),
+      };
+    });
 
-        {/* 已挂载技能卡片 */}
-        <GlassCard className="p-6">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 border border-purple-500/30 flex items-center justify-center">
-              <Sparkles size={20} className="text-purple-400" />
-            </div>
-            <div>
-              <h3 className="text-lg font-bold text-white">已挂载技能</h3>
-              <p className="text-xs text-slate-400">当前项目可用的 AI 技能列表</p>
-            </div>
+  const currentConfig = getCategoryConfig(activeTab);
+  const currentResources = resourcesByCategory[activeTab] || [];
+
+  return (
+    <div className="h-full overflow-y-auto animate-in fade-in slide-in-from-bottom-4 duration-300 px-4 md:px-6 pt-2 pb-4">
+      {/* 顶部标题栏 - 紧凑布局 */}
+      <div className="flex items-center justify-between gap-4 mb-4 sticky top-0 bg-slate-950/95 backdrop-blur-md z-10 py-2">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500/20 to-cyan-500/20 border border-purple-500/30 flex items-center justify-center">
+            <Sparkles size={16} className="text-purple-400" />
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {skills.map(skill => (
-              <div
-                key={skill.id}
-                className="group bg-slate-950/30 border border-slate-800/50 rounded-xl p-4 hover:border-purple-500/40 hover:bg-slate-900/50 transition-all duration-300 cursor-pointer"
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500/20 to-cyan-500/20 border border-purple-500/30 flex items-center justify-center">
-                      <Sparkles size={14} className="text-purple-400" />
-                    </div>
-                    <h4 className="font-semibold text-white group-hover:text-purple-300 transition-colors">{skill.name}</h4>
-                  </div>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/10 text-green-400 border border-green-500/20">
-                    Enabled
-                  </span>
-                </div>
-                <p className="text-xs text-slate-400 mb-3 line-clamp-2 group-hover:text-slate-300 transition-colors">{skill.desc}</p>
-                <div className="flex items-center justify-between pt-3 border-t border-slate-800/50">
-                  <span className="text-[10px] text-slate-500">
-                    <span className="text-slate-600">Trigger:</span> {skill.trigger}
-                  </span>
-                </div>
-              </div>
-            ))}
-
-            {/* 添加自定义技能按钮 */}
-            <button className="group border-2 border-dashed border-slate-700 rounded-xl p-4 flex flex-col items-center justify-center gap-3 text-slate-500 hover:text-slate-300 hover:border-slate-600 hover:bg-slate-900/30 transition-all duration-300 min-h-[120px]">
-              <div className="w-10 h-10 rounded-xl bg-slate-800/50 group-hover:bg-slate-800 flex items-center justify-center transition-colors">
-                <Plus size={24} />
-              </div>
-              <span className="text-sm font-medium">添加自定义技能</span>
-            </button>
+          <div>
+            <h2 className="text-lg font-bold text-white">技能库</h2>
+            <p className="text-xs text-slate-500">为 Agent 挂载专业的编剧理论与技巧</p>
           </div>
-        </GlassCard>
+        </div>
+        {/* 右上角选中数量 */}
+        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all ${
+          selectedIds.length > 0
+            ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400'
+            : 'bg-slate-800/50 border-slate-700 text-slate-500'
+        }`}>
+          <div className={`w-2 h-2 rounded-full ${selectedIds.length > 0 ? 'bg-cyan-400 shadow-lg shadow-cyan-400/50' : 'bg-slate-600'}`} />
+          <span className="text-xs font-medium">
+            已选择 <span className="font-bold">{selectedIds.length}</span> 项配置
+          </span>
+        </div>
       </div>
+
+      {/* Tab 切换 */}
+      <div className="mb-4">
+        <GlassTabs
+          activeKey={activeTab}
+          onChange={setActiveTab}
+          items={tabItems}
+        />
+      </div>
+
+      {/* 分类描述 */}
+      {currentConfig && (
+        <div className={`mb-4 p-3 rounded-xl ${colorMap[currentConfig.color]?.bg} border ${colorMap[currentConfig.color]?.border}`}>
+          <div className="flex items-center gap-2">
+            <span className={colorMap[currentConfig.color]?.text}>{iconMap[currentConfig.icon] || <HelpCircle size={16} />}</span>
+            <span className={`text-sm font-medium ${colorMap[currentConfig.color]?.text}`}>
+              {currentConfig.label}
+            </span>
+            <span className="text-xs text-slate-500">—</span>
+            <p className="text-xs text-slate-400">
+              {currentConfig.description}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* 卡片网格 */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {currentResources.map((resource) => (
+          <ResourceCard
+            key={resource.id}
+            resource={resource}
+            isSelected={selectedIds.includes(resource.id)}
+            color={currentConfig?.color || 'cyan'}
+            onSelect={() => toggleSelect(resource.id)}
+            onViewDetail={() => handleViewDetail(resource)}
+          />
+        ))}
+
+        {currentResources.length === 0 && (
+          <div className="col-span-full text-center py-12 text-slate-500">
+            <Sparkles size={32} className="mx-auto mb-3 opacity-50" />
+            <p>暂无可用的{currentConfig?.label || '配置'}</p>
+          </div>
+        )}
+      </div>
+
+      {/* 详情弹窗 */}
+      <DetailModal
+        open={detailModal.open}
+        resource={detailModal.resource}
+        color={detailModal.resource ? getCategoryConfig(detailModal.resource.category)?.color || 'cyan' : 'cyan'}
+        categoryConfig={detailModal.resource ? getCategoryConfig(detailModal.resource.category) || null : null}
+        onClose={() => setDetailModal({ open: false, resource: null })}
+      />
     </div>
   );
 };

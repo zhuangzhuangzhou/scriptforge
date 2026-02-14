@@ -145,6 +145,10 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const [isStopping, setIsStopping] = useState(false);
     const [showStopConfirmModal, setShowStopConfirmModal] = useState(false);
 
+    // 自动保存状态（用于显示光效）
+    const [isAutoSaving, setIsAutoSaving] = useState(false);
+    const [showSaveGlow, setShowSaveGlow] = useState(false);
+
     // 错误提示状态
     const [showErrorModal, setShowErrorModal] = useState(false);
     const [parsedError, setParsedError] = useState<{
@@ -163,9 +167,11 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             const saved = localStorage.getItem(STORAGE_KEY);
             if (saved) {
                 const config = JSON.parse(saved);
+                // 兼容新旧格式：新格式使用 selectedResourceIds，旧格式使用 breakdownConfig
+                const resourceIds = config.selectedResourceIds || config.breakdownConfig || [];
                 return {
                     selectedBreakdownSkills: config.selectedBreakdownSkills || [],
-                    breakdownConfig: config.breakdownConfig || []
+                    breakdownConfig: resourceIds
                 };
             }
         } catch (err) {
@@ -189,7 +195,8 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         llmStats,
         addLog,
         appendStreamLog,
-        clearLogs
+        clearLogs,
+        finalizeStreamLog
     } = useConsoleLogger(null, { enableWebSocket: false });
 
     // 使用 WebSocket Hook 监听任务进度（优先使用 WebSocket，失败时降级到轮询）
@@ -251,6 +258,8 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             },
             onStepEnd: (stepName, result) => {
                 console.log('[StreamLogs] 步骤完成:', stepName, result);
+                // 结束当前流式日志，确保下一步骤的内容不会追加到当前日志
+                finalizeStreamLog();
                 addLog('success', `✅ ${stepName} 完成`);
             },
             onProgress: (progress, currentStep, totalSteps) => {
@@ -553,19 +562,38 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     // 初始化加载
     useEffect(() => {
         let isMounted = true;
-        
+
         const loadProject = async () => {
             if (isMounted && projectId) {
                 await fetchProject();
             }
         };
-        
+
         loadProject();
-        
+
         return () => {
             isMounted = false;
         };
     }, [projectId]);
+
+    // 监听 SkillsTab 自动保存状态
+    useEffect(() => {
+        const handleSaveStatus = (e: CustomEvent<{ saving: boolean; savedAt?: Date }>) => {
+            if (e.detail.saving) {
+                setIsAutoSaving(true);
+            } else {
+                setIsAutoSaving(false);
+                // 保存完成后显示光效
+                setShowSaveGlow(true);
+                setTimeout(() => setShowSaveGlow(false), 1500);
+            }
+        };
+
+        window.addEventListener('skillsTabSaveStatus', handleSaveStatus as EventListener);
+        return () => {
+            window.removeEventListener('skillsTabSaveStatus', handleSaveStatus as EventListener);
+        };
+    }, []);
 
     // 根据项目状态自动跳转到对应标签页（仅首次加载时）
     useEffect(() => {
@@ -1123,6 +1151,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                         selectedBatch={selectedBatch}
                         onSelectBatch={setSelectedBatch}
                         onStartBreakdown={handleStartBreakdownClick}
+                        onStopBreakdown={handleStopCurrentBreakdown}
                         isCreatingBatches={isCreatingBatches}
                         loadingBatches={loadingBatches}
                         breakdownTaskId={breakdownTaskId}
@@ -1409,12 +1438,38 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                 </div>
                             ) : (
                                 <>
-                                    <button className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-white transition-colors">
-                                        <Save size={14} /> Auto-saved
-                                    </button>
+                                    <div className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium transition-all rounded-lg ${
+                                        isAutoSaving
+                                            ? 'text-cyan-400 bg-cyan-500/10'
+                                            : 'text-slate-400'
+                                    }`}>
+                                        {isAutoSaving ? (
+                                            <Loader2 size={14} className="animate-spin" />
+                                        ) : (
+                                            <Save size={14} />
+                                        )}
+                                        {isAutoSaving ? '保存中...' : '自动保存'}
+                                    </div>
                                     <div className="h-4 w-px bg-slate-700"></div>
-                                    <button className="flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold rounded-lg shadow-lg shadow-cyan-500/20 transition-all hover:scale-105">
-                                        <Play size={12} fill="currentColor" /> Run Agents
+                                    <button
+                                        onClick={() => {
+                                            window.dispatchEvent(new CustomEvent('skillsTabManualSave'));
+                                            setShowSaveGlow(true);
+                                            setTimeout(() => setShowSaveGlow(false), 1500);
+                                        }}
+                                        className={`relative flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold rounded-lg shadow-lg transition-all hover:scale-105 ${
+                                            showSaveGlow ? 'shadow-cyan-500/50 shadow-xl' : 'shadow-cyan-500/20'
+                                        }`}
+                                    >
+                                        {/* 光效动画 */}
+                                        {showSaveGlow && (
+                                            <>
+                                                <div className="absolute inset-0 rounded-lg bg-cyan-400/20 animate-ping" />
+                                                <div className="absolute -inset-1 rounded-xl bg-gradient-to-r from-cyan-500/30 to-blue-500/30 blur-md animate-pulse" />
+                                            </>
+                                        )}
+                                        <Save size={12} className="relative z-10" />
+                                        <span className="relative z-10">保存配置</span>
                                     </button>
                                 </>
                             )}
@@ -1437,6 +1492,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     currentStep={logsCurrentStep || wsCurrentStep}
                     currentRound={currentRound}
                     totalRounds={totalRounds}
+                    batchNumber={selectedBatch?.batch_number || 0}
                     onClose={() => setShowConsole(false)}
                 />
 
