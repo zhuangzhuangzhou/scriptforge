@@ -302,18 +302,13 @@ const BillingModal: React.FC<BillingModalProps> = ({ onClose }) => {
                     <div className="bg-slate-800/30 px-3 py-2 border-b border-slate-700/50">
                       <h3 className="text-xs font-medium text-white flex items-center gap-1.5">
                         <Zap size={14} className="text-yellow-400" /> Token 费用
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-400">已启用</span>
                       </h3>
                     </div>
-                    <div className="p-3 space-y-2">
-                      <div className="flex justify-between items-center text-xs">
-                        <span className="text-slate-400">输入 Token</span>
-                        <span className="text-white font-mono">{creditsInfo?.pricing.token.input_per_1k || 1} 积分/1K tokens</span>
-                      </div>
-                      <div className="flex justify-between items-center text-xs">
-                        <span className="text-slate-400">输出 Token</span>
-                        <span className="text-white font-mono">{creditsInfo?.pricing.token.output_per_1k || 2} 积分/1K tokens</span>
-                      </div>
+                    <div className="p-3">
+                      <p className="text-xs text-slate-400 leading-relaxed">
+                        Token 费用根据实际使用的 AI 模型分别计算，不同模型的输入/输出 Token 单价可能不同。
+                        具体费用以任务完成后的实际消耗为准。
+                      </p>
                     </div>
                   </div>
 
