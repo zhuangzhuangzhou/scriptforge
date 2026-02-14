@@ -225,6 +225,7 @@ const ResourceEditorModal: React.FC<ResourceEditorModalProps> = ({
                         disabled={isBuiltin}
                         options={[
                           { value: 'methodology', label: '方法论' },
+                          { value: 'type_guide', label: '类型指南' },
                           { value: 'output_style', label: '输出风格' },
                           { value: 'qa_rules', label: '质检标准' },
                           { value: 'template', label: '模板案例' },

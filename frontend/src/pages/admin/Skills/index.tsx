@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Button, Tag, Space, message, Modal, Switch } from 'antd';
+import { Button, Tag, Space, message, Switch } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, PlayCircleOutlined, CopyOutlined } from '@ant-design/icons';
 import api from '../../../services/api';
 import { GlassCard } from '../../../components/ui/GlassCard';
@@ -8,6 +8,7 @@ import { GlassInput } from '../../../components/ui/GlassInput';
 import { GlassSelect } from '../../../components/ui/GlassSelect';
 import { GlassTabs } from '../../../components/ui/GlassTabs';
 import { GlassModal } from '../../../components/ui/GlassModal';
+import ConfirmModal from '../../../components/modals/ConfirmModal';
 import SkillEditor from './SkillEditor';
 import SkillTester from './SkillTester';
 
@@ -38,6 +39,11 @@ const SkillsPage: React.FC = () => {
   const [testerVisible, setTesterVisible] = useState(false);
   const [testingSkillId, setTestingSkillId] = useState<string | null>(null);
   const [testingSkillName, setTestingSkillName] = useState('');
+
+  // 删除确认弹窗状态
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deletingSkill, setDeletingSkill] = useState<Skill | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // 加载 Skills 列表
   const loadSkills = async () => {
@@ -75,23 +81,25 @@ const SkillsPage: React.FC = () => {
   };
 
   // 删除 Skill
-  const handleDelete = (skill: Skill) => {
-    Modal.confirm({
-      title: '确认删除',
-      content: `确定要删除 Skill "${skill.display_name}" 吗？`,
-      okText: '删除',
-      okType: 'danger',
-      cancelText: '取消',
-      onOk: async () => {
-        try {
-          await api.delete(`/skills/${skill.id}`);
-          message.success('删除成功');
-          loadSkills();
-        } catch (error: any) {
-          message.error(error.response?.data?.detail || '删除失败');
-        }
-      },
-    });
+  const handleDeleteClick = (skill: Skill) => {
+    setDeletingSkill(skill);
+    setDeleteModalOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deletingSkill) return;
+    setIsDeleting(true);
+    try {
+      await api.delete(`/skills/${deletingSkill.id}`);
+      message.success('删除成功');
+      setDeleteModalOpen(false);
+      setDeletingSkill(null);
+      loadSkills();
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '删除失败');
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const handleToggleActive = async (skill: Skill) => {
@@ -134,8 +142,21 @@ const SkillsPage: React.FC = () => {
 
   // 根据标签页筛选
   const filteredSkills = skills.filter(skill => {
-    if (activeTab === 'builtin') return skill.is_builtin;
-    if (activeTab === 'mine') return !skill.is_builtin;
+    // 先按主标签页筛选
+    if (activeTab === 'mine') {
+      return !skill.is_builtin;
+    }
+    // 系统内置按分类筛选
+    if (activeTab === 'breakdown') {
+      return skill.is_builtin && skill.category === 'breakdown';
+    }
+    if (activeTab === 'qa') {
+      return skill.is_builtin && skill.category === 'qa';
+    }
+    if (activeTab === 'script') {
+      return skill.is_builtin && skill.category === 'script';
+    }
+    // all 显示全部
     return true;
   });
 
@@ -202,14 +223,15 @@ const SkillsPage: React.FC = () => {
     {
       title: '操作',
       key: 'actions',
-      width: 250,
+      width: 200,
       render: (_: any, record: Skill) => (
-        <Space>
+        <Space size="small" className="flex-nowrap">
           <Button
             type="link"
             size="small"
             icon={<PlayCircleOutlined />}
             onClick={() => handleTest(record)}
+            className="px-1"
           >
             测试
           </Button>
@@ -218,28 +240,32 @@ const SkillsPage: React.FC = () => {
             size="small"
             icon={<EditOutlined />}
             onClick={() => handleEdit(record.id)}
+            className="px-1"
           >
             编辑
           </Button>
-          {record.is_builtin && (
+          {record.is_builtin ? (
             <Button
               type="link"
               size="small"
               icon={<CopyOutlined />}
               onClick={() => handleClone(record)}
+              className="px-1"
             >
               复制
             </Button>
+          ) : (
+            <Button
+              type="link"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              onClick={() => handleDeleteClick(record)}
+              className="px-1"
+            >
+              删除
+            </Button>
           )}
-          <Button
-            type="link"
-            size="small"
-            danger
-            icon={<DeleteOutlined />}
-            onClick={() => handleDelete(record)}
-          >
-            删除
-          </Button>
         </Space>
       ),
     },
@@ -247,7 +273,9 @@ const SkillsPage: React.FC = () => {
 
   const tabItems = [
     { key: 'all', label: '全部' },
-    { key: 'builtin', label: '系统内置' },
+    { key: 'breakdown', label: '拆解' },
+    { key: 'qa', label: '质检' },
+    { key: 'script', label: '剧本' },
     { key: 'mine', label: '我的 Skills' },
   ];
 
@@ -300,7 +328,7 @@ const SkillsPage: React.FC = () => {
           }}
         />
 
-        {activeTab === 'builtin' && (
+        {(activeTab === 'breakdown' || activeTab === 'qa' || activeTab === 'script') && (
           <div className="mt-4 p-4 bg-cyan-500/10 border border-cyan-500/20 rounded-lg">
             <p className="text-sm text-cyan-400">
               💡 提示：系统内置的 Skills 不能直接编辑。如果您想修改 Prompt，请点击"复制"按钮创建自己的版本。
@@ -315,7 +343,7 @@ const SkillsPage: React.FC = () => {
         open={editorVisible}
         onCancel={handleEditorCancel}
         footer={null}
-        width={900}
+        width="90vw"
         destroyOnClose
       >
         <SkillEditor
@@ -340,6 +368,24 @@ const SkillsPage: React.FC = () => {
           />
         )}
       </GlassModal>
+
+      {/* 删除确认弹窗 */}
+      <ConfirmModal
+        open={deleteModalOpen}
+        onCancel={() => {
+          setDeleteModalOpen(false);
+          setDeletingSkill(null);
+        }}
+        onConfirm={handleConfirmDelete}
+        title="确认删除"
+        content={
+          <p>确定要删除 Skill「{deletingSkill?.display_name}」吗？此操作不可撤销。</p>
+        }
+        confirmText="确认删除"
+        confirmType="danger"
+        iconType="danger"
+        loading={isDeleting}
+      />
     </div>
   );
 };

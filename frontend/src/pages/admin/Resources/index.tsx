@@ -24,6 +24,7 @@ interface Resource {
 
 const categoryMap: Record<string, string> = {
   methodology: '方法论',
+  type_guide: '类型指南',
   output_style: '输出风格',
   qa_rules: '质检标准',
   template: '模板案例',
@@ -31,6 +32,7 @@ const categoryMap: Record<string, string> = {
 
 const categoryColorMap: Record<string, string> = {
   methodology: 'blue',
+  type_guide: 'green',
   output_style: 'purple',
   qa_rules: 'orange',
   template: 'cyan',
@@ -227,6 +229,7 @@ const ResourcesPage: React.FC = () => {
   const tabItems = [
     { key: 'all', label: '全部' },
     { key: 'methodology', label: '方法论' },
+    { key: 'type_guide', label: '类型指南' },
     { key: 'output_style', label: '输出风格' },
     { key: 'qa_rules', label: '质检标准' },
     { key: 'template', label: '模板案例' },

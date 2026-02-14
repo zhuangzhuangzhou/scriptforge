@@ -22,6 +22,7 @@ router = APIRouter(prefix="/ai-resources", tags=["AI资源文档"])
 # 分类枚举定义
 RESOURCE_CATEGORIES = {
     "methodology": "方法论",
+    "type_guide": "类型指南",
     "output_style": "输出风格",
     "qa_rules": "质检标准",
     "template": "模板案例",

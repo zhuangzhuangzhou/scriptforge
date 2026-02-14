@@ -121,6 +121,8 @@ const MARKDOWN_STYLES = `
     background: transparent;
     padding: 0;
     color: #e2e8f0;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 
   .markdown-preview blockquote {
