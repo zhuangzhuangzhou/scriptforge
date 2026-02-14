@@ -86,7 +86,17 @@ export const useBreakdownWebSocket = (
 
         // 任务失败
         if (message.status === 'failed') {
-          onError?.(message.error_message || '任务失败');
+          // 优先使用 error_display（人性化错误信息），否则解析 error_message
+          let errorMsg = '任务失败';
+          if (message.error_message) {
+            try {
+              const errorData = typeof message.error_message === 'string' ? JSON.parse(message.error_message) : message.error_message;
+              errorMsg = errorData.message || errorData.description || message.error_message;
+            } catch {
+              errorMsg = message.error_message;
+            }
+          }
+          onError?.(errorMsg);
         }
       }
 

@@ -17,4 +17,13 @@ celery_app.conf.update(
     task_sender='always',
     worker_prefetch_multiplier=1,
     worker_concurrency=4,
+
+    # 任务超时配置
+    task_time_limit=1800,       # 硬超时：30分钟后强制终止
+    task_soft_time_limit=1500,  # 软超时：25分钟后发出超时信号
+
+    # Worker 过期检测
+    worker_disable_rate_limits=True,
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
 )

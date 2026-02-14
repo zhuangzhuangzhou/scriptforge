@@ -321,16 +321,17 @@ async def get_breakdown_task(
 
 def _humanize_error_message(error_message: str) -> dict:
     """将技术错误信息转换为用户友好的提示
-    
+
     Args:
         error_message: 原始错误信息（JSON字符串或普通字符串）
-        
+
     Returns:
         包含人性化错误信息的字典
     """
     import json
     import re
-    
+    from datetime import datetime
+
     # 尝试解析JSON格式的错误信息
     try:
         if error_message.startswith('{'):
@@ -393,15 +394,49 @@ def _humanize_error_message(error_message: str) -> dict:
             "suggestion": "请确认数据已正确上传。",
             "icon": "📁",
             "severity": "error"
+        },
+        "NO_CREDENTIAL": {
+            "title": "模型凭证缺失",
+            "description": "没有找到有效的 API 凭证配置。",
+            "suggestion": "请在模型配置中添加工 API Key。",
+            "icon": "🔑",
+            "severity": "error"
+        },
+        "CREDENTIAL_INVALID": {
+            "title": "凭证无效",
+            "description": "提供的 API 凭证无效或已过期。",
+            "suggestion": "请更新模型的 API Key 配置。",
+            "icon": "🔐",
+            "severity": "error"
         }
     }
     
     # 匹配错误类型
     matched_error = None
     for pattern, error_info in error_patterns.items():
-        if pattern in code or pattern.lower() in message.lower():
+        if pattern in code:
             matched_error = error_info
             break
+        if pattern.lower() in message.lower():
+            matched_error = error_info
+            break
+
+    # 特殊处理：检测"凭证"相关错误（即使 code 不包含这些关键词）
+    if not matched_error:
+        if "没有可用的凭证" in message or "no available credential" in message.lower():
+            matched_error = error_patterns["NO_CREDENTIAL"]
+            # 从消息中提取模型名称
+            model_match = re.search(r':\s*(\S+)$', message)
+            if model_match:
+                model_name = model_match.group(1)
+                matched_error = {
+                    **matched_error,
+                    "description": f"模型 {model_name} 没有可用的 API 凭证"
+                }
+        elif "凭证无效" in message or "credential" in message.lower():
+            matched_error = error_patterns.get("CREDENTIAL_INVALID", error_patterns["MODEL_ERROR"])
+        elif "api" in message.lower() and ("key" in message.lower() or "无效" in message or "expired" in message.lower()):
+            matched_error = error_patterns["CREDENTIAL_INVALID"]
     
     # 如果没有匹配到，使用默认错误信息
     if not matched_error:
@@ -421,7 +456,6 @@ def _humanize_error_message(error_message: str) -> dict:
     failed_at = error_data.get("failed_at", "")
     if failed_at:
         try:
-            from datetime import datetime
             dt = datetime.fromisoformat(failed_at.replace('Z', '+00:00'))
             failed_at_display = dt.strftime("%Y-%m-%d %H:%M:%S")
         except:
@@ -437,7 +471,9 @@ def _humanize_error_message(error_message: str) -> dict:
         "severity": matched_error["severity"],
         "failed_at": failed_at_display,
         "retry_count": error_data.get("retry_count", 0),
-        "technical_details": message if len(message) < 200 else message[:200] + "..."
+        "code": code,
+        "original_message": message,
+        "technical_details": message if len(message) < 300 else message[:300] + "..."
     }
 
 

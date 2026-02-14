@@ -7,6 +7,7 @@
 import json
 from datetime import datetime
 import logging
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy.orm import Session
 from app.core.celery_app import celery_app
 from app.core.database import SyncSessionLocal
@@ -159,6 +160,38 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
         )
         raise
 
+    except SoftTimeLimitExceeded as e:
+        """处理任务超时（软超时）
+
+        当任务执行时间超过 soft_time_limit（25分钟）时触发。
+        超时情况特殊处理：
+        1. 任务通常还没真正调用 API，不需要扣 Token 费用
+        2. 需要返还已扣除的配额
+        3. 更新批次状态为 failed
+        """
+        logger.warning(f"任务执行超时（软超时）: task_id={task_id}")
+
+        # 发布超时警告
+        if log_publisher:
+            try:
+                log_publisher.publish_warning(
+                    task_id,
+                    "任务执行时间过长，系统将终止此任务"
+                )
+            except Exception:
+                pass
+
+        # 标记任务失败（超时特殊处理）
+        _handle_timeout_failure_sync(
+            db=db,
+            task_id=task_id,
+            batch_record=batch_record,
+            task_record=task_record,
+            user_id=user_id,
+            log_publisher=log_publisher
+        )
+        raise
+
     except Exception as e:
         # 记录详细错误日志
         import traceback
@@ -263,6 +296,75 @@ def _handle_quota_exceeded_sync(
             error.message,
             error_code=error.code
         )
+
+
+def _handle_timeout_failure_sync(
+    db: Session,
+    task_id: str,
+    batch_record,
+    task_record,
+    user_id: str,
+    log_publisher=None
+):
+    """处理任务超时失败（同步版本）
+
+    超时与普通失败的区别：
+    1. 超时通常意味着 API 还没真正调用，不需要扣 Token 费用
+    2. 需要返还已扣除的配额
+    3. 错误信息更友好
+
+    处理流程：
+    1. 更新任务状态为 failed
+    2. 更新批次状态为 failed
+    3. 返还配额
+    4. 发布错误消息
+    """
+    from app.core.quota import refund_episode_quota_sync
+
+    # 构建超时错误信息
+    timeout_info = {
+        "code": "TASK_TIMEOUT",
+        "message": "任务执行超时，请稍后重试或减少章节数量",
+        "failed_at": datetime.utcnow().isoformat(),
+        "retry_count": task_record.retry_count if task_record else 0,
+        "is_timeout": True
+    }
+
+    # 更新任务状态
+    update_task_progress_sync(
+        db, task_id,
+        status="failed",
+        error_message=json.dumps(timeout_info),
+        current_step="任务超时"
+    )
+
+    # 更新批次状态为 failed
+    if batch_record:
+        batch_record.breakdown_status = "failed"
+        db.commit()
+        logger.info(f"批次 {batch_record.id} 状态已更新为 failed（超时）")
+
+    # 返还配额（超时场景：返还 100%）
+    try:
+        refund_episode_quota_sync(db, user_id, 1)
+        db.commit()
+        logger.info(f"超时任务已返还配额: user_id={user_id}")
+    except Exception as refund_error:
+        logger.error(f"返还配额失败: {refund_error}")
+        db.rollback()
+
+    # 发布错误消息（WebSocket 通知）
+    if log_publisher:
+        try:
+            log_publisher.publish_error(
+                task_id,
+                "任务执行超时，请稍后重试或减少章节数量",
+                error_code="TASK_TIMEOUT"
+            )
+        except Exception:
+            pass
+
+    logger.info(f"超时任务处理完成: task_id={task_id}")
 
 
 def _handle_task_failure_sync(
@@ -485,6 +587,9 @@ def _execute_breakdown_sync(
             qa_score = qa_result.get("score")
             qa_report = qa_result
 
+            # 更新进度到 50%（AI 生成完成）
+            update_task_progress_sync(db, task_id, progress=50, current_step="AI 剧情生成完成 (50%)")
+
             logger.info(f"Agent 执行完成，plot_points: {len(plot_points)}，qa_status: {qa_status}")
 
         except Exception as e:
@@ -506,6 +611,9 @@ def _execute_breakdown_sync(
             logger.error(f"Skill 执行失败: {e}")
             raise AITaskException(code="SKILL_EXECUTION_ERROR", message=str(e))
 
+        # 更新进度到 50%（Skill 生成完成）
+        update_task_progress_sync(db, task_id, progress=50, current_step="剧情生成完成 (50%)")
+
         # 回退模式：执行 QA 质检
         logger.info("回退到 Skill 模式，执行 QA 质检...")
         qa_result = _run_breakdown_qa_sync(
@@ -521,6 +629,9 @@ def _execute_breakdown_sync(
         qa_score = qa_result.get("score")
         qa_report = qa_result
         logger.info(f"Skill + QA 模式完成，qa_status: {qa_status}, qa_score: {qa_score}")
+
+        # 更新进度到 70%（QA 质检完成）
+        update_task_progress_sync(db, task_id, progress=70, current_step="质检完成 (70%)")
 
     # 如果 Agent 模式执行成功，检查是否已有 qa_result
     if use_agent and qa_status == "pending" and not qa_report:
@@ -821,17 +932,15 @@ def _execute_breakdown_sync_v1(
             emotions = modified.get("emotions", emotions)
             episodes = modified.get("episodes", episodes)
 
-    # 保存拆解结果
-    update_task_progress_sync(db, task_id, progress=90, current_step="保存拆解结果中... (90%)")
-
-    # 获取 model_config_id 用于数据分析
+    # 获取 model_config_id 用于数据分析（来自 model_configs 表）
     model_config_id = task_config.get("model_config_id")
 
     breakdown = PlotBreakdown(
         batch_id=batch_id,
         project_id=project_id,
         task_id=task_id,  # 关联任务 ID
-        model_config_id=model_config_id,  # 关联模型配置 ID
+        ai_model_id=model_config_id,  # ai_models 表的 ID（复用 model_config_id 的值，因为实际存储的是 ai_models 的 ID）
+        model_config_id=model_config_id,  # model_configs 表的 ID（可能为空，因为 model_configs 表目前为空）
         conflicts=conflicts,
         plot_hooks=plot_hooks,
         characters=characters,

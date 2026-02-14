@@ -71,7 +71,7 @@ const ConfigTab: React.FC<ConfigTabProps> = ({
   }, []);
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6 h-full animate-in fade-in slide-in-from-bottom-4 duration-300">
+    <div className="flex flex-col lg:flex-row gap-6 h-full">
       {/* 左侧内容 - 68% */}
       <div className="flex-1 lg:flex-[0.68] space-y-6 overflow-y-auto pr-2 custom-scrollbar">
         {/* 统计卡片 */}

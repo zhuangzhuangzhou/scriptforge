@@ -77,19 +77,38 @@ export const useBreakdownQueue = (options: UseBreakdownQueueOptions = {}) => {
           setCurrentTaskId(null);
           setIsProcessing(false);
 
-          const errorMsg = data.error_message || '拆解失败';
+          // 优先使用 error_display（人性化错误信息），否则解析 error_message
           let errorCode = 'UNKNOWN_ERROR';
-          let errorMessage = errorMsg;
+          let errorMessage = '拆解失败';
+          let errorTitle = '任务失败';
+          let errorSuggestion = '';
 
-          try {
-            const errorData = typeof errorMsg === 'string' ? JSON.parse(errorMsg) : errorMsg;
-            errorCode = errorData.code || errorCode;
-            errorMessage = errorData.message || errorMsg;
-          } catch {
-            // 保持原始错误信息
+          if (data.error_display && typeof data.error_display === 'object') {
+            // 使用 API 返回的人性化错误信息
+            errorTitle = data.error_display.title || errorTitle;
+            errorCode = data.error_display.code || errorCode;
+            errorMessage = data.error_display.description || data.error_display.message || errorMessage;
+            errorSuggestion = data.error_display.suggestion || '';
+          } else {
+            // 回退到解析 error_message
+            const errorMsg = data.error_message || '拆解失败';
+            try {
+              const errorData = typeof errorMsg === 'string' ? JSON.parse(errorMsg) : errorMsg;
+              errorCode = errorData.code || errorCode;
+              errorMessage = errorData.message || errorMsg;
+            } catch {
+              // 保持原始错误信息
+              errorMessage = errorMsg;
+            }
           }
 
-          message.error(errorMessage);
+          // 显示错误提示
+          if (errorSuggestion) {
+            message.error(`${errorMessage}，建议：${errorSuggestion}`);
+          } else {
+            message.error(errorMessage);
+          }
+
           onError?.({ code: errorCode, message: errorMessage }, batchId);
         }
       } catch (err) {

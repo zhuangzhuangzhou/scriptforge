@@ -16,7 +16,8 @@ class PlotBreakdown(Base):
 
     # 数据分析关联字段
     task_id = Column(UUID(as_uuid=True), ForeignKey("ai_tasks.id", ondelete="SET NULL"), index=True)  # 关联的任务
-    ai_model_id = Column(UUID(as_uuid=True), ForeignKey("ai_models.id", ondelete="SET NULL"), index=True)  # 使用的 AI 模型
+    ai_model_id = Column(UUID(as_uuid=True), ForeignKey("ai_models.id", ondelete="SET NULL"), index=True)  # 使用的 AI 模型（来自 ai_models 表）
+    model_config_id = Column(UUID(as_uuid=True), ForeignKey("model_configs.id", ondelete="SET NULL"), index=True)  # 模型配置 ID（来自 model_configs 表）
 
     # 拆解结果
     conflicts = Column(JSONB)

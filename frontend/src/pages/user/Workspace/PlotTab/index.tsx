@@ -36,7 +36,7 @@ const PlotTab: React.FC<PlotTabProps> = ({
   onViewMethod
 }) => {
   return (
-    <div className="h-full flex gap-0 animate-in fade-in slide-in-from-bottom-4 duration-300 overflow-hidden bg-slate-950">
+    <div className="h-full flex gap-0 overflow-hidden bg-slate-950">
       {/* LEFT COLUMN: Batch List */}
       <BatchList
         batches={batches}

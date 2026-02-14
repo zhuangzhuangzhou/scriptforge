@@ -274,7 +274,19 @@ export const useConsoleLogger = (
 
         // 任务失败
         if (data.status === 'failed') {
-          addLog('error', data.error_message || '任务失败');
+          // 优先使用 error_display（人性化错误信息），否则解析 error_message
+          let errorMsg = '任务失败';
+          if (data.error_display && typeof data.error_display === 'object') {
+            errorMsg = data.error_display.description || data.error_display.message || errorMsg;
+          } else if (data.error_message) {
+            try {
+              const errorData = typeof data.error_message === 'string' ? JSON.parse(data.error_message) : data.error_message;
+              errorMsg = errorData.message || data.error_message;
+            } catch {
+              errorMsg = data.error_message;
+            }
+          }
+          addLog('error', errorMsg);
           if (pollTimerRef.current) {
             clearInterval(pollTimerRef.current);
           }

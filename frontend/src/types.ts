@@ -159,7 +159,19 @@ export interface AITaskStatus {
   status: 'queued' | 'running' | 'completed' | 'failed';
   progress: number;
   current_step?: string;
-  error_message?: string;
+  error_message?: string;       // 原始错误信息
+  error_display?: {            // 人性化错误信息
+    title: string;
+    description: string;
+    suggestion: string;
+    icon: string;
+    severity: 'error' | 'warning';
+    failed_at?: string;
+    retry_count?: number;
+    code?: string;
+    original_message?: string;
+    technical_details?: string;
+  };
   retry_count?: number;
 }
 

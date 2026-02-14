@@ -55,19 +55,28 @@ export const useBreakdownPolling = (options: UseBreakdownPollingOptions = {}) =>
           setTaskId(null);
           setIsRunning(false);
 
-          // 解析错误信息
-          const errorMsg = data.error_message || '拆解失败';
+          // 优先使用 error_display（人性化错误信息），否则解析 error_message
           let errorCode = 'UNKNOWN_ERROR';
-          let errorMessage = errorMsg;
+          let errorMessage = '拆解失败';
 
-          try {
-            const errorData = typeof errorMsg === 'string' ? JSON.parse(errorMsg) : errorMsg;
-            errorCode = errorData.code || errorCode;
-            errorMessage = errorData.message || errorMsg;
-          } catch {
-            // 保持原始错误信息
+          if (data.error_display && typeof data.error_display === 'object') {
+            // 使用 API 返回的人性化错误信息
+            errorCode = data.error_display.code || errorCode;
+            errorMessage = data.error_display.description || data.error_display.message || errorMessage;
+          } else {
+            // 回退到解析 error_message
+            const errorMsg = data.error_message || '拆解失败';
+            try {
+              const errorData = typeof errorMsg === 'string' ? JSON.parse(errorMsg) : errorMsg;
+              errorCode = errorData.code || errorCode;
+              errorMessage = errorData.message || errorMsg;
+            } catch {
+              // 保持原始错误信息
+              errorMessage = errorMsg;
+            }
           }
 
+          message.error(errorMessage);
           onError?.({ code: errorCode, message: errorMessage });
         }
       } catch (err) {

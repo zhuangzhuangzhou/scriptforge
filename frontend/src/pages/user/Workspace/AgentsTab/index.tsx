@@ -30,7 +30,7 @@ const AgentsTab: React.FC<AgentsTabProps> = ({
   onSelectAgent
 }) => {
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+    <div className="space-y-6">
       <div className="flex justify-between items-start">
         <SectionTitle title="智能体编排 (Agent Orchestration)" description="配置负责不同任务的 AI 智能体。" />
         <button className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs transition-colors border border-slate-700">
