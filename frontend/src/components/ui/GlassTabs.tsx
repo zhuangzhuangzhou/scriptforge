@@ -59,8 +59,20 @@ export const GlassTabs: React.FC<TabsProps> = (props) => {
             background: #22d3ee !important;
             height: 2px !important;
           }
+          /* 禁用所有 Tabs 内容动画 */
+          .glass-tabs-wrapper .ant-tabs-content-holder {
+            overflow: visible !important;
+          }
+          .glass-tabs-wrapper .ant-tabs-content {
+            animation: none !important;
+            transition: none !important;
+          }
+          .glass-tabs-wrapper .ant-tabs-tabpane {
+            animation: none !important;
+            opacity: 1 !important;
+          }
         `}</style>
-        <Tabs {...props} type="card" />
+        <Tabs {...props} type="card" animated={false} />
       </div>
     </ConfigProvider>
   );

@@ -667,9 +667,23 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   // 加载结果中
   if (breakdownLoading) {
     return (
-      <div className="flex flex-col items-center justify-center h-full">
-        <Loader2 size={32} className="animate-spin text-cyan-500" />
-        <p className="text-xs text-slate-500 mt-3">加载拆解结果...</p>
+      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        {/* 骨架屏 */}
+        <div className="bg-slate-800/30 border border-slate-700/30 rounded-xl p-6 animate-pulse">
+          <div className="h-6 w-48 bg-slate-700/50 rounded mb-4" />
+          <div className="space-y-3">
+            <div className="h-4 w-full bg-slate-700/30 rounded" />
+            <div className="h-4 w-5/6 bg-slate-700/30 rounded" />
+            <div className="h-4 w-4/6 bg-slate-700/30 rounded" />
+          </div>
+        </div>
+        <div className="bg-slate-800/30 border border-slate-700/30 rounded-xl p-6 animate-pulse">
+          <div className="h-5 w-36 bg-slate-700/50 rounded mb-4" />
+          <div className="grid grid-cols-2 gap-4">
+            <div className="h-24 bg-slate-700/30 rounded" />
+            <div className="h-24 bg-slate-700/30 rounded" />
+          </div>
+        </div>
       </div>
     );
   }

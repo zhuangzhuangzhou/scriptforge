@@ -236,7 +236,7 @@ const SAVE_STATUS_EVENT = 'skillsTabSaveStatus';
 
 const SkillsTab: React.FC<SkillsTabProps> = () => {
   const [categories, setCategories] = useState<CategoryConfig[]>([]);
-  const [activeTab, setActiveTab] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<string>('methodology'); // 预设置默认值，避免初始渲染闪烁
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [resourcesByCategory, setResourcesByCategory] = useState<Record<string, AIResource[]>>({});
   const [loading, setLoading] = useState(true);
@@ -254,10 +254,12 @@ const SkillsTab: React.FC<SkillsTabProps> = () => {
       const response = await api.get('/ai-resources/categories');
       const cats: CategoryConfig[] = response.data.categories || [];
       setCategories(cats);
-      // 设置默认激活的 Tab
-      if (cats.length > 0 && !activeTab) {
+      // 检查预设置的默认 Tab 是否存在于返回的分类中
+      const hasDefaultTab = cats.some(cat => cat.key === 'methodology');
+      if (cats.length > 0 && !hasDefaultTab) {
         setActiveTab(cats[0].key);
       }
+      // 如果后端返回了 methodology，就使用预设置的 activeTab
       categoriesLoadedRef.current = true;
     } catch (error) {
       console.error('加载分类失败:', error);
@@ -269,16 +271,13 @@ const SkillsTab: React.FC<SkillsTabProps> = () => {
         { key: 'template', label: '模板案例', icon: 'FileText', color: 'cyan', description: '输出格式模板', order: 4, default_select_all: false },
       ];
       setCategories(defaultCategories);
-      if (!activeTab) {
-        setActiveTab('methodology');
-      }
+      // 保持预设置的 activeTab
       categoriesLoadedRef.current = true;
     }
-  }, [activeTab]);
+  }, []);
 
   // 加载资源
   const loadResources = useCallback(async () => {
-    setLoading(true);
     try {
       const response = await api.get('/ai-resources', {
         params: { page_size: 100 },
@@ -300,6 +299,7 @@ const SkillsTab: React.FC<SkillsTabProps> = () => {
       console.error('加载资源失败:', error);
       message.error('无法加载配置列表');
     } finally {
+      // loading 初始值就是 true，API 完成后设为 false
       setLoading(false);
     }
   }, []);
@@ -434,14 +434,10 @@ const SkillsTab: React.FC<SkillsTabProps> = () => {
     return resources.filter((r) => selectedIds.includes(r.id)).length;
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64 text-slate-500 gap-2">
-        <Loader2 size={20} className="animate-spin" />
-        <span>加载配置...</span>
-      </div>
-    );
-  }
+  // 骨架屏组件
+  const SkeletonCard = () => (
+    <div className="h-28 bg-slate-800/40 rounded-xl border border-slate-700/50 animate-pulse" />
+  );
 
   // 获取分类配置的辅助函数
   const getCategoryConfig = (key: string): CategoryConfig | undefined => {
@@ -474,7 +470,7 @@ const SkillsTab: React.FC<SkillsTabProps> = () => {
   const currentResources = resourcesByCategory[activeTab] || [];
 
   return (
-    <div className="h-full overflow-y-auto animate-in fade-in slide-in-from-bottom-4 duration-300 px-4 md:px-6 pt-2 pb-4">
+    <div className="h-full overflow-y-auto px-4 md:px-6 pt-2 pb-4">
       {/* 顶部标题栏 - 紧凑布局 */}
       <div className="flex items-center justify-between gap-4 mb-4 sticky top-0 bg-slate-950/95 backdrop-blur-md z-10 py-2">
         <div className="flex items-center gap-3">
@@ -526,18 +522,30 @@ const SkillsTab: React.FC<SkillsTabProps> = () => {
 
       {/* 卡片网格 */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {currentResources.map((resource) => (
-          <ResourceCard
-            key={resource.id}
-            resource={resource}
-            isSelected={selectedIds.includes(resource.id)}
-            color={currentConfig?.color || 'cyan'}
-            onSelect={() => toggleSelect(resource.id)}
-            onViewDetail={() => handleViewDetail(resource)}
-          />
-        ))}
-
-        {currentResources.length === 0 && (
+        {loading ? (
+          // 加载中显示骨架屏
+          <>
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </>
+        ) : currentResources.length > 0 ? (
+          // 有数据时显示卡片
+          currentResources.map((resource) => (
+            <ResourceCard
+              key={resource.id}
+              resource={resource}
+              isSelected={selectedIds.includes(resource.id)}
+              color={currentConfig?.color || 'cyan'}
+              onSelect={() => toggleSelect(resource.id)}
+              onViewDetail={() => handleViewDetail(resource)}
+            />
+          ))
+        ) : (
+          // 无数据时显示空状态
           <div className="col-span-full text-center py-12 text-slate-500">
             <Sparkles size={32} className="mx-auto mb-3 opacity-50" />
             <p>暂无可用的{currentConfig?.label || '配置'}</p>

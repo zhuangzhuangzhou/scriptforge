@@ -254,7 +254,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
   }
 
   return (
-    <div className="h-full flex gap-0 animate-in fade-in slide-in-from-bottom-4 duration-300 overflow-hidden bg-slate-950">
+    <div className="h-full flex gap-0 overflow-hidden bg-slate-950">
       {/* LEFT COLUMN: Controls & List */}
       <div className="w-72 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-2xl">
         {/* Generator Controls */}
@@ -295,15 +295,24 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         {/* Episodes List */}
         <div className="flex-1 overflow-y-auto custom-scrollbar">
           <div className="px-4 py-3 flex items-center justify-between text-xs text-slate-500 bg-slate-900/50 sticky top-0 z-10 backdrop-blur border-b border-slate-800">
-            <span>剧集列表 ({episodes.length})</span>
+            <span>剧集列表 ({loading ? '-' : episodes.length})</span>
             <button onClick={loadEpisodes} className="hover:text-white transition-colors">
               <RefreshCw size={12} />
             </button>
           </div>
 
+          {/* 加载中显示骨架屏 */}
           {loading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 size={24} className="animate-spin text-slate-500" />
+            <div className="p-4 space-y-3">
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <div key={i} className="bg-slate-800/30 border border-slate-700/30 rounded-lg p-4 animate-pulse">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="h-3 w-16 bg-slate-700/50 rounded" />
+                    <div className="h-2 w-12 bg-slate-700/30 rounded" />
+                  </div>
+                  <div className="h-3 w-3/4 bg-slate-700/30 rounded" />
+                </div>
+              ))}
             </div>
           ) : episodes.length === 0 ? (
             <div className="text-center py-8 text-slate-600 text-sm">

@@ -1457,16 +1457,13 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                             setShowSaveGlow(true);
                                             setTimeout(() => setShowSaveGlow(false), 1500);
                                         }}
-                                        className={`relative flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold rounded-lg shadow-lg transition-all hover:scale-105 ${
-                                            showSaveGlow ? 'shadow-cyan-500/50 shadow-xl' : 'shadow-cyan-500/20'
+                                        className={`relative flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold rounded-lg shadow-lg transition-all ${
+                                            showSaveGlow ? 'shadow-cyan-500/50 shadow-xl ring-2 ring-cyan-400/30' : 'shadow-cyan-500/20'
                                         }`}
                                     >
-                                        {/* 光效动画 */}
+                                        {/* 保存完成提示 */}
                                         {showSaveGlow && (
-                                            <>
-                                                <div className="absolute inset-0 rounded-lg bg-cyan-400/20 animate-ping" />
-                                                <div className="absolute -inset-1 rounded-xl bg-gradient-to-r from-cyan-500/30 to-blue-500/30 blur-md animate-pulse" />
-                                            </>
+                                            <div className="absolute -top-1 -right-1 w-2 h-2 bg-green-400 rounded-full animate-pulse" />
                                         )}
                                         <Save size={12} className="relative z-10" />
                                         <span className="relative z-10">保存配置</span>

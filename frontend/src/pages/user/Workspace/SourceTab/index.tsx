@@ -71,7 +71,7 @@ const SourceTab: React.FC<SourceTabProps> = ({
     }
   };
   return (
-    <div className="h-full flex gap-0 animate-in fade-in slide-in-from-bottom-4 duration-300 overflow-hidden bg-slate-950">
+    <div className="h-full flex gap-0 overflow-hidden bg-slate-950">
       {/* LEFT COLUMN: Chapter List */}
       <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-2xl relative">
         <div className="p-5 border-b border-slate-800 flex flex-col gap-4 bg-slate-900/50 backdrop-blur">
@@ -107,9 +107,17 @@ const SourceTab: React.FC<SourceTabProps> = ({
           onScroll={onScroll}
         >
           {loadingChapters && chapters.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-40 gap-3">
-              <Loader2 size={20} className="animate-spin text-cyan-500" />
-              <span className="text-[10px] text-slate-500 uppercase tracking-widest font-mono">Loading...</span>
+            // 骨架屏加载
+            <div className="p-4 space-y-3">
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <div key={i} className="bg-slate-800/30 border border-slate-700/30 rounded-lg p-4 animate-pulse">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="h-3 w-16 bg-slate-700/50 rounded" />
+                    <div className="h-2 w-12 bg-slate-700/30 rounded" />
+                  </div>
+                  <div className="h-3 w-3/4 bg-slate-700/50 rounded" />
+                </div>
+              ))}
             </div>
           ) : chapters.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-40 text-slate-600 px-6 text-center">
