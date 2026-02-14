@@ -112,7 +112,7 @@ export const useBreakdownPolling = (options: UseBreakdownPollingOptions = {}) =>
     }
   }, [startPolling, onError]);
 
-  // 取消拆解
+  // 取消拆解（仅停止轮询，不调用后端）
   const cancelBreakdown = useCallback(() => {
     clearPolling();
     setTaskId(null);
@@ -120,6 +120,28 @@ export const useBreakdownPolling = (options: UseBreakdownPollingOptions = {}) =>
     setProgress(0);
     setCurrentStep('');
   }, [clearPolling]);
+
+  // 停止拆解（调用后端 API 停止任务）
+  const stopBreakdown = useCallback(async () => {
+    if (!taskId) return;
+
+    try {
+      // 调用后端 API 停止任务
+      await breakdownApi.stopBreakdown(taskId);
+
+      // 清除轮询
+      clearPolling();
+      setTaskId(null);
+      setIsRunning(false);
+      setProgress(0);
+      setCurrentStep('');
+
+      message.success('拆解任务已停止');
+    } catch (err: any) {
+      console.error('停止任务失败:', err);
+      message.error(err.response?.data?.detail || '停止任务失败');
+    }
+  }, [taskId, clearPolling]);
 
   // 组件卸载时清理
   useEffect(() => {
@@ -134,6 +156,7 @@ export const useBreakdownPolling = (options: UseBreakdownPollingOptions = {}) =>
     isRunning,
     currentStep,
     startBreakdown,
-    cancelBreakdown
+    cancelBreakdown,
+    stopBreakdown
   };
 };

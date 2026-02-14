@@ -11,8 +11,9 @@ from app.models.project import Project
 from app.models.ai_task import AITask
 from app.models.ai_resource import AIResource
 from app.api.v1.auth import get_current_user
+from app.core.celery_app import celery_app
 from app.tasks.breakdown_tasks import run_breakdown_task
-from app.core.quota import QuotaService
+from app.core.quota import QuotaService, refund_episode_quota_sync
 
 router = APIRouter()
 
@@ -1461,4 +1462,91 @@ async def retry_failed_task(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"任务重试失败: {str(e)}"
+        )
+
+
+@router.post("/tasks/{task_id}/stop")
+async def stop_breakdown_task(
+    task_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """停止正在执行的拆解任务
+
+    功能：
+    - 使用 Celery revoke 停止正在执行的任务
+    - 更新任务状态为 cancelled
+    - 返还已扣除的配额
+    - 更新批次状态为 pending（允许重新提交）
+    """
+    # 验证任务归属
+    result = await db.execute(
+        select(AITask).join(Project).where(
+            AITask.id == task_id,
+            Project.user_id == current_user.id
+        )
+    )
+    task = result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="任务不存在"
+        )
+
+    # 只有正在执行（queued 或 running）的任务可以停止
+    if task.status not in ["queued", "running"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"只有正在执行的任务可以停止，当前状态: {task.status}"
+        )
+
+    try:
+        # 1. 使用 Celery revoke 停止任务（如果任务已在队列中）
+        if task.celery_task_id:
+            celery_app.control.revoke(task.celery_task_id, terminate=True)
+            print(f"已撤销 Celery 任务: {task.celery_task_id}")
+
+        # 2. 更新任务状态为 cancelled
+        task.status = "cancelled"
+        task.current_step = "用户手动停止"
+        task.error_message = None  # 清除错误信息
+
+        # 3. 获取批次信息
+        batch_result = await db.execute(
+            select(Batch).where(Batch.id == task.batch_id)
+        )
+        batch = batch_result.scalar_one_or_none()
+
+        if batch:
+            # 更新批次状态为 pending（允许重新提交）
+            batch.breakdown_status = "pending"
+
+        # 4. 返还配额（使用同步方法，避免 greenlet 问题）
+        try:
+            from app.core.database import SyncSessionLocal
+            sync_db = SyncSessionLocal()
+            try:
+                refund_episode_quota_sync(sync_db, task.project_id, 1)
+                sync_db.commit()
+                print(f"已返还配额: project_id={task.project_id}")
+            finally:
+                sync_db.close()
+        except Exception as refund_error:
+            print(f"返还配额失败: {refund_error}")
+
+        # 提交事务
+        await db.commit()
+
+        return {
+            "task_id": str(task.id),
+            "status": "cancelled",
+            "message": "任务已停止，配额已返还"
+        }
+
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"停止任务失败: {str(e)}"
         )

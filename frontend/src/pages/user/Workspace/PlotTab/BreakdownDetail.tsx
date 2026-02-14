@@ -14,6 +14,8 @@ interface BreakdownDetailProps {
   breakdownLoading: boolean;
   breakdownProgress: number;
   onStartBreakdown?: (batchId: string) => void;
+  taskId?: string | null;
+  onStopBreakdown?: () => void;
 }
 
 interface EpisodeCardProps {
@@ -527,7 +529,9 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   breakdownResult,
   breakdownLoading,
   breakdownProgress,
-  onStartBreakdown
+  onStartBreakdown,
+  taskId,
+  onStopBreakdown
 }) => {
   const [expandedEpisodes, setExpandedEpisodes] = useState<Set<number>>(new Set([1])); // 默认展开第一集
   const [viewMode, setViewMode] = useState<'card' | 'table'>('card'); // 视图模式
@@ -611,6 +615,16 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
         </div>
         <p className="text-sm font-bold text-amber-500">任务已排队</p>
         <p className="text-xs text-slate-700">等待执行中...</p>
+        {/* 停止按钮 */}
+        {taskId && onStopBreakdown && (
+          <button
+            onClick={onStopBreakdown}
+            className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs rounded-lg border border-red-500/30 transition-colors flex items-center gap-2"
+          >
+            <X size={14} />
+            取消排队
+          </button>
+        )}
       </div>
     );
   }
@@ -632,6 +646,16 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
           </div>
           <p className="text-xs text-slate-600 text-center mt-2">{breakdownProgress}%</p>
         </div>
+        {/* 停止按钮 */}
+        {taskId && onStopBreakdown && (
+          <button
+            onClick={onStopBreakdown}
+            className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs rounded-lg border border-red-500/30 transition-colors flex items-center gap-2"
+          >
+            <X size={14} />
+            停止拆解
+          </button>
+        )}
       </div>
     );
   }

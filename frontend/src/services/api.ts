@@ -301,6 +301,15 @@ export const breakdownApi = {
     return api.get(`/breakdown/tasks/${taskId}`);
   },
 
+  // 停止正在执行的任务
+  stopBreakdown: async (taskId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return { data: { task_id: taskId, status: 'cancelled', message: '任务已停止' } };
+    }
+    return api.post(`/breakdown/tasks/${taskId}/stop`);
+  },
+
   // 获取批次当前正在执行的任务
   getBatchCurrentTask: async (batchId: string) => {
     if (USE_MOCK) {
