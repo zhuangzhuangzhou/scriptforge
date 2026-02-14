@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.celery_app import celery_app
 from app.core.database import SyncSessionLocal
 from app.core.progress import update_task_progress_sync
-from app.core.credits import consume_credits_for_task_sync
+from app.core.credits import consume_credits_for_task_sync, consume_token_credits_sync
 from app.core.exceptions import (
     AITaskException,
     RetryableError,
@@ -125,14 +125,30 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
             current_step="任务完成 (100%)"
         )
 
+        # 发布任务完成消息到 logs 频道（供 WebSocket 客户端接收）
+        if log_publisher:
+            log_publisher.publish_task_complete(task_id, status="completed", message="拆解任务执行完成")
+
         # 更新批次状态为 completed
         if batch_record:
             batch_record.breakdown_status = "completed"
             batch_record.ai_processed = True  # 标记为已处理
             db.commit()
 
-        # 注意：积分已在 API 层预扣，这里不再重复扣费
-        # 如果启用了 Token 计费，可以在这里扣除 Token 费用（待实现）
+        # Token 计费：从 LLMCallLog 汇总该任务的 token 使用量并扣费
+        token_result = consume_token_credits_sync(
+            db=db,
+            user_id=user_id,
+            task_id=task_id,
+            task_type="breakdown"
+        )
+        if token_result.get("token_credits", 0) > 0:
+            db.commit()
+            logger.info(
+                f"Token 扣费完成: input={token_result.get('input_tokens', 0)}, "
+                f"output={token_result.get('output_tokens', 0)}, "
+                f"credits={token_result.get('token_credits', 0)}"
+            )
 
         return {"status": "completed", "task_id": task_id}
 
@@ -517,8 +533,18 @@ def _execute_breakdown_sync(
     auto_fix_enabled = task_config.get("auto_fix_on_fail", True)  # 默认启用
     fix_attempt = 0
 
+    # 标准化 qa_status（统一转为大写）
+    normalized_qa_status = qa_status.upper() if isinstance(qa_status, str) else "PENDING"
+    logger.info(f"质检状态标准化: 原始={qa_status}, 标准化={normalized_qa_status}")
+
+    # 判断是否需要自动修正（FAIL 或得分低于 60 分）
+    needs_fix = (
+        normalized_qa_status == "FAIL" or
+        (qa_score is not None and qa_score < 60)
+    )
+
     while (auto_fix_enabled and
-           qa_status and qa_status.upper() == "FAIL" and
+           needs_fix and
            fix_attempt < max_auto_fix_retries and
            qa_report):
 
@@ -571,7 +597,14 @@ def _execute_breakdown_sync(
 
         logger.info(f"第 {fix_attempt} 次修正后质检结果: status={qa_status}, score={qa_score}")
 
-        if qa_status and qa_status.upper() == "PASS":
+        # 重新计算是否需要继续修正
+        normalized_qa_status = qa_status.upper() if isinstance(qa_status, str) else "PENDING"
+        needs_fix = (
+            normalized_qa_status == "FAIL" or
+            (qa_score is not None and qa_score < 60)
+        )
+
+        if not needs_fix:
             if log_publisher:
                 log_publisher.publish_success(
                     task_id,
@@ -584,18 +617,22 @@ def _execute_breakdown_sync(
         if qa_report is None:
             qa_report = {}
         qa_report["auto_fix_attempts"] = fix_attempt
-        qa_report["auto_fix_success"] = qa_status and qa_status.upper() == "PASS"
+        normalized_final_status = qa_status.upper() if isinstance(qa_status, str) else "PENDING"
+        qa_report["auto_fix_success"] = normalized_final_status == "PASS" or (qa_score is not None and qa_score >= 60)
 
     update_task_progress_sync(db, task_id, progress=90, current_step=f"拆解完成，生成 {len(plot_points)} 个剧情点 (90%)")
 
     # 4. 保存结果（90%-100%）
+    # 标准化 qa_status 为大写（前端期望 'PASS' | 'FAIL' | 'pending'）
+    normalized_qa_status_for_db = qa_status.upper() if isinstance(qa_status, str) and qa_status.upper() in ("PASS", "FAIL") else "pending"
+
     breakdown = PlotBreakdown(
         batch_id=batch_id,
         project_id=project_id,
         plot_points=plot_points,
         format_version=2,
         consistency_status="pending",
-        qa_status=qa_status.lower() if isinstance(qa_status, str) else "pending",
+        qa_status=normalized_qa_status_for_db,
         qa_score=qa_score,
         qa_report=qa_report,
         used_adapt_method_id=task_config.get("adapt_method_id"),

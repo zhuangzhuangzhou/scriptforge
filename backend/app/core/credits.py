@@ -797,3 +797,144 @@ def consume_credits_for_task_sync(db: "Session", user_id: str, task_type: str, r
         "message": "基础费扣除成功"
     }
 
+
+def consume_token_credits_sync(
+    db: "Session",
+    user_id: str,
+    task_id: str,
+    task_type: str = "breakdown"
+) -> dict:
+    """消耗 Token 积分（同步版本）
+
+    从 LLMCallLog 汇总该任务的 token 使用量，然后扣除积分。
+    用于 Celery worker 中的同步操作。
+
+    Args:
+        db: 同步数据库会话
+        user_id: 用户ID
+        task_id: 任务ID（用于从 LLMCallLog 汇总 token）
+        task_type: 任务类型（用于描述）
+
+    Returns:
+        {success: bool, balance: int, token_credits: int, input_tokens: int, output_tokens: int, message: str}
+    """
+    from app.models.user import User
+    from app.models.llm_call_log import LLMCallLog
+    from sqlalchemy import func
+
+    # 从数据库读取 token 计费配置
+    config = get_credits_config_sync(db)
+    token_config = config.get("token", {})
+    token_billing_enabled = token_config.get("enabled", False)
+
+    # 检查 token 计费是否启用
+    if not token_billing_enabled:
+        return {
+            "success": True,
+            "balance": 0,
+            "token_credits": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "enabled": False,
+            "message": "Token 计费未启用"
+        }
+
+    # 从 LLMCallLog 汇总该任务的 token 使用量
+    task_uuid = UUID(task_id) if isinstance(task_id, str) else task_id
+
+    # 查询有 token 数据的记录
+    token_result = db.query(
+        func.coalesce(func.sum(LLMCallLog.prompt_tokens), 0).label("input_tokens"),
+        func.coalesce(func.sum(LLMCallLog.response_tokens), 0).label("output_tokens")
+    ).filter(
+        LLMCallLog.task_id == task_uuid
+    ).first()
+
+    input_tokens = int(token_result.input_tokens) if token_result else 0
+    output_tokens = int(token_result.output_tokens) if token_result else 0
+
+    # 如果没有精确的 token 数据，尝试从文本长度估算
+    if input_tokens == 0 and output_tokens == 0:
+        # 查询该任务的所有日志记录
+        logs = db.query(LLMCallLog).filter(LLMCallLog.task_id == task_uuid).all()
+        for log in logs:
+            # 估算 token 数量（中文约 2 字符/token，取保守值）
+            if log.prompt:
+                input_tokens += len(log.prompt) // 2
+            if log.response:
+                output_tokens += len(log.response) // 2
+
+    # 计算 token 积分
+    input_per_1k = token_config.get("input_per_1k", 1)
+    output_per_1k = token_config.get("output_per_1k", 2)
+
+    # 向上取整计算积分
+    input_credits = (input_tokens + 999) // 1000 * input_per_1k
+    output_credits = (output_tokens + 999) // 1000 * output_per_1k
+    token_credits = input_credits + output_credits
+
+    if token_credits <= 0:
+        return {
+            "success": True,
+            "balance": 0,
+            "token_credits": 0,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "message": "无 Token 消耗"
+        }
+
+    # 获取用户
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return {
+            "success": False,
+            "balance": 0,
+            "token_credits": token_credits,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "message": "用户不存在"
+        }
+
+    # 检查余额（允许透支到 0，因为基础费已预扣）
+    if user.credits < token_credits:
+        actual_deduct = user.credits
+        user.credits = 0
+        shortfall = token_credits - actual_deduct
+    else:
+        actual_deduct = token_credits
+        user.credits -= token_credits
+        shortfall = 0
+
+    balance_after = user.credits
+
+    # 任务类型描述
+    task_desc = {
+        "breakdown": "剧情拆解",
+        "script": "剧本生成",
+        "qa": "质检校验",
+        "retry": "任务重试"
+    }
+
+    # 创建账单记录
+    record = BillingRecord(
+        user_id=UUID(user_id) if isinstance(user_id, str) else user_id,
+        type="consume",
+        credits=-actual_deduct,
+        balance_after=balance_after,
+        description=f"{task_desc.get(task_type, task_type)}（Token: {input_tokens}+{output_tokens}）",
+        reference_id=task_id,
+        created_at=datetime.now(timezone.utc)
+    )
+    db.add(record)
+
+    return {
+        "success": True,
+        "balance": balance_after,
+        "token_credits": token_credits,
+        "actual_deduct": actual_deduct,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "shortfall": shortfall,
+        "message": f"Token 费用 {token_credits} 积分" + (f"（欠费 {shortfall}）" if shortfall > 0 else "")
+    }
+

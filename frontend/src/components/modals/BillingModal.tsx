@@ -38,8 +38,11 @@ interface BillingRecord {
 const BillingModal: React.FC<BillingModalProps> = ({ onClose }) => {
   const [activeTab, setActiveTab] = useState<'USAGE' | 'PRICING'>('USAGE');
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [creditsInfo, setCreditsInfo] = useState<CreditsInfo | null>(null);
   const [records, setRecords] = useState<BillingRecord[]>([]);
+  const [hasMore, setHasMore] = useState(true);
+  const PAGE_SIZE = 20;
 
   useEffect(() => {
     loadData();
@@ -50,14 +53,31 @@ const BillingModal: React.FC<BillingModalProps> = ({ onClose }) => {
     try {
       const [creditsRes, recordsRes] = await Promise.all([
         billingApi.getCreditsInfo(),
-        billingApi.getRecords(20, 0)
+        billingApi.getRecords(PAGE_SIZE, 0)
       ]);
       setCreditsInfo(creditsRes.data);
-      setRecords(recordsRes.data.records || []);
+      const newRecords = recordsRes.data.records || [];
+      setRecords(newRecords);
+      setHasMore(newRecords.length >= PAGE_SIZE);
     } catch (error) {
       console.error('加载账单数据失败:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMore = async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const recordsRes = await billingApi.getRecords(PAGE_SIZE, records.length);
+      const newRecords = recordsRes.data.records || [];
+      setRecords(prev => [...prev, ...newRecords]);
+      setHasMore(newRecords.length >= PAGE_SIZE);
+    } catch (error) {
+      console.error('加载更多记录失败:', error);
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -235,9 +255,25 @@ const BillingModal: React.FC<BillingModalProps> = ({ onClose }) => {
                   </div>
                   {records.length > 0 && (
                     <div className="px-4 py-2 bg-slate-900/80 border-t border-slate-800 text-center">
-                      <button className="text-xs text-slate-400 hover:text-white flex items-center justify-center gap-1 w-full">
-                        查看更多 <ChevronDown size={12} />
-                      </button>
+                      {hasMore ? (
+                        <button
+                          onClick={loadMore}
+                          disabled={loadingMore}
+                          className="text-xs text-slate-400 hover:text-white flex items-center justify-center gap-1 w-full disabled:opacity-50"
+                        >
+                          {loadingMore ? (
+                            <>
+                              <Loader2 size={12} className="animate-spin" /> 加载中...
+                            </>
+                          ) : (
+                            <>
+                              查看更多 <ChevronDown size={12} />
+                            </>
+                          )}
+                        </button>
+                      ) : (
+                        <span className="text-xs text-slate-500">没有更多了</span>
+                      )}
                     </div>
                   )}
                 </div>

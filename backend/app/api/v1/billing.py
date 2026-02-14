@@ -42,6 +42,7 @@ class CreditsInfoResponse(BaseModel):
     balance: int
     monthly_granted: int
     monthly_credits: int
+    monthly_consumed: int = 0  # 本月消耗总额
     next_grant_at: Optional[str] = None
     tier: str
     tier_display: str
