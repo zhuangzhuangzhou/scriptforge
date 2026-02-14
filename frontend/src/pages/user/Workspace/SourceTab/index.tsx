@@ -3,7 +3,7 @@ import {
   Search, X, Loader2, Trash2, BookOpen, Download, Eye, BookText, Upload,
   CheckCircle2, CircleDashed
 } from 'lucide-react';
-import ConfirmModal from '../../../components/modals/ConfirmModal';
+import ConfirmModal from '../../../../components/modals/ConfirmModal';
 
 interface SourceTabProps {
   project: any;
@@ -236,38 +236,38 @@ const SourceTab: React.FC<SourceTabProps> = ({
           </div>
         </div>
       </div>
-    </div>
 
-    {/* 删除确认弹窗 */}
-    <ConfirmModal
-      open={deleteModalOpen}
-      onCancel={() => {
-        setDeleteModalOpen(false);
-        setDeletingChapterId(null);
-      }}
-      onConfirm={handleConfirmDelete}
-      title="确认删除章节"
-      content={
-        <div className="text-left">
-          <p className="text-slate-300 mb-3">
-            确定要删除该章节吗？此操作不可撤销。
-          </p>
-          <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3">
-            <div className="flex gap-2 items-start">
-              <Trash2 size={14} className="text-amber-400 mt-0.5 shrink-0" />
-              <p className="text-xs text-amber-300 leading-relaxed">
-                删除章节后将无法恢复，请确认操作。
-              </p>
+      {/* 删除确认弹窗 */}
+      <ConfirmModal
+        open={deleteModalOpen}
+        onCancel={() => {
+          setDeleteModalOpen(false);
+          setDeletingChapterId(null);
+        }}
+        onConfirm={handleConfirmDelete}
+        title="确认删除章节"
+        content={
+          <div className="text-left">
+            <p className="text-slate-300 mb-3">
+              确定要删除该章节吗？此操作不可撤销。
+            </p>
+            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3">
+              <div className="flex gap-2 items-start">
+                <Trash2 size={14} className="text-amber-400 mt-0.5 shrink-0" />
+                <p className="text-xs text-amber-300 leading-relaxed">
+                  删除章节后将无法恢复，请确认操作。
+                </p>
+              </div>
             </div>
           </div>
-        </div>
-      }
-      confirmText="确认删除"
-      confirmType="danger"
-      iconType="danger"
-      loading={isDeleting}
-    />
-  </div>
-);
+        }
+        confirmText="确认删除"
+        confirmType="danger"
+        iconType="danger"
+        loading={isDeleting}
+      />
+    </div>
+  );
+};
 
 export default SourceTab;

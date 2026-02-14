@@ -952,7 +952,13 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
              setShowConsole(true);
              clearLogs();
              lastStepRef.current = '';
-             const res = await internalStartBreakdown(firstNeedBreakdown.id);
+             // 从 SkillsTab 保存的配置中读取
+             const config = loadBreakdownConfig();
+             const res = await breakdownApi.startBreakdown(firstNeedBreakdown.id, {
+                 selectedSkills: config.selectedBreakdownSkills,
+                 resourceIds: config.breakdownConfig,
+                 novelType: formData.novel_type
+             });
              setBreakdownTaskId(res.data.task_id);
              // 刷新批次列表，显示当前正在拆解的批次
              fetchBatches();
@@ -974,6 +980,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
     // 执行停止操作
     const handleConfirmStop = async () => {
+        if (!breakdownTaskId) return;
         setIsStopping(true);
         try {
             const res = await breakdownApi.stopBreakdown(breakdownTaskId);

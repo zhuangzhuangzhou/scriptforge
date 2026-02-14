@@ -1,6 +1,6 @@
 import React from 'react';
 import { Modal } from 'antd';
-import { LucideIcon, AlertTriangle, CheckCircle, Info, XCircle } from 'lucide-react';
+import { LucideIcon, AlertTriangle, CheckCircle, Info, XCircle, Loader2 } from 'lucide-react';
 
 interface ConfirmModalProps {
   /** 控制弹窗显示 */
@@ -98,15 +98,15 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
       className={`confirm-modal ${className}`}
       styles={{
         mask: {
-          backgroundColor: 'rgba(0, 0, 0, 0.85)',
-          backdropFilter: 'blur(8px)',
+          backgroundColor: 'rgba(0, 0, 0, 0.6)',
+          backdropFilter: 'blur(4px)',
         },
         content: {
-          backgroundColor: 'rgba(15, 23, 42, 0.95)',
-          backgroundImage: 'linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.95) 100%)',
-          border: '1px solid rgba(51, 65, 85, 0.5)',
+          backgroundColor: 'rgba(30, 41, 59, 0.98)',
+          backgroundImage: 'linear-gradient(135deg, rgba(51, 65, 85, 0.5) 0%, rgba(30, 41, 59, 0.98) 100%)',
+          border: '1px solid rgba(71, 85, 105, 0.5)',
           borderRadius: '20px',
-          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.8)',
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
           overflow: 'hidden',
         },
         header: {
@@ -154,11 +154,11 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
         </button>
         <button
           onClick={onConfirm}
-          loading={loading}
           disabled={loading}
           style={getConfirmButtonStyle()}
-          className="px-6 py-2.5 rounded-xl text-white font-semibold transition-all duration-200 hover:brightness-110 disabled:opacity-70 disabled:cursor-not-allowed min-w-[100px] shadow-lg"
+          className="px-6 py-2.5 rounded-xl text-white font-semibold transition-all duration-200 hover:brightness-110 disabled:opacity-70 disabled:cursor-not-allowed min-w-[100px] shadow-lg flex items-center justify-center gap-2"
         >
+          {loading && <Loader2 size={16} className="animate-spin" />}
           {confirmText}
         </button>
       </div>
