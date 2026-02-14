@@ -228,6 +228,37 @@ while True:
         break
 ```
 
+### 8.5 外键引用表不匹配
+
+**问题**: 模型字段的外键指向错误的表，导致插入时外键约束违反
+
+**场景**:
+- 项目配置中 `breakdown_model_id` 存储的是 `ai_models` 表的 ID
+- 但 `plot_breakdowns.model_config_id` 外键指向 `model_configs` 表
+- 插入时报错：`ForeignKeyViolation: Key (model_config_id)=(...) is not present in table "model_configs"`
+
+**症状**:
+- Celery 任务卡在某个进度（如 90%）不动
+- 日志显示大量 `ROLLBACK`
+- 任务状态一直是 `running`，不会变成 `completed` 或 `failed`
+
+**解决方案**:
+
+```python
+# ❌ 错误：外键指向错误的表
+class PlotBreakdown(Base):
+    model_config_id = Column(UUID, ForeignKey("model_configs.id"))  # 错误！
+
+# ✅ 正确：外键指向实际存储 ID 的表
+class PlotBreakdown(Base):
+    ai_model_id = Column(UUID, ForeignKey("ai_models.id"))  # 正确
+```
+
+**预防措施**:
+1. 新增外键字段前，确认 ID 来源于哪个表
+2. 字段命名应反映实际引用的表（如 `ai_model_id` 而非 `model_config_id`）
+3. 数据库迁移前先验证外键关系
+
 ---
 
-**最后更新**: 2026-02-14
+**最后更新**: 2026-02-15
