@@ -76,7 +76,10 @@ class AnthropicAdapter(BaseModelAdapter):
         self.http_client = httpx.Client(timeout=600.0)
 
     def generate(self, prompt: str, return_usage: bool = False, **kwargs) -> Any:
-        """生成文本（非流式）
+        """生成文本（流式请求，非流式返回完整内容）
+
+        Anthropic SDK 对于长时间操作（>10分钟）必须使用 stream=True，
+        但我们仍然收集完整响应后返回。
 
         Args:
             prompt: 提示词
@@ -103,28 +106,58 @@ class AnthropicAdapter(BaseModelAdapter):
         prompt_tokens = None
         response_tokens = None
         raw_response = None
+        collected_content = []
 
         try:
-            message = self.client.messages.create(
+            # Anthropic SDK 长时间操作必须使用 stream=True
+            stream = self.client.messages.stream(
                 model=self.model_name,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 messages=[{"role": "user", "content": prompt}]
             )
 
-            # 保存原始响应对象（安全处理）
-            try:
-                raw_response = message.model_dump() if hasattr(message, 'model_dump') else None
-            except Exception:
-                raw_response = None
+            # stream() 返回一个上下文管理器，需要迭代获取内容
+            with stream as event_stream:
+                # 遍历所有事件
+                for event in event_stream:
+                    if event.type == "content_block_delta":
+                        # 提取文本增量
+                        delta = event.delta
+                        if hasattr(delta, 'text') and delta.text:
+                            text = delta.text
+                            collected_content.append(text)
+                    elif event.type == "message_start":
+                        # 消息开始，可以获取 usage
+                        if hasattr(event, 'message') and event.message:
+                            msg = event.message
+                            if hasattr(msg, 'usage') and msg.usage:
+                                usage = msg.usage
+                                prompt_tokens = getattr(usage, 'input_tokens', None)
+                                response_tokens = getattr(usage, 'output_tokens', None)
+                    elif event.type == "message_delta":
+                        # 消息增量，可能包含 usage
+                        if hasattr(event, 'usage') and event.usage:
+                            usage = event.usage
+                            # 累积输出 tokens
+                            current_output = getattr(usage, 'output_tokens', None)
+                            if current_output:
+                                response_tokens = current_output
+                    elif event.type == "message_stop":
+                        # 消息结束
+                        pass
 
-            # 安全提取响应内容
-            response_content = self._safe_extract_content(message)
+            # 收集完整响应
+            response_content = "".join(collected_content)
 
-            # 安全提取 token 使用量
-            if hasattr(message, 'usage') and message.usage:
-                prompt_tokens = getattr(message.usage, 'input_tokens', None)
-                response_tokens = getattr(message.usage, 'output_tokens', None)
+            # 构建 raw_response（用于日志）
+            raw_response = {
+                "content": response_content,
+                "usage": {
+                    "input_tokens": prompt_tokens or 0,
+                    "output_tokens": response_tokens or 0
+                }
+            }
 
             if return_usage:
                 return {

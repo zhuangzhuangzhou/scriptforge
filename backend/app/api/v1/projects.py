@@ -541,10 +541,12 @@ async def update_project(
         project.batch_size = project_data.batch_size
     if project_data.chapter_split_rule is not None:
         project.chapter_split_rule = normalize_chapter_split_rule(project_data.chapter_split_rule)
+
+    # 处理模型 ID：空字符串转换为 NULL（PostgreSQL UUID 类型不接受空字符串）
     if project_data.breakdown_model_id is not None:
-        project.breakdown_model_id = project_data.breakdown_model_id
+        project.breakdown_model_id = project_data.breakdown_model_id if project_data.breakdown_model_id.strip() else None
     if project_data.script_model_id is not None:
-        project.script_model_id = project_data.script_model_id
+        project.script_model_id = project_data.script_model_id if project_data.script_model_id.strip() else None
     # if project_data.split_rule_id is not None:
     #     project.split_rule_id = project_data.split_rule_id
 

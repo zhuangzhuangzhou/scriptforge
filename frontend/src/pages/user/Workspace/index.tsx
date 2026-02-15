@@ -234,6 +234,22 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         }
     );
 
+    const normalizeStepTitle = (stepName: string) => {
+        if (stepName.includes('网文改编剧情拆解') || stepName.includes('剧情拆解') || stepName.includes('剧集拆解')) {
+            return '剧集拆解';
+        }
+        if (stepName.includes('剧情拆解质量校验') || stepName.includes('质量校验') || stepName.includes('质量检查') || stepName.includes('质检')) {
+            return '质量检查';
+        }
+        return '';
+    };
+
+    const buildFormattedSectionHeader = (stepName: string) => {
+        const title = normalizeStepTitle(stepName);
+        if (!title) return '';
+        return `------\n${title} Agent 正在运行中...\n------\n\n`;
+    };
+
     // 流式日志 WebSocket（接收大模型返回的实时流式数据）
     const {
         isConnected: logsConnected,
@@ -246,6 +262,10 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             onStepStart: (stepName, metadata) => {
                 console.log('[StreamLogs] 步骤开始:', stepName, metadata);
                 addLog('thinking', `🚀 ${stepName}`);
+                const header = buildFormattedSectionHeader(stepName);
+                if (header) {
+                    addLog('formatted', header);
+                }
             },
             onStreamChunk: (stepName, chunk) => {
                 // RAW 模式：直接追加内容，确保 JSON 连续显示
@@ -519,6 +539,17 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
     const handleSaveConfig = async () => {
         if (!projectId) return;
+
+        // 校验必填项
+        if (!formData.breakdown_model) {
+            message.error('请选择拆解模型');
+            return;
+        }
+        if (!formData.script_model) {
+            message.error('请选择剧本模型');
+            return;
+        }
+
         setSaving(true);
         try {
             await projectApi.updateProject(projectId, {
@@ -1294,8 +1325,9 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                 <>
                                     <button
                                         onClick={handleSaveConfig}
-                                        disabled={saving}
-                                        className="flex items-center gap-2 px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium rounded-lg border border-slate-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                        disabled={saving || !formData.breakdown_model || !formData.script_model}
+                                        title={!formData.breakdown_model ? '请先选择拆解模型' : !formData.script_model ? '请先选择剧本模型' : ''}
+                                        className="flex items-center gap-2 px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium rounded-lg border border-slate-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-slate-800 disabled:text-slate-500"
                                     >
                                         {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                                         {saving ? '保存中...' : '保存设置'}
@@ -1303,6 +1335,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                     <button
                                         onClick={handleStart}
                                         disabled={project.status !== 'ready' || starting}
+                                        title={project.status !== 'ready' ? '请先完成章节拆分' : !formData.breakdown_model || !formData.script_model ? '请先选择模型' : ''}
                                         className={`flex items-center gap-2 px-6 py-1.5 text-xs font-bold rounded-lg shadow-lg transition-all relative overflow-hidden ${
                                             project.status === 'parsing'
                                             ? 'bg-slate-800 text-slate-400 border-2 border-cyan-500/50 cursor-not-allowed animate-pulse-border'
@@ -1415,7 +1448,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                         <button
                                             onClick={() => handleStartBreakdownClick(selectedBatch.id)}
                                             disabled={!!breakdownTaskId || isAllBreakdownRunning || isBatchRunning}
-                                            className="flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 text-white rounded-lg text-xs font-bold shadow-lg transition-all hover:scale-[1.02] disabled:opacity-50"
+                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-orange-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
                                             <RotateCcw size={14} />
                                             重试拆解
