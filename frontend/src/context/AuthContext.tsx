@@ -8,7 +8,7 @@ interface User {
   username: string;
   full_name?: string;
   role: string;
-  balance: number;  // 积分余额（来自后端 credits 字段）
+  credits: number;  // 积分余额
   is_active: boolean;
   tier?: string;
 }

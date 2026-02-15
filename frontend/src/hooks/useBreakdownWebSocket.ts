@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useWebSocket } from './useWebSocket';
+import { TASK_STATUS } from '../constants/status';
 
 interface BreakdownProgress {
   task_id: string;
@@ -80,12 +81,12 @@ export const useBreakdownWebSocket = (
         onProgress?.(progressData);
 
         // 任务完成
-        if (message.status === 'completed') {
+        if (message.status === TASK_STATUS.COMPLETED) {
           onComplete?.();
         }
 
         // 任务失败
-        if (message.status === 'failed') {
+        if (message.status === TASK_STATUS.FAILED) {
           // 优先使用 error_display（人性化错误信息），否则解析 error_message
           let errorMsg = '任务失败';
           if (message.error_message) {
@@ -102,9 +103,9 @@ export const useBreakdownWebSocket = (
 
       // 处理最终状态消息
       if (message.status === 'done') {
-        if (message.final_status === 'completed') {
+        if (message.final_status === TASK_STATUS.COMPLETED) {
           onComplete?.();
-        } else if (message.final_status === 'failed') {
+        } else if (message.final_status === TASK_STATUS.FAILED) {
           onError?.(message.message || '任务失败');
         }
       }

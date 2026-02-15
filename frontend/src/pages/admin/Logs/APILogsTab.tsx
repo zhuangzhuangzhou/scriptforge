@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, Tag, message, Tooltip } from 'antd';
-import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { Button, Tag, message, Tooltip, Descriptions } from 'antd';
+import { ReloadOutlined, SearchOutlined, EyeOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../../services/api';
 import { GlassCard } from '../../../components/ui/GlassCard';
@@ -8,20 +8,27 @@ import { GlassTable } from '../../../components/ui/GlassTable';
 import { GlassInput } from '../../../components/ui/GlassInput';
 import { GlassSelect } from '../../../components/ui/GlassSelect';
 import { GlassRangePicker } from '../../../components/ui/GlassDatePicker';
+import { GlassModal } from '../../../components/ui/GlassModal';
 
 interface APILogEntry {
   id: string;
   method: string;
   path: string;
   query_params: string | null;
+  request_body: string | null;  // 新增：请求体
   user_id: string | null;
   username: string | null;
   user_ip: string;
   user_agent: string;
   status_code: number;
+  response_body: string | null;  // 新增：响应体
   response_time: number;
   error_message: string | null;
   created_at: string | null;
+}
+
+interface APILogDetail extends APILogEntry {
+  // 详情扩展
 }
 
 interface APILogStats {
@@ -45,7 +52,12 @@ const APILogsTab: React.FC = () => {
   const [statusCode, setStatusCode] = useState<string | undefined>(undefined);
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(50);
+  const [pageSize, setPageSize] = useState(10);  // 默认 10 条
+
+  // 详情弹窗
+  const [modalVisible, setModalVisible] = useState(false);
+  const [selectedLog, setSelectedLog] = useState<APILogEntry | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   // 加载日志列表
   const loadLogs = useCallback(async () => {
@@ -96,6 +108,12 @@ const APILogsTab: React.FC = () => {
   const handleSearch = () => {
     setPage(1);
     loadLogs();
+  };
+
+  // 查看详情
+  const handleViewDetail = (record: APILogEntry) => {
+    setSelectedLog(record);
+    setModalVisible(true);
   };
 
   // 状态码标签
@@ -198,6 +216,21 @@ const APILogsTab: React.FC = () => {
           <span className="text-red-400 text-xs">{err}</span>
         </Tooltip>
       ) : '-'
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 80,
+      render: (_: unknown, record: APILogEntry) => (
+        <Button
+          type="link"
+          size="small"
+          icon={<EyeOutlined />}
+          onClick={() => handleViewDetail(record)}
+        >
+          详情
+        </Button>
+      )
     }
   ];
 
@@ -309,6 +342,111 @@ const APILogsTab: React.FC = () => {
           </div>
         )}
       </GlassCard>
+
+      {/* 详情弹窗 */}
+      <GlassModal
+        title="API 请求详情"
+        open={modalVisible}
+        onCancel={() => { setModalVisible(false); setSelectedLog(null); }}
+        width={800}
+        footer={null}
+      >
+        {selectedLog && (
+          <div className="space-y-4">
+            <Descriptions column={2} size="small">
+              <Descriptions.Item label="请求ID">
+                <span className="font-mono text-xs">{selectedLog.id}</span>
+              </Descriptions.Item>
+              <Descriptions.Item label="时间">
+                {formatTime(selectedLog.created_at)}
+              </Descriptions.Item>
+              <Descriptions.Item label="方法">
+                {getMethodTag(selectedLog.method)}
+              </Descriptions.Item>
+              <Descriptions.Item label="状态码">
+                {getStatusCodeTag(selectedLog.status_code)}
+              </Descriptions.Item>
+              <Descriptions.Item label="路径" span={2}>
+                <span className="font-mono text-xs">{selectedLog.path}</span>
+              </Descriptions.Item>
+              <Descriptions.Item label="用户">
+                {selectedLog.username || <span className="text-slate-500">匿名</span>}
+              </Descriptions.Item>
+              <Descriptions.Item label="用户ID">
+                <span className="font-mono text-xs">{selectedLog.user_id || '-'}</span>
+              </Descriptions.Item>
+              <Descriptions.Item label="IP地址">
+                <span className="font-mono text-xs">{selectedLog.user_ip}</span>
+              </Descriptions.Item>
+              <Descriptions.Item label="响应时间">
+                <span className={`font-mono text-xs ${selectedLog.response_time > 1000 ? 'text-red-400' : selectedLog.response_time > 500 ? 'text-amber-400' : 'text-green-400'}`}>
+                  {selectedLog.response_time}ms
+                </span>
+              </Descriptions.Item>
+            </Descriptions>
+
+            {/* Query 参数 */}
+            {selectedLog.query_params && (
+              <div>
+                <div className="text-sm text-slate-400 mb-2">Query 参数</div>
+                <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg max-h-40 overflow-y-auto">
+                  <pre className="text-slate-300 text-xs whitespace-pre-wrap font-mono">
+                    {selectedLog.query_params}
+                  </pre>
+                </div>
+              </div>
+            )}
+
+            {/* 请求体 */}
+            {selectedLog.request_body && (
+              <div>
+                <div className="text-sm text-slate-400 mb-2">请求体</div>
+                <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg max-h-60 overflow-y-auto">
+                  <pre className="text-slate-300 text-xs whitespace-pre-wrap font-mono">
+                    {selectedLog.request_body}
+                  </pre>
+                </div>
+              </div>
+            )}
+
+            {/* 响应体 */}
+            {selectedLog.response_body && (
+              <div>
+                <div className="text-sm text-slate-400 mb-2">响应体</div>
+                <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg max-h-60 overflow-y-auto">
+                  <pre className="text-slate-300 text-xs whitespace-pre-wrap font-mono">
+                    {selectedLog.response_body}
+                  </pre>
+                </div>
+              </div>
+            )}
+
+            {/* User Agent */}
+            {selectedLog.user_agent && (
+              <div>
+                <div className="text-sm text-slate-400 mb-2">User Agent</div>
+                <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg">
+                  <pre className="text-slate-400 text-xs whitespace-pre-wrap font-mono">
+                    {selectedLog.user_agent}
+                  </pre>
+                </div>
+              </div>
+            )}
+
+            {/* 错误信息 */}
+            {selectedLog.error_message && (
+              <div>
+                <div className="text-sm text-slate-400 mb-2">错误信息</div>
+                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+                  <pre className="text-red-400 text-xs whitespace-pre-wrap font-mono">
+                    {selectedLog.error_message}
+                  </pre>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </GlassModal>
     </div>
   );
 };

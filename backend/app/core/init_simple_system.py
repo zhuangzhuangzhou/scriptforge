@@ -21,6 +21,7 @@ BUILTIN_SKILLS = [
         "description": "基于网文改编方法论，一次性完成剧情拆解、分集标注、情绪钩子识别",
         "category": "breakdown",
         "is_template_based": True,
+        "system_prompt": "你是资深的网文改编漫剧编辑，输出必须严格符合要求的 JSON 格式，不要解释，不要包含多余文字。",
         "prompt_template": """你是一名资深的网文改编漫剧编辑。请严格按照以下方法论和格式要求，对小说原文进行剧情拆解。
 
 ### 改编方法论
@@ -34,6 +35,9 @@ BUILTIN_SKILLS = [
 
 ### 示例
 {example}
+
+### 上一轮质量检查反馈（如有）
+{qa_feedback}
 
 ### 小说原文（第{start_chapter}-{end_chapter}章）
 {chapters_text}
@@ -65,6 +69,7 @@ BUILTIN_SKILLS = [
             "output_style": {"type": "string", "description": "输出风格"},
             "template": {"type": "string", "description": "格式模板"},
             "example": {"type": "string", "description": "示例"},
+            "qa_feedback": {"type": "string", "description": "上一轮质量检查反馈（可选）"},
             "start_chapter": {"type": "integer", "description": "起始章节号"},
             "end_chapter": {"type": "integer", "description": "结束章节号"},
             "start_episode": {"type": "integer", "description": "起始集数（本批次从第几集开始编号）"}
@@ -93,6 +98,7 @@ BUILTIN_SKILLS = [
         "description": "基于改编方法论对剧情拆解进行8维度质量检查，确保拆解符合方法论标准",
         "category": "breakdown",
         "is_template_based": True,
+        "system_prompt": "你是严格的剧情拆解质量校验员，输出必须是 JSON，不要解释，不要添加额外文字。",
         "prompt_template": """你是"网文改编漫剧剧情拆解质量校验员"，负责检查剧情拆解阶段的质量。你是资深的网文改编专家，精通冲突识别、情绪钩子提取、剧情密度评估、分集策略制定。
 
 ### 改编方法论（核心基准）
@@ -372,6 +378,7 @@ BUILTIN_AGENTS = [
                         "output_style": "${context.output_style}",
                         "template": "${context.template}",
                         "example": "${context.example}",
+                        "qa_feedback": "",
                         "start_chapter": "${context.start_chapter}",
                         "end_chapter": "${context.end_chapter}",
                         "start_episode": "${context.start_episode}"
@@ -393,7 +400,7 @@ BUILTIN_AGENTS = [
                     "max_retries": 0
                 },
                 {
-                    "id": "fix",
+                    "id": "breakdown_retry",
                     "skill": "webtoon_breakdown",
                     "condition": "qa_result.status != 'PASS' and qa_result.score < 70",
                     "inputs": {
@@ -402,11 +409,25 @@ BUILTIN_AGENTS = [
                         "output_style": "${context.output_style}",
                         "template": "${context.template}",
                         "example": "${context.example}",
+                        "qa_feedback": "问题列表: ${qa_result.issues}\n修复指引: ${qa_result.fix_instructions}",
                         "start_chapter": "${context.start_chapter}",
                         "end_chapter": "${context.end_chapter}",
                         "start_episode": "${context.start_episode}"
                     },
                     "output_key": "plot_points",
+                    "on_fail": "skip",
+                    "max_retries": 0
+                },
+                {
+                    "id": "qa_retry",
+                    "skill": "breakdown_aligner",
+                    "condition": "qa_result.status != 'PASS' and qa_result.score < 70",
+                    "inputs": {
+                        "plot_points": "${plot_points}",
+                        "chapters_text": "${context.chapters_text}",
+                        "adapt_method": "${context.adapt_method}"
+                    },
+                    "output_key": "qa_result",
                     "on_fail": "skip",
                     "max_retries": 0
                 }
@@ -477,6 +498,7 @@ async def init_simple_system(db: Session):
                 description=skill_data["description"],
                 category=skill_data["category"],
                 is_template_based=True,
+                system_prompt=skill_data.get("system_prompt"),
                 prompt_template=skill_data["prompt_template"],
                 input_schema=skill_data["input_schema"],
                 output_schema=skill_data["output_schema"],
@@ -497,6 +519,7 @@ async def init_simple_system(db: Session):
             # 更新已存在的内置 Skill
             existing_skill.display_name = skill_data["display_name"]
             existing_skill.description = skill_data["description"]
+            existing_skill.system_prompt = skill_data.get("system_prompt")
             existing_skill.prompt_template = skill_data["prompt_template"]
             existing_skill.input_schema = skill_data["input_schema"]
             existing_skill.output_schema = skill_data["output_schema"]

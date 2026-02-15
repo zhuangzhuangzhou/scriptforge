@@ -13,6 +13,7 @@ from app.models.plot_breakdown import PlotBreakdown
 from app.models.script import Script
 from app.api.v1.auth import get_current_user
 from app.core.quota import QuotaService
+from app.core.status import TaskStatus
 
 router = APIRouter()
 
@@ -158,7 +159,7 @@ async def start_episode_script(
         project_id=breakdown.project_id,
         batch_id=breakdown.batch_id,
         task_type="episode_script",
-        status="queued",
+        status=TaskStatus.QUEUED,
         depends_on=[],
         config=task_config
     )
@@ -177,7 +178,7 @@ async def start_episode_script(
     task.celery_task_id = celery_task.id
     await db.commit()
 
-    return {"task_id": str(task.id), "status": "queued", "episode_number": request.episode_number}
+    return {"task_id": str(task.id), "status": TaskStatus.QUEUED, "episode_number": request.episode_number}
 
 
 @router.get("/tasks/{task_id}")
@@ -320,7 +321,7 @@ async def start_batch_scripts(
             project_id=breakdown.project_id,
             batch_id=breakdown.batch_id,
             task_type="episode_script",
-            status="queued",
+            status=TaskStatus.QUEUED,
             config={
                 "model_config_id": request.model_config_id or (str(project.script_model_id) if project.script_model_id else None),
                 "breakdown_id": str(breakdown.id),

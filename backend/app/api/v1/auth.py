@@ -180,5 +180,5 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
 
 @router.get("/balance")
 async def get_user_balance(current_user: User = Depends(get_current_user)):
-    """获取用户余额"""
-    return {"balance": float(current_user.balance)}
+    """获取用户积分余额"""
+    return {"credits": current_user.credits}

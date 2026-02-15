@@ -16,9 +16,10 @@ interface User {
   username: string;
   role: string;
   tier: UserTier;
-  balance: number;
+  credits: number;  // 积分余额
   is_active: boolean;
   created_at: string;
+  last_login_at?: string;
 }
 
 const UserManagement: React.FC = () => {
@@ -54,7 +55,7 @@ const UserManagement: React.FC = () => {
     form.setFieldsValue({
       role: user.role,
       tier: user.tier,
-      balance: user.balance,
+      credits: user.credits,
       is_active: user.is_active
     });
     setIsModalVisible(true);
@@ -128,9 +129,9 @@ const UserManagement: React.FC = () => {
       }
     },
     {
-      title: '余额',
-      dataIndex: 'balance',
-      render: (val: number) => <span className="font-mono text-emerald-400">{val.toLocaleString()}</span>,
+      title: '积分',
+      dataIndex: 'credits',
+      render: (val: number) => <span className="font-mono text-emerald-400">{val?.toLocaleString() ?? 0}</span>,
     },
     {
       title: '状态',
@@ -227,7 +228,7 @@ const UserManagement: React.FC = () => {
               </Select>
             </Form.Item>
 
-            <Form.Item name="balance" label={<span className="text-slate-300">算力余额</span>}>
+            <Form.Item name="credits" label={<span className="text-slate-300">积分余额</span>}>
               <InputNumber style={{ width: '100%' }} min={0} />
             </Form.Item>
 

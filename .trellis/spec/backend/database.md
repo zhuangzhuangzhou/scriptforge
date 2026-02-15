@@ -527,5 +527,98 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
 
 ---
 
-**最后更新**: 2026-02-13
-**相关变更**: 积分显示不一致问题修复
+### 创建数据库记录时确保字段完整
+
+> **2026-02-15 新增**：修复 PlotBreakdown model_config_id 遗漏问题
+
+**问题**：在 v2 版本创建 PlotBreakdown 时，漏了 `model_config_id` 字段，导致历史接口查询不到模型信息。
+
+**错误示例**：
+```python
+# breakdown_tasks.py - v2 版本（错误）
+ai_model_id = task_config.get("model_config_id")
+
+breakdown = PlotBreakdown(
+    batch_id=batch_id,
+    project_id=project_id,
+    task_id=task_id,
+    ai_model_id=ai_model_id,
+    # ⚠️ 漏了：model_config_id=model_config_id
+    plot_points=plot_points,
+    format_version=2,
+)
+```
+
+**正确做法**：确保所有相关字段都被赋值
+```python
+# ✅ 正确：所有字段都赋值
+model_config_id = task_config.get("model_config_id")
+
+breakdown = PlotBreakdown(
+    batch_id=batch_id,
+    project_id=project_id,
+    task_id=task_id,
+    ai_model_id=model_config_id,  # ai_models 表的 ID
+    model_config_id=model_config_id,  # model_configs 表的 ID
+    plot_points=plot_points,
+    format_version=2,
+    # ... 其他字段
+)
+```
+
+**预防措施**：
+1. 创建记录时使用 IDE 搜索确认所有字段
+2. 单元测试验证记录字段完整性
+3. 查询接口增加字段验证日志
+
+---
+
+### Token 计费使用模型自定义定价
+
+> **2026-02-15 新增**：支持不同模型有不同的积分定价
+
+**问题**：原本使用默认的输入 1 积分/1K、输出 2 积分/1K，没有使用 AIModelPricing 表中配置的模型特定定价。
+
+**计费优先级**：
+1. 优先使用传入的 `model_config_id` 查询 AIModelPricing
+2. 如果没有，从 LLMCallLog 的 provider+model_name 推断 AIModel
+3. 兜底使用系统默认配置
+
+**实现模式**：
+```python
+def consume_token_credits_sync(
+    db: Session,
+    user_id: str,
+    task_id: str,
+    model_config_id: Optional[str] = None  # 优先使用此参数
+) -> dict:
+    # 1. 汇总任务的 token 使用量
+    token_result = db.query(
+        func.sum(LLMCallLog.prompt_tokens).label("input"),
+        func.sum(LLMCallLog.response_tokens).label("output")
+    ).filter(LLMCallLog.task_id == task_id).first()
+
+    # 2. 获取计费规则
+    input_per_1k, output_per_1k = _get_pricing_from_model(
+        db=db,
+        model_config_id=model_config_id,  # 优先
+        task_uuid=task_id,  # 用于从 LLMCallLog 推断
+        default_input=1,
+        default_output=2
+    )
+
+    # 3. 计算积分（向上取整）
+    input_credits = (input_tokens + 999) // 1000 * input_per_1k
+    output_credits = (output_tokens + 999) // 1000 * output_per_1k
+    token_credits = input_credits + output_credits
+```
+
+**预防措施**：
+1. 创建新任务时确保 `model_config_id` 被保存到 PlotBreakdown
+2. Celery 任务调用 `consume_token_credits_sync` 时传入 `model_config_id`
+3. 管理端添加 AIModelPricing 配置界面
+
+---
+
+**最后更新**: 2026-02-15
+**相关变更**: PlotBreakdown model_config_id 遗漏修复、Token 计费模型定价支持

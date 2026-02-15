@@ -10,14 +10,23 @@ from app.models.billing import BillingRecord, Subscription
 from app.core.quota import get_tier_config
 
 
+# 积分兑换比例：1 元 = 100 积分
+YUAN_TO_CREDITS = 100
+
+
 class SubscriptionService:
-    """订阅管理服务"""
+    """订阅管理服务（积分制）
+
+    使用积分购买订阅。
+    """
 
     def __init__(self, db: AsyncSession):
         self.db = db
 
     async def create_subscription(self, user_id: str, tier: str, months: int = 1) -> dict:
-        """创建订阅
+        """创建订阅（积分制）
+
+        使用积分购买订阅。
 
         Args:
             user_id: 用户ID
@@ -40,19 +49,15 @@ class SubscriptionService:
         if not user:
             raise ValueError("用户不存在")
 
-        # 计算费用 (分)
-        total_amount = tier_config.price_monthly * months
-        total_amount_yuan = total_amount / 100.0
+        # 计算费用（转换为积分：1元 = 100积分）
+        total_amount_yuan = tier_config.price_monthly / 100.0  # 转为元
+        total_credits = int(total_amount_yuan * YUAN_TO_CREDITS)  # 转为积分
 
-        # 检查余额 (这里假设是使用余额支付，如果是外部支付回调，逻辑可能不同，但根据题目要求记录BillingRecord，推测涉及余额变动)
-        # 注意：如果设计为外部支付直接调用，这里可能需要调整。
-        # 但既然是在 core service 层，通常处理业务逻辑。如果是外部支付，通常会先充值到余额再消费，或者有专门的 callback 处理。
-        # 按照题目要求 "Record a BillingRecord"，我们假设这是扣费订阅。
-        if user.balance < total_amount_yuan:
-            raise ValueError(f"余额不足，需要 {total_amount_yuan} 元，当前余额 {user.balance} 元")
+        # 检查积分余额
+        if user.credits < total_credits:
+            raise ValueError(f"积分不足，需要 {total_credits} 积分，当前余额 {user.credits} 积分")
 
         # 获取当前有效的同等级订阅以确定开始时间
-        # 如果用户已有同等级订阅且未过期，则续期
         current_sub = await self._get_latest_active_subscription(user_id, tier)
 
         now = datetime.now(timezone.utc)
@@ -63,23 +68,12 @@ class SubscriptionService:
             started_at = now
 
         # 计算过期时间
-        # 简单按30天/月计算，或者使用库处理日期
-        # 这里为了准确性，建议使用 relativedelta，但为了减少依赖，使用 timedelta(days=30 * months) 也可以接受，
-        # 或者简单的月份加法逻辑。
-        # 考虑到 Python datetime 处理月份比较麻烦，这里使用简单的 30天/月 标准，或者循环加月。
-        # 实际上商业系统通常按自然月或30天。这里采用 timedelta(days=30 * months) 简化实现。
         expires_at = started_at + timedelta(days=30 * months)
 
-        # 扣除余额
-        user.balance = float(user.balance) - total_amount_yuan
+        # 扣除积分
+        user.credits -= total_credits
 
         # 更新用户等级
-        # 注意：如果是续期（started_at > now），且用户当前等级低于新等级，是否立即生效？
-        # 通常：升级立即生效（并处理旧订阅剩余价值），续期同级保持不变。
-        # 题目要求简单："Update User.tier to new tier"。
-        # 我们假设用户购买即生效（如果是升级），或者是同级续期。
-        # 如果是降级（购买了低级订阅），通常等待当前高级订阅过期。
-        # 但为了符合 "Update User.tier" 的指令，强制更新。
         user.tier = tier
 
         # 1. 创建订阅记录
@@ -87,7 +81,7 @@ class SubscriptionService:
             user_id=user.id,
             tier=tier,
             status="active",
-            amount=total_amount,
+            amount=tier_config.price_monthly * months,  # 金额（分）
             started_at=started_at,
             expires_at=expires_at,
             created_at=now
@@ -98,32 +92,12 @@ class SubscriptionService:
         billing_record = BillingRecord(
             user_id=user.id,
             type="subscription",
-            amount=-total_amount,  # 支出为负
-            credits=0,
-            balance_after=int(user.balance * 100), # 记录分为单位的余额可能不准确，因为balance是Decimal元。BillingRecord定义balance_after是Integer?
-            # 检查 models/billing.py: balance_after = Column(Integer)
-            # 这暗示 BillingRecord 可能期望 balance_after 也是分？或者 credits 后的积分余额？
-            # 检查 credits.py: balance_after = user.credits (积分).
-            # BillingRecord 复用了 balance_after 字段。
-            # 如果是资金变动，这里存什么？
-            # BillingRecord 定义： credits = Column(Integer, default=0) # 积分变动
-            # balance_after = Column(Integer) # 变动后余额
-            # 在 CreditsService 中，balance_after 存的是积分余额。
-            # 这里是资金变动。如果复用该表，balance_after 可能产生歧义。
-            # 但 BillingRecord 也有 `amount` (金额)。
-            # 让我们看 credits.py 的 consume_credits: record.credits = -amount. record.balance_after = user.credits.
-            # 也就是说 balance_after 似乎是指积分余额？
-            # 如果是订阅消费，amount 变动了，但 credits 没变（除非送积分）。
-            # 我们保持 balance_after 为积分余额以保持一致性。
-            description=f"订阅 {tier_config.display_name} {months} 个月",
+            amount=-tier_config.price_monthly * months,  # 金额变动（分）
+            credits=-total_credits,  # 积分变动
+            balance_after=user.credits,  # 变动后积分余额
+            description=f"订阅 {tier_config.display_name} {months} 个月（消耗 {total_credits} 积分）",
             created_at=now
         )
-        # 修正：balance_after 应该是积分余额，因为该字段主要用于积分流水？
-        # 或者如果 BillingRecord 既记钱也记分，那 balance_after 到底指哪个？
-        # 通常设计会有 amount_balance_after 和 credits_balance_after。
-        # 既然只有一个，且 CreditsService 用它存积分余额。那我也存积分余额。
-        billing_record.balance_after = user.credits
-
         self.db.add(billing_record)
 
         await self.db.flush()
@@ -134,7 +108,8 @@ class SubscriptionService:
             "started_at": subscription.started_at.isoformat(),
             "expires_at": subscription.expires_at.isoformat(),
             "status": subscription.status,
-            "amount": subscription.amount,
+            "amount": subscription.amount,  # 金额（分）
+            "credits_used": total_credits,  # 消耗积分
             "created_at": subscription.created_at.isoformat()
         }
 
@@ -164,8 +139,6 @@ class SubscriptionService:
 
         if new_tier != current_tier:
             user.tier = new_tier
-            # 不需要 flush，调用者可能会 commit，或者在这里 flush 也可以
-            # 为了确保变更生效，这里不执行 commit，由上层控制事务
 
         return {
             "previous_tier": current_tier,
@@ -179,7 +152,6 @@ class SubscriptionService:
         now = datetime.now(timezone.utc)
 
         # 查询条件：用户ID + 状态active + 开始时间<=当前 + 过期时间>当前
-        # 按过期时间倒序，取最晚过期的那个（处理重叠情况）
         stmt = (
             select(Subscription)
             .where(

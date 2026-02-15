@@ -8,6 +8,7 @@ from app.models.pipeline import PipelineExecution
 import json
 import redis
 from app.core.config import settings
+from app.core.status import normalize_task_status, TaskStatus
 
 
 async def update_task_progress(
@@ -32,23 +33,25 @@ async def update_task_progress(
         retry_count: 重试次数
     """
     ai_task_statuses = {
-        "pending",
-        "queued",
+        TaskStatus.PENDING,
+        TaskStatus.QUEUED,
         "blocked",
-        "running",
-        "retrying",
-        "completed",
-        "failed",
-        "canceled",
-        "in_progress",
+        TaskStatus.RUNNING,
+        TaskStatus.RETRYING,
+        TaskStatus.COMPLETED,
+        TaskStatus.FAILED,
+        TaskStatus.CANCELED,
+        TaskStatus.IN_PROGRESS,
+        TaskStatus.CANCELLING,
     }
     ai_task_transitions = {
-        "pending": {"queued", "running", "canceled"},
-        "queued": {"running", "blocked", "canceled", "failed"},  # 允许从 queued 直接失败
-        "blocked": {"queued", "canceled"},
-        "running": {"retrying", "completed", "failed", "canceled"},
-        "retrying": {"running", "failed", "canceled"},
-        "in_progress": {"retrying", "completed", "failed", "canceled"},
+        TaskStatus.PENDING: {TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.CANCELED},
+        TaskStatus.QUEUED: {TaskStatus.RUNNING, "blocked", TaskStatus.CANCELED, TaskStatus.FAILED},  # 允许从 queued 直接失败
+        "blocked": {TaskStatus.QUEUED, TaskStatus.CANCELED},
+        TaskStatus.RUNNING: {TaskStatus.RETRYING, TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED, TaskStatus.CANCELLING},
+        TaskStatus.RETRYING: {TaskStatus.RUNNING, TaskStatus.FAILED, TaskStatus.CANCELED},
+        TaskStatus.IN_PROGRESS: {TaskStatus.RETRYING, TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED, TaskStatus.CANCELLING},
+        TaskStatus.CANCELLING: {TaskStatus.CANCELED, TaskStatus.FAILED},
     }
 
     update_data = {}
@@ -56,6 +59,8 @@ async def update_task_progress(
     current_retry_count = None
 
     if status is not None:
+        status = normalize_task_status(status)
+
         if status not in ai_task_statuses:
             raise ValueError(f"无效的任务状态: {status}")
         result = await db.execute(
@@ -79,9 +84,9 @@ async def update_task_progress(
     if status is not None:
         update_data["status"] = status
         # 状态变更时更新时间戳
-        if status == "running":
+        if status == TaskStatus.RUNNING:
             update_data["started_at"] = datetime.utcnow()
-        elif status in ("completed", "failed", "canceled"):
+        elif status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED):
             update_data["completed_at"] = datetime.utcnow()
 
     if error_message is not None:
@@ -89,7 +94,7 @@ async def update_task_progress(
 
     if retry_count is not None:
         update_data["retry_count"] = retry_count
-    elif status == "retrying":
+    elif status == TaskStatus.RETRYING:
         update_data["retry_count"] = (current_retry_count or 0) + 1
 
     if update_data:
@@ -213,23 +218,25 @@ def update_task_progress_sync(
         retry_count: 重试次数
     """
     ai_task_statuses = {
-        "pending",
-        "queued",
+        TaskStatus.PENDING,
+        TaskStatus.QUEUED,
         "blocked",
-        "running",
-        "retrying",
-        "completed",
-        "failed",
-        "canceled",
-        "in_progress",
+        TaskStatus.RUNNING,
+        TaskStatus.RETRYING,
+        TaskStatus.COMPLETED,
+        TaskStatus.FAILED,
+        TaskStatus.CANCELED,
+        TaskStatus.IN_PROGRESS,
+        TaskStatus.CANCELLING,
     }
     ai_task_transitions = {
-        "pending": {"queued", "running", "canceled"},
-        "queued": {"running", "blocked", "canceled", "failed"},  # 允许从 queued 直接失败
-        "blocked": {"queued", "canceled"},
-        "running": {"retrying", "completed", "failed", "canceled"},
-        "retrying": {"running", "failed", "canceled"},
-        "in_progress": {"retrying", "completed", "failed", "canceled"},
+        TaskStatus.PENDING: {TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.CANCELED},
+        TaskStatus.QUEUED: {TaskStatus.RUNNING, "blocked", TaskStatus.CANCELED, TaskStatus.FAILED},  # 允许从 queued 直接失败
+        "blocked": {TaskStatus.QUEUED, TaskStatus.CANCELED},
+        TaskStatus.RUNNING: {TaskStatus.RETRYING, TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED, TaskStatus.CANCELLING},
+        TaskStatus.RETRYING: {TaskStatus.RUNNING, TaskStatus.FAILED, TaskStatus.CANCELED},
+        TaskStatus.IN_PROGRESS: {TaskStatus.RETRYING, TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED, TaskStatus.CANCELLING},
+        TaskStatus.CANCELLING: {TaskStatus.CANCELED, TaskStatus.FAILED},
     }
 
     # 查询当前任务
@@ -239,6 +246,8 @@ def update_task_progress_sync(
 
     # 验证状态转换
     if status is not None:
+        status = normalize_task_status(status)
+
         if status not in ai_task_statuses:
             raise ValueError(f"无效的任务状态: {status}")
         
@@ -258,9 +267,9 @@ def update_task_progress_sync(
     if status is not None:
         task.status = status
         # 状态变更时更新时间戳
-        if status == "running" and not task.started_at:
+        if status == TaskStatus.RUNNING and not task.started_at:
             task.started_at = datetime.utcnow()
-        elif status in ("completed", "failed", "canceled"):
+        elif status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED):
             task.completed_at = datetime.utcnow()
 
     if error_message is not None:
@@ -268,7 +277,7 @@ def update_task_progress_sync(
 
     if retry_count is not None:
         task.retry_count = retry_count
-    elif status == "retrying":
+    elif status == TaskStatus.RETRYING:
         task.retry_count = (task.retry_count or 0) + 1
 
     # 提交更改

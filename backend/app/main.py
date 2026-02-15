@@ -8,6 +8,7 @@ from app.core.init_pipeline import init_default_pipeline
 from app.core.init_simple_system import init_simple_system
 from app.core.init_ai_resources import init_builtin_resources
 from app.middleware.api_logging import APILoggingMiddleware
+from app.core.status import TaskStatus
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -48,7 +49,7 @@ async def root():
     return {
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,
-        "status": "running"
+        "status": TaskStatus.RUNNING
     }
 
 

@@ -11,6 +11,7 @@ from app.api.v1.auth import get_current_user
 from app.models.pipeline import Pipeline, PipelineExecution, PipelineExecutionLog
 from app.models.project import Project
 from app.models.ai_task import AITask
+from app.core.status import TaskStatus
 from app.models.batch import Batch
 from app.models.api_log import APILog
 from app.models.llm_call_log import LLMCallLog
@@ -34,7 +35,7 @@ class UserUpdateRequest(BaseModel):
     """更新用户请求"""
     is_active: Optional[bool] = None
     role: Optional[str] = None
-    balance: Optional[float] = None
+    credits: Optional[int] = None  # 使用积分替代旧算力余额
     tier: Optional[str] = None
 
 
@@ -71,8 +72,23 @@ async def get_users(
     count_result = await db.execute(count_query)
     total = count_result.scalar()
 
+    # 返回简化字段，隐藏敏感信息和废弃字段
     return {
-        "users": users,
+        "users": [
+            {
+                "id": str(user.id),
+                "username": user.username,
+                "email": user.email,
+                "role": user.role,
+                "tier": user.tier,
+                "credits": user.credits,  # 使用积分余额
+                "is_active": user.is_active,
+                "is_verified": user.is_verified,
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+                "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None
+            }
+            for user in users
+        ],
         "total": total,
         "skip": skip,
         "limit": limit
@@ -100,15 +116,23 @@ async def update_user(
         user.is_active = request.is_active
     if request.role is not None:
         user.role = request.role
-    if request.balance is not None:
-        user.balance = request.balance
+    if request.credits is not None:
+        user.credits = request.credits  # 使用积分替代旧算力余额
     if request.tier is not None:
         user.tier = request.tier
 
     await db.commit()
     await db.refresh(user)
 
-    return user
+    return {
+        "id": str(user.id),
+        "username": user.username,
+        "email": user.email,
+        "role": user.role,
+        "tier": user.tier,
+        "credits": user.credits,
+        "is_active": user.is_active
+    }
 
 
 @router.get("/stats")
@@ -352,7 +376,7 @@ async def get_tasks(
 
     # 状态统计
     status_stats = {}
-    for s in ["queued", "running", "completed", "failed"]:
+    for s in [TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.COMPLETED, TaskStatus.FAILED]:
         stat_query = select(func.count(AITask.id)).where(AITask.status == s)
         stat_result = await db.execute(stat_query)
         status_stats[s] = stat_result.scalar() or 0
@@ -434,7 +458,7 @@ async def get_task_detail(
         "project_id": str(task.project_id) if task.project_id else None,
         "project_name": project.name if project else None,
         "batch_id": str(task.batch_id) if task.batch_id else None,
-        "batch_name": batch.name if batch else None,
+        "batch_name": f"第 {batch.batch_number} 批次" if batch else None,
         "celery_task_id": task.celery_task_id,
         "duration": duration,
         "created_at": task.created_at.isoformat() if task.created_at else None,
@@ -538,7 +562,7 @@ async def get_logs_stats(
 
     # 成功任务数
     success_query = select(func.count(AITask.id)).where(
-        and_(AITask.created_at >= start_date, AITask.status == "completed")
+        and_(AITask.created_at >= start_date, AITask.status == TaskStatus.COMPLETED)
     )
     success_result = await db.execute(success_query)
     success_tasks = success_result.scalar() or 0
@@ -571,7 +595,7 @@ async def get_logs_stats(
                 and_(
                     AITask.created_at >= day_start,
                     AITask.created_at < day_end,
-                    AITask.status == "completed"
+                    AITask.status == TaskStatus.COMPLETED
                 )
             )
         )
@@ -658,11 +682,13 @@ async def get_api_logs(
             "method": log.method,
             "path": log.path,
             "query_params": log.query_params,
+            "request_body": log.request_body,
             "user_id": str(log.user_id) if log.user_id else None,
             "username": user.username if user else None,
             "user_ip": log.user_ip,
             "user_agent": log.user_agent,
             "status_code": log.status_code,
+            "response_body": log.response_body,
             "response_time": log.response_time,
             "error_message": log.error_message,
             "created_at": log.created_at.isoformat() if log.created_at else None
@@ -976,4 +1002,3 @@ async def get_llm_logs_stats(
         "top_models": top_models,
         "top_skills": top_skills
     }
-

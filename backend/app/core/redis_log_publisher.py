@@ -11,6 +11,7 @@
 """
 import json
 import redis
+from app.core.status import TaskStatus
 from datetime import datetime
 from typing import Optional, Dict, Any
 from app.core.config import settings
@@ -402,7 +403,7 @@ class RedisLogPublisher:
     def publish_task_complete(
         self,
         task_id: str,
-        status: str = "completed",
+        status: str = TaskStatus.COMPLETED,
         message: Optional[str] = None
     ) -> None:
         """发布任务完成消息

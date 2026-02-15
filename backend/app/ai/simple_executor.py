@@ -6,10 +6,15 @@
 - Agent = 工作流编排 + 循环控制 + 条件执行
 """
 import json
+from app.core.status import TaskStatus
 import re
 import logging
 from typing import Dict, Any, Optional, List, Union
 from sqlalchemy.orm import Session
+from app.models.ai_task import AITask
+from app.models.project import Project
+from app.core.exceptions import TaskCancelledError
+from app.ai.llm_logger import llm_context
 
 logger = logging.getLogger(__name__)
 
@@ -242,12 +247,35 @@ class SimpleSkillExecutor:
         except KeyError as e:
             raise ValueError(f"缺少必需的输入参数: {e}")
 
-        # 4. 发布步骤开始
+        system_prompt = skill.system_prompt or ""
+
+        # 4. 发布步骤开始（统一显示名称）
+        step_display_name = self._normalize_step_name(skill.display_name or skill.name)
+        if task_id:
+            try:
+                from app.core.progress import update_task_progress_sync
+                progress_value = None
+                if skill.name == "webtoon_breakdown":
+                    progress_value = 20
+                elif skill.name == "breakdown_aligner":
+                    progress_value = 70
+                update_task_progress_sync(
+                    self.db,
+                    task_id,
+                    progress=progress_value,
+                    current_step=f"{step_display_name}中..."
+                )
+            except Exception:
+                pass
+
         if self.log_publisher and task_id:
             self.log_publisher.publish_step_start(
                 task_id,
-                skill.display_name or skill.name
+                step_display_name
             )
+
+        if task_id and self._is_task_cancelled(task_id):
+            raise TaskCancelledError("任务已取消，停止执行")
 
         # 5. 调用模型
         # 优先级：Skill 配置 > 模型默认配置 > 硬编码默认值
@@ -266,6 +294,8 @@ class SimpleSkillExecutor:
         if hasattr(temperature, '__float__'):
             temperature = float(temperature)
 
+        task_context = self._get_llm_task_context(task_id, skill)
+
         try:
             # 尝试使用流式生成
             full_response = ""
@@ -276,39 +306,43 @@ class SimpleSkillExecutor:
             from app.utils.log_formatter import format_json_object, detect_content_type
 
             json_parser = StreamJsonParser()
-            step_display_name = skill.display_name or skill.name
+            step_display_name = self._normalize_step_name(skill.display_name or skill.name)
             content_type = detect_content_type(step_display_name)
             formatted_index = 0
 
             try:
-                for chunk in self.model_adapter.stream_generate(
-                    prompt,
-                    temperature=temperature,
-                    max_tokens=max_tokens
-                ):
-                    if chunk:  # 确保 chunk 不为 None
-                        if self.log_publisher and task_id:
-                            # 发送原始 JSON 片段
-                            self.log_publisher.publish_stream_chunk(
-                                task_id,
-                                step_display_name,
-                                chunk
-                            )
-
-                            # 解析并发送格式化内容
-                            parsed_objects = json_parser.feed(chunk)
-                            for obj in parsed_objects:
-                                formatted_text = format_json_object(
-                                    obj, content_type, formatted_index
-                                )
-                                self.log_publisher.publish_formatted_chunk(
+                with llm_context(**task_context):
+                    for chunk in self.model_adapter.stream_generate(
+                        prompt,
+                        system_prompt=system_prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens
+                    ):
+                        if task_id and self._is_task_cancelled(task_id):
+                            raise TaskCancelledError("任务已取消，停止流式输出")
+                        if chunk:  # 确保 chunk 不为 None
+                            if self.log_publisher and task_id:
+                                # 发送原始 JSON 片段
+                                self.log_publisher.publish_stream_chunk(
                                     task_id,
                                     step_display_name,
-                                    formatted_text + "\n"
+                                    chunk
                                 )
-                                formatted_index += 1
 
-                        full_response += chunk
+                                # 解析并发送格式化内容
+                                parsed_objects = json_parser.feed(chunk)
+                                for obj in parsed_objects:
+                                    formatted_text = format_json_object(
+                                        obj, content_type, formatted_index
+                                    )
+                                    self.log_publisher.publish_formatted_chunk(
+                                        task_id,
+                                        step_display_name,
+                                        formatted_text + "\n"
+                                    )
+                                    formatted_index += 1
+
+                            full_response += chunk
             except Exception as stream_error:
                 # 流式调用失败，回退到非流式
                 logger.warning(f"流式调用失败，回退到非流式: {stream_error}")
@@ -317,11 +351,15 @@ class SimpleSkillExecutor:
             # 如果流式失败或响应为空，使用非流式调用
             if stream_failed or not full_response.strip():
                 logger.info("使用非流式调用...")
-                full_response = self.model_adapter.generate(
-                    prompt,
-                    temperature=temperature,
-                    max_tokens=max_tokens
-                )
+                if task_id and self._is_task_cancelled(task_id):
+                    raise TaskCancelledError("任务已取消，停止非流式调用")
+                with llm_context(**task_context):
+                    full_response = self.model_adapter.generate(
+                        prompt,
+                        system_prompt=system_prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens
+                    )
                 # 确保响应是字符串
                 if isinstance(full_response, dict) and "content" in full_response:
                     full_response = full_response["content"]
@@ -329,17 +367,52 @@ class SimpleSkillExecutor:
             # 6. 解析 JSON 响应
             result = self._parse_json(full_response)
 
+            # 非流式也补发日志，保证 Console 可见
+            if stream_failed and self.log_publisher and task_id:
+                try:
+                    if full_response:
+                        self.log_publisher.publish_stream_chunk(
+                            task_id,
+                            step_display_name,
+                            str(full_response)
+                        )
+
+                    items = None
+                    if isinstance(result, list):
+                        items = result
+                    elif isinstance(result, dict) and "plot_points" in result:
+                        items = result.get("plot_points") or []
+                    elif result is not None:
+                        items = [result]
+
+                    if items is not None:
+                        formatted_index = 0
+                        for obj in items:
+                            formatted_text = format_json_object(
+                                obj, content_type, formatted_index
+                            )
+                            self.log_publisher.publish_formatted_chunk(
+                                task_id,
+                                step_display_name,
+                                formatted_text + "\n"
+                            )
+                            formatted_index += 1
+                except Exception:
+                    pass
+
             # 7. 发布步骤结束
             if self.log_publisher and task_id:
                 self.log_publisher.publish_step_end(
                     task_id,
-                    skill.display_name or skill.name,
+                    step_display_name,
                     {"status": "success"}
                 )
 
             return result
 
         except Exception as e:
+            if isinstance(e, TaskCancelledError):
+                raise
             # 获取模型信息
             model_info = ""
             if hasattr(self.model_adapter, 'model_name'):
@@ -355,9 +428,65 @@ class SimpleSkillExecutor:
                     task_id,
                     error_msg,
                     error_code="SKILL_EXECUTION_ERROR",
-                    step_name=skill.display_name or skill.name
+                    step_name=step_display_name
                 )
             raise Exception(error_msg) from e
+
+    def _is_task_cancelled(self, task_id: str) -> bool:
+        try:
+            task = self.db.query(AITask).filter(AITask.id == task_id).first()
+            if not task:
+                return False
+            return task.status in (TaskStatus.CANCELLING, TaskStatus.CANCELED, "cancelled")
+        except Exception:
+            return False
+
+    def _normalize_step_name(self, name: str) -> str:
+        # 规范化 step_name 输出（Console / WS / 进度一致）
+        # 规则：
+        # - 任何“质量校验/质量检查/质检/剧情拆解质量校验” => “质量检查”
+        # - 任何“网文改编剧情拆解/剧情拆解/剧集拆解” => “剧集拆解”
+        if not name:
+            return name
+        if any(key in name for key in ["剧情拆解质量校验", "质量校验", "质量检查", "质检"]):
+            return "质量检查"
+        if any(key in name for key in ["网文改编剧情拆解", "剧情拆解", "剧集拆解"]):
+            return "剧集拆解"
+        return name
+
+    def _get_llm_task_context(self, task_id: Optional[str], skill) -> Dict[str, Any]:
+        if not task_id:
+            return {
+                "task_id": None,
+                "user_id": None,
+                "project_id": None,
+                "skill_name": skill.name,
+                "stage": skill.display_name or skill.name
+            }
+        try:
+            task = self.db.query(AITask).filter(AITask.id == task_id).first()
+            project_id = None
+            user_id = None
+            if task and task.project_id:
+                project_id = str(task.project_id)
+                project = self.db.query(Project).filter(Project.id == task.project_id).first()
+                if project:
+                    user_id = str(project.user_id)
+            return {
+                "task_id": str(task_id),
+                "user_id": user_id,
+                "project_id": project_id,
+                "skill_name": skill.name,
+                "stage": skill.display_name or skill.name
+            }
+        except Exception:
+            return {
+                "task_id": str(task_id),
+                "user_id": None,
+                "project_id": None,
+                "skill_name": skill.name,
+                "stage": skill.display_name or skill.name
+            }
 
     def _parse_json(self, response: str) -> Any:
         """解析 JSON 响应（使用通用解析函数）

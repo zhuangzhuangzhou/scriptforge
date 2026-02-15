@@ -58,6 +58,7 @@ class CreateTemplateSkillRequest(BaseModel):
     display_name: str
     description: Optional[str] = None
     category: str  # breakdown, script
+    system_prompt: Optional[str] = None
     prompt_template: str
     input_variables: List[str]
     output_schema: Optional[dict] = None
@@ -69,6 +70,7 @@ class UpdateTemplateSkillRequest(BaseModel):
     display_name: Optional[str] = None
     description: Optional[str] = None
     category: Optional[str] = None
+    system_prompt: Optional[str] = None
     prompt_template: Optional[str] = None
     input_variables: Optional[List[str]] = None
     output_schema: Optional[dict] = None
@@ -341,6 +343,7 @@ async def create_template_skill(
         owner_id=current_user.id,
         is_builtin=False,
         is_template_based=True,
+        system_prompt=request.system_prompt,
         prompt_template=request.prompt_template,
         input_variables=request.input_variables,
         output_schema=request.output_schema,
@@ -401,6 +404,8 @@ async def update_template_skill(
                 detail=f"无效的category，必须是: {', '.join(valid_categories)}"
             )
         skill.category = request.category
+    if request.system_prompt is not None:
+        skill.system_prompt = request.system_prompt
     if request.prompt_template is not None:
         skill.prompt_template = request.prompt_template
     if request.input_variables is not None:

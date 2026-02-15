@@ -8,7 +8,7 @@ interface BillingModalProps {
 }
 
 interface CreditsInfo {
-  balance: number;
+  credits: number;  // 积分余额
   monthly_granted: number;
   monthly_credits: number;
   monthly_consumed: number;
@@ -159,7 +159,7 @@ const BillingModal: React.FC<BillingModalProps> = ({ onClose }) => {
                   </div>
                   <p className="text-xs text-slate-400 mb-0.5">当前积分</p>
                   <div className="text-2xl font-bold text-white font-mono">
-                    {creditsInfo?.balance.toLocaleString() || 0}
+                    {creditsInfo?.credits.toLocaleString() || 0}
                   </div>
                   <div className="mt-2 text-[10px] text-cyan-400 flex items-center gap-1">
                     <Zap size={10} /> {creditsInfo?.tier_display || '免费版'}

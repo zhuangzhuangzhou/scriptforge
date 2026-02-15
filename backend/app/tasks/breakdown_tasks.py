@@ -12,12 +12,14 @@ from sqlalchemy.orm import Session
 from app.core.celery_app import celery_app
 from app.core.database import SyncSessionLocal
 from app.core.progress import update_task_progress_sync
+from app.core.status import map_task_status_to_batch, TaskStatus, BatchStatus
 from app.core.credits import consume_credits_for_task_sync, consume_token_credits_sync
 from app.core.exceptions import (
     AITaskException,
     RetryableError,
     QuotaExceededError,
     classify_exception,
+    TaskCancelledError,
 )
 from app.models.ai_task import AITask
 from app.models.batch import Batch
@@ -73,15 +75,15 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
         # 任务开始：更新状态为 running
         update_task_progress_sync(
             db, task_id,
-            status="running",
+            status=TaskStatus.RUNNING,
             progress=0,
             current_step="初始化任务中... (0%)"
         )
 
-        # 更新批次状态为 processing
+        # 批次状态与任务状态保持同步：任务运行中 => batch.processing
         batch_record = db.query(Batch).filter(Batch.id == batch_id).first()
         if batch_record:
-            batch_record.breakdown_status = "processing"
+            batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.RUNNING) or BatchStatus.PROCESSING
             db.commit()
 
         # 读取任务配置
@@ -121,27 +123,29 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
         # 任务完成：更新状态
         update_task_progress_sync(
             db, task_id,
-            status="completed",
+            status=TaskStatus.COMPLETED,
             progress=100,
             current_step="任务完成 (100%)"
         )
 
         # 发布任务完成消息到 logs 频道（供 WebSocket 客户端接收）
         if log_publisher:
-            log_publisher.publish_task_complete(task_id, status="completed", message="拆解任务执行完成")
+            log_publisher.publish_task_complete(task_id, status=TaskStatus.COMPLETED, message="拆解任务执行完成")
 
-        # 更新批次状态为 completed
+        # 批次状态与任务状态保持同步：任务完成 => batch.completed
         if batch_record:
-            batch_record.breakdown_status = "completed"
+            batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.COMPLETED) or BatchStatus.COMPLETED
             batch_record.ai_processed = True  # 标记为已处理
             db.commit()
 
         # Token 计费：从 LLMCallLog 汇总该任务的 token 使用量并扣费
+        # 从 task_config 中获取 model_config_id，用于查询 AIModelPricing
         token_result = consume_token_credits_sync(
             db=db,
             user_id=user_id,
             task_id=task_id,
-            task_type="breakdown"
+            task_type="breakdown",
+            model_config_id=task_config.get("model_config_id")
         )
         if token_result.get("token_credits", 0) > 0:
             db.commit()
@@ -151,8 +155,13 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
                 f"credits={token_result.get('token_credits', 0)}"
             )
 
-        return {"status": "completed", "task_id": task_id}
+        return {"status": TaskStatus.COMPLETED, "task_id": task_id}
 
+    except TaskCancelledError as e:
+        _handle_task_cancelled_sync(
+            db, task_id, batch_record, task_record, log_publisher, str(e)
+        )
+        return {"status": TaskStatus.CANCELED, "task_id": task_id}
     except AITaskException as e:
         # 其他AI任务错误：标记失败，不重试
         _handle_task_failure_sync(
@@ -241,14 +250,14 @@ def _handle_retryable_error_sync(
         "will_retry_after": error.retry_after
     }
 
-    update_task_progress_sync(
-        db, task_id,
-        status="retrying",
-        error_message=json.dumps(error_info)
-    )
+        update_task_progress_sync(
+            db, task_id,
+            status=TaskStatus.RETRYING,
+            error_message=json.dumps(error_info)
+        )
 
     if batch_record:
-        batch_record.breakdown_status = "pending"
+        batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.RETRYING) or BatchStatus.PROCESSING
         db.commit()
     
     # 发布错误消息
@@ -280,13 +289,13 @@ def _handle_quota_exceeded_sync(
 
     update_task_progress_sync(
         db, task_id,
-        status="failed",
+        status=TaskStatus.FAILED,
         error_message=json.dumps(error_info)
     )
 
     # 更新批次状态
     if batch_record:
-        batch_record.breakdown_status = "failed"
+        batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.FAILED) or BatchStatus.FAILED
         db.commit()
 
     # 发布错误消息
@@ -333,14 +342,14 @@ def _handle_timeout_failure_sync(
     # 更新任务状态
     update_task_progress_sync(
         db, task_id,
-        status="failed",
+        status=TaskStatus.FAILED,
         error_message=json.dumps(timeout_info),
         current_step="任务超时"
     )
 
     # 更新批次状态为 failed
     if batch_record:
-        batch_record.breakdown_status = "failed"
+        batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.FAILED) or BatchStatus.FAILED
         db.commit()
         logger.info(f"批次 {batch_record.id} 状态已更新为 failed（超时）")
 
@@ -388,21 +397,24 @@ def _handle_task_failure_sync(
 
     update_task_progress_sync(
         db, task_id,
-        status="failed",
+        status=TaskStatus.FAILED,
         error_message=json.dumps(error_info)
     )
 
     # 更新批次状态
     if batch_record:
-        batch_record.breakdown_status = "failed"
+        batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.FAILED) or BatchStatus.FAILED
         db.commit()
 
     # Token 计费：即使任务失败，也需要扣除已消耗的 Token 费用
+    # 从 task_record.config 中获取 model_config_id
+    task_config = task_record.config if task_record else {}
     token_result = consume_token_credits_sync(
         db=db,
         user_id=user_id,
         task_id=task_id,
-        task_type="breakdown"
+        task_type="breakdown",
+        model_config_id=task_config.get("model_config_id")
     )
     if token_result.get("token_credits", 0) > 0:
         db.commit()
@@ -473,6 +485,7 @@ def _execute_breakdown_sync(
     logger = logging.getLogger(__name__)
 
     # 1. 加载章节数据（10%）
+    _raise_if_cancelled_sync(db, task_id)
     update_task_progress_sync(db, task_id, progress=5, current_step="加载章节数据中... (5%)")
 
     batch = db.query(Batch).filter(Batch.id == batch_id).first()
@@ -518,6 +531,7 @@ def _execute_breakdown_sync(
     logger.info(f"计算起始集数: start_episode={start_episode} (项目 {project_id}, 当前批次 start_chapter={current_start_chapter})")
 
     # 2. 加载 AI 资源文档（15%）
+    _raise_if_cancelled_sync(db, task_id)
     update_task_progress_sync(db, task_id, progress=12, current_step="加载 AI 资源文档中... (12%)")
 
     novel_type = task_config.get("novel_type")
@@ -551,6 +565,7 @@ def _execute_breakdown_sync(
     update_task_progress_sync(db, task_id, progress=15, current_step="AI 资源文档加载完成 (15%)")
 
     # 3. 执行拆解（20%-90%）
+    _raise_if_cancelled_sync(db, task_id)
     update_task_progress_sync(db, task_id, progress=20, current_step="执行剧情拆解中... (20%)")
 
     # 构建 Agent 上下文
@@ -573,6 +588,7 @@ def _execute_breakdown_sync(
 
     if use_agent:
         try:
+            _raise_if_cancelled_sync(db, task_id)
             agent_executor = SimpleAgentExecutor(db, model_adapter, log_publisher)
             results = agent_executor.execute_agent(
                 agent_name="breakdown_agent",
@@ -600,6 +616,7 @@ def _execute_breakdown_sync(
     if not use_agent or not plot_points:
         skill_executor = SimpleSkillExecutor(db, model_adapter, log_publisher)
         try:
+            _raise_if_cancelled_sync(db, task_id)
             plot_points = skill_executor.execute_skill(
                 skill_name="webtoon_breakdown",
                 inputs=agent_context,
@@ -616,6 +633,7 @@ def _execute_breakdown_sync(
 
         # 回退模式：执行 QA 质检
         logger.info("回退到 Skill 模式，执行 QA 质检...")
+        _raise_if_cancelled_sync(db, task_id)
         qa_result = _run_breakdown_qa_sync(
             db=db,
             task_id=task_id,
@@ -637,6 +655,7 @@ def _execute_breakdown_sync(
     if use_agent and qa_status == "pending" and not qa_report:
         # Agent 模式下 QA 可能被跳过，补充执行
         logger.info("Agent 模式无 QA 结果，补充执行质检...")
+        _raise_if_cancelled_sync(db, task_id)
         qa_result = _run_breakdown_qa_sync(
             db=db,
             task_id=task_id,
@@ -657,6 +676,8 @@ def _execute_breakdown_sync(
     # 4. 质检不通过时自动重试（最多3次）
     max_auto_fix_retries = task_config.get("max_auto_fix_retries", 3)
     auto_fix_enabled = task_config.get("auto_fix_on_fail", True)  # 默认启用
+    if use_agent:
+        auto_fix_enabled = False
     fix_attempt = 0
 
     # 标准化 qa_status（统一转为大写）
@@ -675,6 +696,7 @@ def _execute_breakdown_sync(
            qa_report):
 
         fix_attempt += 1
+        _raise_if_cancelled_sync(db, task_id)
         logger.info(f"质检未通过，开始第 {fix_attempt}/{max_auto_fix_retries} 次自动修正...")
 
         if log_publisher:
@@ -708,6 +730,7 @@ def _execute_breakdown_sync(
 
         # 重新执行质检
         logger.info(f"第 {fix_attempt} 次修正完成，重新执行质检...")
+        _raise_if_cancelled_sync(db, task_id)
         qa_result = _run_breakdown_qa_sync(
             db=db,
             task_id=task_id,
@@ -752,14 +775,15 @@ def _execute_breakdown_sync(
     # 标准化 qa_status 为大写（前端期望 'PASS' | 'FAIL' | 'pending'）
     normalized_qa_status_for_db = qa_status.upper() if isinstance(qa_status, str) and qa_status.upper() in ("PASS", "FAIL") else "pending"
 
-    # 获取 ai_model_id（来自 ai_models 表）
-    ai_model_id = task_config.get("model_config_id")
+    # 获取 model_config_id 用于保存拆解记录
+    model_config_id = task_config.get("model_config_id")
 
     breakdown = PlotBreakdown(
         batch_id=batch_id,
         project_id=project_id,
         task_id=task_id,  # 关联任务 ID
-        ai_model_id=ai_model_id,  # 关联 AI 模型 ID（来自 ai_models 表）
+        ai_model_id=model_config_id,  # 关联 AI 模型 ID
+        model_config_id=model_config_id,  # 模型配置 ID
         plot_points=plot_points,
         format_version=2,
         consistency_status="pending",
@@ -771,8 +795,41 @@ def _execute_breakdown_sync(
 
     db.add(breakdown)
     db.commit()
-    db.refresh(breakdown)
 
+
+def _raise_if_cancelled_sync(db: Session, task_id: str) -> None:
+    task = db.query(AITask).filter(AITask.id == task_id).first()
+    if task and task.status in (TaskStatus.CANCELLING, TaskStatus.CANCELED, "cancelled"):
+        raise TaskCancelledError("任务已被取消")
+
+
+def _handle_task_cancelled_sync(
+    db: Session,
+    task_id: str,
+    batch_record,
+    task_record,
+    log_publisher=None,
+    message: str = "任务已被取消"
+):
+    # 更新任务状态为 canceled（规范化为 canceled）
+    task = task_record or db.query(AITask).filter(AITask.id == task_id).first()
+    if task:
+        task.status = TaskStatus.CANCELED
+        task.current_step = "用户已取消"
+        task.error_message = None
+
+    # 批次状态与任务状态保持同步：任务取消 => batch.pending
+    if batch_record:
+        batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.CANCELED) or BatchStatus.PENDING
+
+    db.commit()
+
+    if log_publisher:
+        try:
+            log_publisher.publish_warning(task_id, message)
+            log_publisher.publish_task_complete(task_id, status=TaskStatus.CANCELED, message=message)
+        except Exception:
+            pass
     update_task_progress_sync(db, task_id, progress=95, current_step="拆解结果已保存 (95%)")
 
     return {
@@ -2293,10 +2350,6 @@ def _run_breakdown_qa_sync(
     try:
         # 格式化剧情点为 JSON 字符串
         plot_points_json = json.dumps(plot_points, ensure_ascii=False)
-
-        # 发布 QA 开始
-        if log_publisher:
-            log_publisher.publish_step_start(task_id, "质检检查")
 
         # 调用 breakdown_aligner skill
         skill_executor = SimpleSkillExecutor(db, model_adapter, log_publisher)

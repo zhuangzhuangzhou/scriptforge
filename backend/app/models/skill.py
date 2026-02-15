@@ -31,6 +31,7 @@ class Skill(Base):
 
     # 模板配置 (用户可编辑Skill)
     is_template_based = Column(Boolean, default=False)  # 是否为模板驱动的Skill
+    system_prompt = Column(Text)  # System Prompt（可选）
     prompt_template = Column(Text)  # Prompt模板
     input_schema = Column(JSON)  # 输入Schema定义 {"param_name": {"type": "string", "description": "..."}}
     output_schema = Column(JSON)  # 输出Schema定义

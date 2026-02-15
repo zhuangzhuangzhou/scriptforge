@@ -14,6 +14,6 @@ export const mockLogs = [
 
 export const mockUser = {
   username: 'Alex Writer',
-  balance: 2450,
+  credits: 2450,
   tier: 'FREE'
 };

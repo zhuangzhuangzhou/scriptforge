@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { TASK_STATUS } from '../constants/status';
 import { breakdownApi } from '../services/api';
 
 export interface LogEntry {
@@ -59,27 +60,32 @@ export const useConsoleLogger = (
   // 更新最后一个流式日志（追加模式，用于累积流式内容）
   const appendStreamLog = useCallback((chunk: string) => {
     setLogs(prev => {
-      // 查找最后一个未完成的 stream 类型的日志
-      const lastIndex = prev.length - 1;
+      // 查找最后一个未完成的 stream 类型的日志（不要求在数组末尾）
+      let lastStreamIndex = -1;
+      for (let i = prev.length - 1; i >= 0; i -= 1) {
+        if (prev[i].type === 'stream' && !prev[i].finalized) {
+          lastStreamIndex = i;
+          break;
+        }
+      }
 
-      if (lastIndex >= 0 && prev[lastIndex].type === 'stream' && !prev[lastIndex].finalized) {
-        // 追加内容到最后一个流式日志
+      if (lastStreamIndex >= 0) {
         const updated = [...prev];
-        updated[lastIndex] = {
-          ...updated[lastIndex],
-          message: updated[lastIndex].message + chunk
+        updated[lastStreamIndex] = {
+          ...updated[lastStreamIndex],
+          message: updated[lastStreamIndex].message + chunk
         };
         return updated;
-      } else {
-        // 如果没有未完成的流式日志，创建一个新的
-        return [...prev, {
-          id: `stream-${Date.now()}`,
-          timestamp: new Date().toLocaleTimeString(),
-          type: 'stream',
-          message: chunk,
-          finalized: false
-        }];
       }
+
+      // 如果没有未完成的流式日志，创建一个新的
+      return [...prev, {
+        id: `stream-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        type: 'stream',
+        message: chunk,
+        finalized: false
+      }];
     });
   }, []);
 
@@ -118,12 +124,19 @@ export const useConsoleLogger = (
   // 结束当前流式日志（用于步骤结束时，确保下一步骤的内容不会追加到当前日志）
   const finalizeStreamLog = useCallback(() => {
     setLogs(prev => {
-      // 如果最后一条是 stream 类型且未完成，将其标记为已完成
-      const lastIndex = prev.length - 1;
-      if (lastIndex >= 0 && prev[lastIndex].type === 'stream' && !prev[lastIndex].finalized) {
+      // 标记最后一个未完成的 stream 为已完成
+      let lastStreamIndex = -1;
+      for (let i = prev.length - 1; i >= 0; i -= 1) {
+        if (prev[i].type === 'stream' && !prev[i].finalized) {
+          lastStreamIndex = i;
+          break;
+        }
+      }
+
+      if (lastStreamIndex >= 0) {
         const updated = [...prev];
-        updated[lastIndex] = {
-          ...updated[lastIndex],
+        updated[lastStreamIndex] = {
+          ...updated[lastStreamIndex],
           finalized: true
         };
         return updated;
@@ -185,7 +198,7 @@ export const useConsoleLogger = (
           }
 
           // 处理任务完成
-          if (data.status === 'completed') {
+          if (data.status === TASK_STATUS.COMPLETED) {
             addLog('success', '任务完成');
             // 获取 LLM 调用日志
             setTimeout(() => {
@@ -194,7 +207,7 @@ export const useConsoleLogger = (
           }
 
           // 处理任务失败
-          if (data.status === 'failed') {
+          if (data.status === TASK_STATUS.FAILED) {
             addLog('error', data.error_message || '任务失败');
           }
 
@@ -235,7 +248,7 @@ export const useConsoleLogger = (
         const data = res.data;
 
         // 检测 queued 状态超时
-        if (data.status === 'queued') {
+        if (data.status === TASK_STATUS.QUEUED) {
           if (!taskStartTimeRef.current) {
             taskStartTimeRef.current = Date.now();
           } else {
@@ -264,7 +277,7 @@ export const useConsoleLogger = (
         }
 
         // 任务完成
-        if (data.status === 'completed') {
+        if (data.status === TASK_STATUS.COMPLETED) {
           addLog('success', '任务完成');
           fetchLLMCallLogs();
           if (pollTimerRef.current) {
@@ -273,7 +286,7 @@ export const useConsoleLogger = (
         }
 
         // 任务失败
-        if (data.status === 'failed') {
+        if (data.status === TASK_STATUS.FAILED) {
           // 优先使用 error_display（人性化错误信息），否则解析 error_message
           let errorMsg = '任务失败';
           if (data.error_display && typeof data.error_display === 'object') {

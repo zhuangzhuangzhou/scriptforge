@@ -429,6 +429,17 @@ return (
 
 ## 9. 状态管理最佳实践 (State Management Best Practices)
 
+### 9.0 状态常量与映射
+
+**单一来源**: `frontend/src/constants/status.ts`
+
+- 任务状态：`TASK_STATUS`
+- 批次状态：`BATCH_STATUS`
+
+**约束**:
+- UI “拆解中” 只依赖 `Batch.breakdown_status === BATCH_STATUS.PROCESSING`
+- 任务停止/轮询只判断 `TASK_STATUS`
+
 ### 9.1 乐观更新模式 (Optimistic Update)
 
 **问题**: 调用 API 启动任务后，按钮状态没有立即更新，用户体验不佳
@@ -446,7 +457,7 @@ const handleStartTask = async () => {
     if (selectedItem && selectedItem.id === taskId) {
       setSelectedItem({
         ...selectedItem,
-        status: 'processing'  // 乐观更新状态
+        status: BATCH_STATUS.PROCESSING  // 乐观更新状态
       });
     }
   } catch (err) {
@@ -843,3 +854,66 @@ const handleStopTask = async () => {
 3. **检查弹窗**能否正确打开/关闭
 
 > **记住**: 保护用户的设计，比"优化"它更重要。
+
+---
+
+## 13. 前后端字段一致性
+
+> **2026-02-15 新增**：修复 `/admin/users` 页面空白问题
+
+### 13.1 问题描述
+
+**症状**：`/admin/users` 页面进入后空白，控制台无报错
+
+**原因**：后端 API 响应字段从 `balance` 改为 `credits`，但前端类型定义和组件仍使用 `balance`，导致字段不存在错误。
+
+**错误日志**：
+```
+TypeError: Cannot read properties of undefined (reading 'toLocaleString')
+```
+
+### 13.2 修复范围
+
+| 文件 | 修改 |
+|------|------|
+| `pages/admin/UserManagement.tsx` | `balance` → `credits` |
+| `types.ts` | `UserState.balance` → `credits` |
+| `context/AuthContext.tsx` | `User.balance` → `credits` |
+| `components/MainLayout.tsx` | `user?.balance` → `user?.credits` |
+| `components/modals/BillingModal.tsx` | `CreditsInfo.balance` → `credits` |
+| `services/api.ts` | mock 数据和返回字段更新 |
+| `services/mockData.ts` | `mockUser.balance` → `credits` |
+
+### 13.3 预防措施
+
+**后端修改 API 字段时**：
+1. ✅ 更新 API 响应文档
+2. ✅ 检查所有引用该 API 的前端代码
+3. ✅ 运行 TypeScript 编译检查 (`pnpm build`)
+4. ✅ 手动测试相关页面
+
+**前端代码规范**：
+```typescript
+// ✅ 正确：使用可选链避免 undefined 错误
+render: (val: number) => <span>{val?.toLocaleString() ?? 0}</span>
+
+// ❌ 错误：直接调用可能报错
+render: (val: number) => <span>{val.toLocaleString()}</span>
+```
+
+### 13.4 API 变更清单
+
+当修改 API 响应字段时，更新以下位置：
+
+| 位置 | 说明 |
+|------|------|
+| `types.ts` | 全局类型定义 |
+| `services/api.ts` | mock 数据和 API 调用 |
+| `context/*.tsx` | 上下文中的用户状态 |
+| `pages/**/*` | 使用该数据的页面组件 |
+| `components/**/*` | 使用该数据的子组件 |
+
+---
+
+**最后更新**: 2026-02-15
+**相关变更**: `/admin/users` 页面字段一致性修复

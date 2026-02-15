@@ -2,7 +2,7 @@ export type UserTier = 'FREE' | 'CREATOR' | 'STUDIO' | 'ENTERPRISE';
 
 export interface UserState {
   tier: UserTier;
-  balance: number;
+  credits: number;  // 积分余额
   avatar: string;
   name: string;
 }

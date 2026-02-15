@@ -30,6 +30,7 @@ class SkillBase(BaseModel):
 
     # 模板配置
     is_template_based: bool = Field(True, description="是否为模板驱动")
+    system_prompt: Optional[str] = Field(None, description="System Prompt")
     prompt_template: Optional[str] = Field(None, description="Prompt 模板")
     input_schema: Optional[dict] = Field(None, description="输入 Schema")
     output_schema: Optional[dict] = Field(None, description="输出 Schema")
@@ -55,6 +56,7 @@ class SkillUpdate(BaseModel):
     display_name: Optional[str] = None
     description: Optional[str] = None
     category: Optional[str] = None
+    system_prompt: Optional[str] = None
     prompt_template: Optional[str] = None
     input_schema: Optional[dict] = None
     output_schema: Optional[dict] = None
@@ -75,6 +77,7 @@ class SkillResponse(BaseModel):
     description: Optional[str] = None
     category: Optional[str] = None
     is_template_based: Optional[bool] = None
+    system_prompt: Optional[str] = None
     prompt_template: Optional[str] = None
     input_schema: Optional[dict] = None
     output_schema: Optional[dict] = None
@@ -278,6 +281,7 @@ async def create_skill(
         description=skill_data.description,
         category=skill_data.category,
         is_template_based=skill_data.is_template_based,
+        system_prompt=skill_data.system_prompt,
         prompt_template=skill_data.prompt_template,
         input_schema=skill_data.input_schema,
         output_schema=skill_data.output_schema,
@@ -304,6 +308,7 @@ async def create_skill(
         description=skill.description,
         category=skill.category,
         is_template_based=skill.is_template_based,
+        system_prompt=skill.system_prompt,
         prompt_template=skill.prompt_template,
         input_schema=skill.input_schema,
         output_schema=skill.output_schema,
@@ -359,6 +364,7 @@ async def update_skill(
         description=skill.description,
         category=skill.category,
         is_template_based=skill.is_template_based,
+        system_prompt=skill.system_prompt,
         prompt_template=skill.prompt_template,
         input_schema=skill.input_schema,
         output_schema=skill.output_schema,

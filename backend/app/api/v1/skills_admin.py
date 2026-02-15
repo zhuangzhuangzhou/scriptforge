@@ -19,6 +19,7 @@ class SkillCreateRequest(BaseModel):
     category: str
     module_path: str
     class_name: str
+    system_prompt: Optional[str] = None
     parameters: Optional[dict] = None
     version: Optional[str] = "1.0.0"
     author: Optional[str] = None
@@ -29,6 +30,7 @@ class SkillUpdateRequest(BaseModel):
     display_name: Optional[str] = None
     description: Optional[str] = None
     category: Optional[str] = None
+    system_prompt: Optional[str] = None
     parameters: Optional[dict] = None
     is_active: Optional[bool] = None
     visibility: Optional[str] = None
@@ -92,6 +94,7 @@ async def create_skill(
         module_path=request.module_path,
         class_name=request.class_name,
         owner_id=admin.id,
+        system_prompt=request.system_prompt,
         parameters=request.parameters,
         version=request.version,
         author=request.author
@@ -127,6 +130,8 @@ async def update_skill(
         skill.description = request.description
     if request.category is not None:
         skill.category = request.category
+    if request.system_prompt is not None:
+        skill.system_prompt = request.system_prompt
     if request.parameters is not None:
         skill.parameters = request.parameters
     if request.is_active is not None:

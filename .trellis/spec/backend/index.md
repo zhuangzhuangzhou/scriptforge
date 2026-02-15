@@ -112,6 +112,26 @@ python3 debug_api.py   # 调用实际接口，检查状态码和响应
 
 ---
 
+## 6.4 任务/批次状态规范 (Task & Batch Status)
+
+**单一来源**: `app/core/status.py`
+
+### 任务状态 (AITask.status)
+- `pending`, `queued`, `running`, `retrying`, `in_progress`, `cancelling`, `completed`, `failed`, `canceled`
+
+### 批次状态 (Batch.breakdown_status)
+- `pending`, `queued`, `processing`, `completed`, `failed`
+
+### 关联规则（必须遵守）
+- `running/retrying/in_progress/cancelling` → `processing`
+- `completed` → `completed`
+- `failed` → `failed`
+- `canceled` → `pending`
+
+### 实现要求
+- 写入任务状态必须走 `normalize_task_status()`
+- 批次状态必须通过 `map_task_status_to_batch()` 同步
+
 ## 7. 专题规范文档
 
 ### 7.1 安全规范

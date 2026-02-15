@@ -103,7 +103,10 @@ class GeminiAdapter(BaseModelAdapter):
         Returns:
             生成的文本或包含文本和使用量的字典
         """
+        system_prompt = kwargs.get('system_prompt')
         messages = [{"role": "user", "content": prompt}]
+        if system_prompt:
+            messages = [{"role": "system", "content": system_prompt}] + messages
         temperature = kwargs.get('temperature', 0.7)
         max_tokens = kwargs.get('max_tokens', 100000)
 
@@ -228,8 +231,11 @@ class GeminiAdapter(BaseModelAdapter):
         Yields:
             流式响应的每个文本块
         """
+        system_prompt = kwargs.get('system_prompt')
         # 将 prompt 转换为消息格式
         messages = [{"role": "user", "content": prompt}]
+        if system_prompt:
+            messages = [{"role": "system", "content": system_prompt}] + messages
 
         temperature = kwargs.pop('temperature', 0.7)
         max_tokens = kwargs.pop('max_tokens', 100000)

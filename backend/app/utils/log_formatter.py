@@ -58,7 +58,7 @@ def format_plot_point(point: dict, index: int = 0) -> str:
     return "\n".join(lines)
 
 
-def format_qa_dimension(result: dict) -> str:
+def format_qa_dimension(result: dict, index: int = 0) -> str:
     """格式化质检维度结果
 
     Args:
@@ -67,17 +67,40 @@ def format_qa_dimension(result: dict) -> str:
     Returns:
         str: 格式化后的文本
     """
-    dimension = result.get("dimension") or result.get("维度") or "未知维度"
+    dimension = result.get("dimension") or result.get("维度") or f"维度{index + 1}"
+    name = result.get("name") or result.get("维度名称") or result.get("dimension_name") or "未知维度"
     score = result.get("score") or result.get("得分") or 0
-    passed = result.get("passed") or result.get("pass") or result.get("通过")
+
+    # 保留显式的 passed=false，不要被 or 覆盖
+    if "passed" in result:
+        passed = result.get("passed")
+    elif "pass" in result:
+        passed = result.get("pass")
+    elif "通过" in result:
+        passed = result.get("通过")
+    else:
+        passed = None
+
+    # 兼容字符串分数
+    if isinstance(score, str) and score.strip().isdigit():
+        score = int(score.strip())
 
     if passed is None:
         # 根据分数判断是否通过
         passed = score >= 60 if isinstance(score, (int, float)) else False
 
-    status = "✓ 通过" if passed else "✗ 未通过"
+    status = "通过" if passed else "未通过"
+    details = result.get("details") or result.get("说明") or result.get("备注") or ""
+    details = str(details).strip()
 
-    return f"【{dimension}】评分 {score} {status}"
+    line = f"【{dimension}】{name}  评分 {score} {status}"
+    if details:
+        # 说明信息另起一行，缩进显示，限制长度
+        max_len = 30
+        display = details[:max_len] + "..." if len(details) > max_len else details
+        line = f"{line}\n  说明：{display}"
+
+    return line
 
 
 def format_json_object(obj: dict, obj_type: str = "auto", index: int = 0) -> str:
@@ -103,8 +126,12 @@ def format_json_object(obj: dict, obj_type: str = "auto", index: int = 0) -> str
     if obj_type == "plot_point":
         return format_plot_point(obj, index)
     elif obj_type == "qa_dimension":
-        return format_qa_dimension(obj)
+        return format_qa_dimension(obj, index)
     else:
+        # 如果包含 dimensions，按质检维度处理
+        dimensions = obj.get("dimensions") if isinstance(obj, dict) else None
+        if isinstance(dimensions, list):
+            return "\n".join(format_qa_dimension(dim, idx) for idx, dim in enumerate(dimensions))
         # 未知类型，返回简化的 key-value 格式
         return _format_generic_object(obj)
 

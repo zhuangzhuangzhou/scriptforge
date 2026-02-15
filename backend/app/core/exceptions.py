@@ -122,6 +122,13 @@ class TokenLimitExceededError(AITaskException):
         }
 
 
+class TaskCancelledError(AITaskException):
+    """任务被取消"""
+
+    def __init__(self, message: str = "任务已被取消"):
+        super().__init__(message, code="TASK_CANCELLED")
+
+
 # 异常分类辅助函数
 
 def classify_exception(error: Exception) -> AITaskException:

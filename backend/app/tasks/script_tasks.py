@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.celery_app import celery_app
 from app.core.database import SyncSessionLocal
 from app.core.progress import update_task_progress_sync
+from app.core.status import TaskStatus
 from app.core.credits import consume_credits_for_task_sync
 from app.core.exceptions import AITaskException, RetryableError, classify_exception
 from app.models.ai_task import AITask
@@ -55,7 +56,7 @@ def run_episode_script_task(
         except Exception as e:
             logger.warning(f"初始化 RedisLogPublisher 失败: {e}")
 
-        update_task_progress_sync(db, task_id, status="running", progress=0, current_step="初始化剧本创作任务... (0%)")
+        update_task_progress_sync(db, task_id, status=TaskStatus.RUNNING, progress=0, current_step="初始化剧本创作任务... (0%)")
 
         task_record = db.query(AITask).filter(AITask.id == task_id).first()
         task_config = task_record.config if task_record else {}
@@ -74,7 +75,7 @@ def run_episode_script_task(
             log_publisher=log_publisher
         )
 
-        update_task_progress_sync(db, task_id, status="completed", progress=100, current_step="剧本创作完成 (100%)")
+        update_task_progress_sync(db, task_id, status=TaskStatus.COMPLETED, progress=100, current_step="剧本创作完成 (100%)")
 
         # 扣除积分（任务完成后扣费）
         credits_result = consume_credits_for_task_sync(db, user_id, "script", task_id)
@@ -82,12 +83,12 @@ def run_episode_script_task(
             logger.error(f"积分扣费失败: user={user_id}, task={task_id}, reason={credits_result['message']}")
         db.commit()
 
-        return {"status": "completed", "task_id": task_id, **result}
+        return {"status": TaskStatus.COMPLETED, "task_id": task_id, **result}
 
     except Exception as e:
         classified_error = classify_exception(e)
         error_info = {"code": getattr(classified_error, "code", "UNKNOWN_ERROR"), "message": str(e)}
-        update_task_progress_sync(db, task_id, status="failed", error_message=json.dumps(error_info))
+        update_task_progress_sync(db, task_id, status=TaskStatus.FAILED, error_message=json.dumps(error_info))
         if log_publisher:
             log_publisher.publish_error(task_id, str(e), error_code=error_info["code"])
         raise

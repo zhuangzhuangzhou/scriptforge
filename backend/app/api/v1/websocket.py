@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import AsyncSessionLocal
 from app.models.ai_task import AITask
+from app.core.status import normalize_task_status, TaskStatus
 from typing import Optional
 import asyncio
 import json
@@ -36,9 +37,10 @@ async def get_redis() -> Optional[redis.Redis]:
 
 def serialize_task(task: AITask) -> dict:
     """序列化任务状态"""
+    status = normalize_task_status(task.status)
     return {
         "task_id": str(task.id),
-        "status": task.status,
+        "status": status,
         "progress": task.progress or 0,
         "current_step": task.current_step or "",
         "error_message": task.error_message,
@@ -90,7 +92,7 @@ async def websocket_breakdown_progress(websocket: WebSocket, task_id: str):
             await websocket.send_json(initial_data)
 
             # 如果任务已经完成，发送完成消息后退出
-            if task.status in ["completed", "failed", "canceled"]:
+            if task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED]:
                 await websocket.send_json({
                     "task_id": task_id,
                     "status": "done",
@@ -136,7 +138,7 @@ async def websocket_breakdown_progress(websocket: WebSocket, task_id: str):
                                 last_data = progress_data
 
                             # 检测任务完成
-                            if progress_data.get('status') in ["completed", "failed", "canceled"]:
+                            if progress_data.get('status') in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED]:
                                 await websocket.send_json({
                                     "task_id": task_id,
                                     "status": "done",
@@ -191,7 +193,7 @@ async def websocket_breakdown_progress(websocket: WebSocket, task_id: str):
                     # 如果状态发生变化，调整轮询间隔
                     if new_status != task_status:
                         task_status = new_status
-                        if new_status in ["completed", "failed", "canceled"]:
+                        if new_status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED]:
                             # 任务结束时，发送最终状态后退出
                             await websocket.send_json({
                                 "task_id": task_id,
@@ -333,24 +335,25 @@ async def websocket_batch_simple(websocket: WebSocket, project_id: str):
 
                 # 统计各状态数量
                 status_counts = {
-                    "pending": 0,
-                    "queued": 0,
-                    "running": 0,
-                    "retrying": 0,
-                    "completed": 0,
-                    "failed": 0
+                    TaskStatus.PENDING: 0,
+                    TaskStatus.QUEUED: 0,
+                    TaskStatus.RUNNING: 0,
+                    TaskStatus.RETRYING: 0,
+                    TaskStatus.COMPLETED: 0,
+                    TaskStatus.FAILED: 0
                 }
 
                 task_updates = []
                 for task in tasks:
-                    status_counts[task.status] = status_counts.get(task.status, 0) + 1
+                    normalized_status = normalize_task_status(task.status) or task.status
+                    status_counts[normalized_status] = status_counts.get(normalized_status, 0) + 1
 
                     # 检测状态变更
                     last_state = last_states.get(str(task.id))
                     current_state = {
                         "task_id": str(task.id),
                         "batch_id": str(task.batch_id),
-                        "status": task.status,
+                        "status": normalized_status,
                         "progress": task.progress or 0,
                         "error_message": task.error_message
                     }
@@ -365,7 +368,7 @@ async def websocket_batch_simple(websocket: WebSocket, project_id: str):
 
                 # 计算整体进度
                 total = len(tasks)
-                completed = status_counts.get("completed", 0)
+                completed = status_counts.get(TaskStatus.COMPLETED, 0)
                 overall_progress = round(completed / total * 100, 1) if total > 0 else 0
 
                 # 发送批量进度
@@ -385,7 +388,7 @@ async def websocket_batch_simple(websocket: WebSocket, project_id: str):
                 await websocket.send_json(batch_data)
 
                 # 检查是否全部完成
-                if completed + status_counts.get("failed", 0) >= total:
+                if completed + status_counts.get(TaskStatus.FAILED, 0) >= total:
                     await websocket.send_json({
                         "type": "batch_complete",
                         "message": f"批量任务完成，成功 {completed}，失败 {status_counts.get('failed', 0)}"
@@ -531,10 +534,10 @@ async def websocket_breakdown_logs(websocket: WebSocket, task_id: str):
                     task = result.scalar_one_or_none()
 
                     if task:
-                        if task.status in ["completed", "failed", "canceled"]:
+                        if task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED]:
                             # 任务已结束，发送最终状态并关闭
                             await websocket.send_json({
-                                "type": "task_complete" if task.status == "completed" else "task_failed",
+                                "type": "task_complete" if task.status == TaskStatus.COMPLETED else "task_failed",
                                 "task_id": task_id,
                                 "status": task.status,
                                 "message": f"任务已{task.status}"

@@ -171,7 +171,7 @@ async def get_breakdown_by_resource(
             func.sum(case((PlotBreakdown.qa_status == "FAIL", 1), else_=0)).label("failed"),
             func.avg(PlotBreakdown.qa_score).label("avg_score")
         ).outerjoin(
-            AIResource, PlotBreakdown.used_adapt_method_id == func.cast(AIResource.id, type_=PlotBreakdown.used_adapt_method_id.type)
+            AIResource, PlotBreakdown.used_adapt_method_id == AIResource.name
         ).where(
             PlotBreakdown.created_at >= period_start
         ).group_by(

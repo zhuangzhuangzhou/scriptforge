@@ -92,13 +92,18 @@ class AnthropicAdapter(BaseModelAdapter):
         temperature = kwargs.get('temperature', 0.7)
         max_tokens = kwargs.get('max_tokens', 100000)
 
+        system_prompt = kwargs.get('system_prompt')
+        messages = [{"role": "user", "content": prompt}]
+
         # 构建原始请求（用于日志）
         request_body = {
             "model": self.model_name,
             "max_tokens": max_tokens,
             "temperature": temperature,
-            "messages": [{"role": "user", "content": prompt}]
+            "messages": messages
         }
+        if system_prompt:
+            request_body["system"] = system_prompt
 
         start_time = time.time()
         error_msg = None
@@ -114,7 +119,8 @@ class AnthropicAdapter(BaseModelAdapter):
                 model=self.model_name,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                messages=[{"role": "user", "content": prompt}]
+                messages=messages,
+                system=system_prompt if system_prompt else None
             )
 
             # stream() 返回一个上下文管理器，需要迭代获取内容
@@ -207,14 +213,19 @@ class AnthropicAdapter(BaseModelAdapter):
         temperature = kwargs.get('temperature', 0.7)
         max_tokens = kwargs.get('max_tokens', 100000)
 
+        system_prompt = kwargs.get('system_prompt')
+        messages = [{"role": "user", "content": prompt}]
+
         # 构建请求体
         request_body = {
             "model": self.model_name,
             "max_tokens": max_tokens,
             "temperature": temperature,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "stream": True
         }
+        if system_prompt:
+            request_body["system"] = system_prompt
 
         start_time = time.time()
         collected_content = []
@@ -228,12 +239,13 @@ class AnthropicAdapter(BaseModelAdapter):
                 # 用户提供了完整路径，直接使用
                 url = base
             else:
-                # 用户只提供了域名，自动补全路径
-                # 常见的 Anthropic 兼容 API 路径格式
-                if 'anthropic' in base.lower():
-                    url = f"{base}/anthropic/v1/messages"
-                else:
+                # 用户只提供了域名或上级路径，自动补全
+                # 如果已包含 /anthropic，则只补 /v1/messages
+                if '/anthropic' in base.lower():
                     url = f"{base}/v1/messages"
+                else:
+                    # 其他情况补全为 /anthropic/v1/messages
+                    url = f"{base}/anthropic/v1/messages"
 
             logger.info(f"Anthropic API URL: {url}")
 
@@ -251,6 +263,20 @@ class AnthropicAdapter(BaseModelAdapter):
 
             with self.http_client.stream("POST", url, json=request_body, headers=headers) as response:
                 response.raise_for_status()
+
+                content_type = response.headers.get("content-type", "")
+                if "text/event-stream" not in content_type.lower():
+                    # 非 SSE：一次性读取并解析
+                    response.read()
+                    try:
+                        data = response.json()
+                        text = self._safe_extract_content(data)
+                        if text:
+                            collected_content.append(text)
+                            yield text
+                        return
+                    except Exception as parse_error:
+                        raise Exception(f"非SSE响应解析失败: {parse_error}") from parse_error
 
                 # 处理 SSE 流
                 for line in response.iter_lines():
@@ -276,7 +302,38 @@ class AnthropicAdapter(BaseModelAdapter):
                             continue
 
         except httpx.HTTPStatusError as e:
-            error_msg = f"HTTP 错误 {e.response.status_code}: {e.response.text[:500]}"
+            response_text = ""
+            try:
+                # 在流式响应中需要先 read() 才能访问 text/content
+                e.response.read()
+                response_text = e.response.text or ""
+            except Exception:
+                response_text = ""
+
+            # 部分第三方端点不支持流式，返回 404：降级到非流式
+            if e.response.status_code == 404:
+                logger.warning(f"Anthropic stream_generate 404，流式 URL: {url}")
+                try:
+                    fallback = self.generate(
+                        prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        system_prompt=system_prompt if system_prompt else None
+                    )
+                    if isinstance(fallback, dict) and "content" in fallback:
+                        fallback = fallback["content"]
+                    fallback_text = fallback or ""
+                    if fallback_text:
+                        collected_content.append(fallback_text)
+                        yield fallback_text
+                    error_msg = None
+                    return
+                except Exception as fallback_error:
+                    error_msg = f"HTTP 错误 404 后降级失败: {fallback_error}"
+                    logger.error(f"Anthropic stream_generate 降级失败: {error_msg}")
+                    raise Exception(error_msg) from fallback_error
+
+            error_msg = f"HTTP 错误 {e.response.status_code} (url={url}): {response_text[:500]}"
             logger.error(f"Anthropic stream_generate HTTP 错误: {error_msg}")
             raise Exception(error_msg) from e
 

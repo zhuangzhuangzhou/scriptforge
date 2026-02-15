@@ -78,7 +78,7 @@ const LLMLogsTab: React.FC = () => {
   const [status, setStatus] = useState<string | undefined>(undefined);
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(50);
+  const [pageSize, setPageSize] = useState(10);  // 默认 10 条
 
   // 详情弹窗
   const [modalVisible, setModalVisible] = useState(false);

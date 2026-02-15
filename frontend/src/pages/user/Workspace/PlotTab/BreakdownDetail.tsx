@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Batch, PlotBreakdown, Episode, PlotPoint, QAReport } from '../../../../types';
+import { BATCH_STATUS } from '../../../../constants/status';
 import { breakdownApi } from '../../../../services/api';
 import BreakdownDetailModal from './BreakdownDetailModal';
 
@@ -598,7 +599,7 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   }
 
   // 待拆解状态
-  if (selectedBatch.breakdown_status === 'pending') {
+  if (selectedBatch.breakdown_status === BATCH_STATUS.PENDING) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
         <div className="w-20 h-20 rounded-2xl bg-slate-800/50 flex items-center justify-center border border-slate-700">
@@ -611,7 +612,7 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   }
 
   // 排队状态
-  if (selectedBatch.breakdown_status === 'queued') {
+  if (selectedBatch.breakdown_status === BATCH_STATUS.QUEUED) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
         <div className="w-20 h-20 rounded-2xl bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
@@ -634,7 +635,7 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   }
 
   // 拆解中状态
-  if (selectedBatch.breakdown_status === 'processing') {
+  if (selectedBatch.breakdown_status === BATCH_STATUS.PROCESSING) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
         <div className="w-20 h-20 rounded-2xl bg-cyan-500/10 flex items-center justify-center border border-cyan-500/20 animate-pulse">
@@ -689,7 +690,7 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   }
 
   // 拆解完成但无结果（数据异常）
-  if (selectedBatch.breakdown_status === 'completed' && !breakdownResult) {
+  if (selectedBatch.breakdown_status === BATCH_STATUS.COMPLETED && !breakdownResult) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
         <div className="w-20 h-20 rounded-2xl bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
@@ -904,7 +905,7 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   }
 
   // V1 格式（原有逻辑）
-  if (selectedBatch.breakdown_status === 'completed' && breakdownResult) {
+  if (selectedBatch.breakdown_status === BATCH_STATUS.COMPLETED && breakdownResult) {
     return (
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
         {/* 视图切换按钮 */}

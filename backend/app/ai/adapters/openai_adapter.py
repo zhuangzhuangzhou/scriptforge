@@ -61,10 +61,15 @@ class OpenAIAdapter(BaseModelAdapter):
         temperature = kwargs.get('temperature', 0.7)
         max_tokens = kwargs.get('max_tokens', 100000)
 
+        system_prompt = kwargs.get('system_prompt')
+        messages = [{"role": "user", "content": prompt}]
+        if system_prompt:
+            messages = [{"role": "system", "content": system_prompt}] + messages
+
         # 构建原始请求（用于日志）
         request_body = {
             "model": self.model_name,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens
         }
@@ -79,7 +84,7 @@ class OpenAIAdapter(BaseModelAdapter):
         try:
             response = self.client.chat.completions.create(
                 model=self.model_name,
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens
             )
@@ -146,10 +151,15 @@ class OpenAIAdapter(BaseModelAdapter):
         temperature = kwargs.get('temperature', 0.7)
         max_tokens = kwargs.get('max_tokens', 100000)
 
+        system_prompt = kwargs.get('system_prompt')
+        messages = [{"role": "user", "content": prompt}]
+        if system_prompt:
+            messages = [{"role": "system", "content": system_prompt}] + messages
+
         # 构建原始请求（用于日志）
         request_body = {
             "model": self.model_name,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True
@@ -163,7 +173,7 @@ class OpenAIAdapter(BaseModelAdapter):
         try:
             stream = self.client.chat.completions.create(
                 model=self.model_name,
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 stream=True

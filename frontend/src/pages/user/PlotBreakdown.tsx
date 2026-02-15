@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { Button, Card, Timeline, Tag, Row, Col, Typography, Empty } from 'antd';
 import { PlayCircleOutlined, CheckCircleOutlined, ClockCircleOutlined, SyncOutlined } from '@ant-design/icons';
 import SkillSelector from '../../components/SkillSelector';
+import { BATCH_STATUS } from '../../constants/status';
 
 const { Text } = Typography;
 
@@ -64,17 +65,17 @@ const PlotBreakdown: React.FC = () => {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'completed': return 'success';
-      case 'processing': return 'processing';
-      case 'failed': return 'error';
+      case BATCH_STATUS.COMPLETED: return 'success';
+      case BATCH_STATUS.PROCESSING: return 'processing';
+      case BATCH_STATUS.FAILED: return 'error';
       default: return 'default';
     }
   };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'completed': return <CheckCircleOutlined />;
-      case 'processing': return <SyncOutlined spin />;
+      case BATCH_STATUS.COMPLETED: return <CheckCircleOutlined />;
+      case BATCH_STATUS.PROCESSING: return <SyncOutlined spin />;
       default: return <ClockCircleOutlined />;
     }
   };
@@ -87,7 +88,7 @@ const PlotBreakdown: React.FC = () => {
             <Timeline
               mode="left"
               items={batches.map(batch => ({
-                color: batch.breakdown_status === 'completed' ? 'green' : 'blue',
+                color: batch.breakdown_status === BATCH_STATUS.COMPLETED ? 'green' : 'blue',
                 dot: getStatusIcon(batch.breakdown_status),
                 children: (
                   <Card 
@@ -96,13 +97,13 @@ const PlotBreakdown: React.FC = () => {
                     style={{ background: '#f9f9f9', marginBottom: 16 }}
                     actions={[
                       <Button 
-                        type={batch.breakdown_status === 'pending' ? 'primary' : 'default'}
+                        type={batch.breakdown_status === BATCH_STATUS.PENDING ? 'primary' : 'default'}
                         size="small"
                         icon={<PlayCircleOutlined />}
                         onClick={() => startBreakdown(batch.id)}
-                        disabled={batch.breakdown_status === 'completed' || loading}
+                        disabled={batch.breakdown_status === BATCH_STATUS.COMPLETED || loading}
                       >
-                        {batch.breakdown_status === 'processing' ? '处理中' : '开始拆解'}
+                        {batch.breakdown_status === BATCH_STATUS.PROCESSING ? '处理中' : '开始拆解'}
                       </Button>
                     ]}
                   >

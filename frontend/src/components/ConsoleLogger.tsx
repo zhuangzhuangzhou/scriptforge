@@ -93,15 +93,12 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
     }
   }, [logs, isMinimized, visible, userScrolled]);
 
-  // 根据视图模式过滤日志
+  // 根据视图模式过滤日志（仅显示流式内容）
   const filteredLogs = logs.filter(log => {
     if (viewMode === 'raw') {
-      // RAW 模式：隐藏格式化日志，显示原始 stream
-      return log.type !== 'formatted';
-    } else {
-      // Formatted 模式：隐藏原始 stream，显示格式化日志
-      return log.type !== 'stream';
+      return log.type === 'stream';
     }
+    return log.type === 'formatted';
   });
 
   if (!visible) return null;
@@ -123,158 +120,172 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
     // 去掉开头的 ◆ 符号
     text = text.replace(/^◆\s*/, '');
 
-    // 处理质检维度格式：【维度名】xxx 得分:90 状态:通过
-    const qaDimensionRegex = /【([^】]+)】\s*([^\s]+)\s*得分[:：]\s*(\d+)\s*状态[:：]\s*(通过|未通过|失败)/g;
-    if (qaDimensionRegex.test(text)) {
-      qaDimensionRegex.lastIndex = 0;
-      const parts: React.ReactNode[] = [];
-      let lastIndex = 0;
-      let match;
+    const lines = text.split(/\r?\n/);
 
-      while ((match = qaDimensionRegex.exec(text)) !== null) {
-        // 添加匹配之前的文本
-        if (match.index > lastIndex) {
-          parts.push(text.slice(lastIndex, match.index));
+    const isDividerLine = (line: string) => /^-+\s*$/.test(line.trim());
+    const isBreakdownLine = (line: string) => /剧集拆解\s*Agent\s*正在运行中/.test(line);
+    const isQALine = (line: string) => /质量检查\s*Agent\s*正在运行中/.test(line);
+    const getSectionType = (line: string, index: number, allLines: string[]) => {
+      if (isBreakdownLine(line)) return 'breakdown';
+      if (isQALine(line)) return 'qa';
+      if (isDividerLine(line)) {
+        if (index > 0 && isBreakdownLine(allLines[index - 1])) return 'breakdown';
+        if (index + 1 < allLines.length && isBreakdownLine(allLines[index + 1])) return 'breakdown';
+        if (index > 0 && isQALine(allLines[index - 1])) return 'qa';
+        if (index + 1 < allLines.length && isQALine(allLines[index + 1])) return 'qa';
+      }
+      return null;
+    };
+
+    const renderFormattedLine = (line: string, index: number, allLines: string[]) => {
+      const trimmed = line.trim();
+      const sectionType = getSectionType(line, index, allLines);
+
+      if (isDividerLine(trimmed)) {
+        const dividerClass =
+          sectionType === 'breakdown'
+            ? 'text-amber-300/80'
+            : sectionType === 'qa'
+              ? 'text-sky-300/80'
+              : 'text-slate-500/70';
+        return <span className={dividerClass}>------</span>;
+      }
+
+      if (sectionType === 'breakdown' && isBreakdownLine(trimmed)) {
+        return (
+          <span className="inline-flex items-center px-2 py-0.5 text-amber-200 bg-amber-500/15 border border-amber-400/40">
+            {trimmed}
+          </span>
+        );
+      }
+
+      if (sectionType === 'qa' && isQALine(trimmed)) {
+        return (
+          <span className="inline-flex items-center gap-2 px-2.5 py-0.5 text-sky-50 bg-gradient-to-r from-sky-600/40 via-sky-500/25 to-sky-600/40 border border-sky-300/60 shadow-[0_0_0_1px_rgba(56,189,248,0.25)]">
+            <span className="h-1.5 w-1.5 bg-sky-300 rounded-full animate-pulse" />
+            <span className="tracking-wide">{trimmed}</span>
+          </span>
+        );
+      }
+
+      // 处理质检维度格式：【维度1】冲突强度评估  评分 75 通过
+      const qaDimensionRegex = /【维度\s*(\d+)】\s*([^\n]+?)\s*评分\s*[:：]?\s*(\d+)\s*(通过|未通过|失败)/g;
+      if (qaDimensionRegex.test(trimmed)) {
+        qaDimensionRegex.lastIndex = 0;
+        const parts: React.ReactNode[] = [];
+        let lastIndex = 0;
+        let match;
+
+        while ((match = qaDimensionRegex.exec(trimmed)) !== null) {
+          if (match.index > lastIndex) {
+            parts.push(trimmed.slice(lastIndex, match.index));
+          }
+
+          const [, dimensionNum, dimensionName, score, status] = match;
+          const isPassed = status === '通过';
+          const scoreNum = parseInt(score, 10);
+
+          parts.push(
+            <span key={match.index} className="inline-flex items-center gap-1">
+              <span className="text-violet-300">【维度{dimensionNum}】</span>
+              <span className="text-slate-200">{dimensionName}</span>
+              <span className="text-slate-500">评分</span>
+              <span className={scoreNum >= 80 ? 'text-emerald-300' : scoreNum >= 60 ? 'text-amber-300' : 'text-red-300'}>
+                {score}
+              </span>
+              <span className={isPassed ? 'text-emerald-300' : 'text-red-300'}>
+                {status}
+              </span>
+            </span>
+          );
+
+          lastIndex = match.index + match[0].length;
         }
 
-        const [, dimensionNum, dimensionName, score, status] = match;
-        const isPassed = status === '通过';
-        const scoreNum = parseInt(score, 10);
+        if (lastIndex < trimmed.length) {
+          parts.push(trimmed.slice(lastIndex));
+        }
+
+        return parts;
+      }
+
+      // 处理【】包裹的关键动作
+      const parts: React.ReactNode[] = [];
+      let lastIndex = 0;
+      const bracketRegex = /【([^】]+)】/g;
+      let match;
+
+      while ((match = bracketRegex.exec(trimmed)) !== null) {
+        if (match.index > lastIndex) {
+          parts.push(renderTextWithColors(trimmed.slice(lastIndex, match.index)));
+        }
+
+        const content = match[1];
+        let colorClass = 'text-slate-200';
+
+        if (content.includes('第') && content.includes('集')) {
+          colorClass = 'text-purple-400';
+        }
 
         parts.push(
-          <span key={match.index} className="inline-flex items-center gap-1">
-            <span className="text-purple-400">【{dimensionNum}】</span>
-            <span className="text-slate-300">{dimensionName}</span>
-            <span className="text-slate-500">得分:</span>
-            <span className={scoreNum >= 80 ? 'text-green-400' : scoreNum >= 60 ? 'text-yellow-400' : 'text-red-400'}>
-              {score}
-            </span>
-            <span className="text-slate-500">状态:</span>
-            <span className={isPassed ? 'text-green-400' : 'text-red-400'}>
-              {status}
-            </span>
+          <span key={match.index} className={colorClass}>
+            【{content}】
           </span>
         );
 
         lastIndex = match.index + match[0].length;
       }
 
-      // 添加剩余文本
-      if (lastIndex < text.length) {
-        parts.push(text.slice(lastIndex));
+      if (lastIndex < trimmed.length) {
+        parts.push(renderTextWithColors(trimmed.slice(lastIndex)));
       }
 
-      return parts;
-    }
+      return parts.length > 0 ? parts : trimmed;
+    };
 
-    // 处理【】包裹的关键动作
-    const parts: React.ReactNode[] = [];
-    let lastIndex = 0;
-    const bracketRegex = /【([^】]+)】/g;
-    let match;
-
-    while ((match = bracketRegex.exec(text)) !== null) {
-      // 添加【】之前的文本
-      if (match.index > lastIndex) {
-        parts.push(renderTextWithColors(text.slice(lastIndex, match.index)));
-      }
-
-      // 根据内容决定颜色
-      const content = match[1];
-      let colorClass = 'text-cyan-400'; // 默认颜色
-
-      if (content.includes('通过') || content.includes('成功') || content.includes('完成')) {
-        colorClass = 'text-green-400';
-      } else if (content.includes('失败') || content.includes('错误')) {
-        colorClass = 'text-red-400';
-      } else if (content.includes('警告') || content.includes('跳过')) {
-        colorClass = 'text-yellow-400';
-      } else if (content.includes('第') && content.includes('集')) {
-        colorClass = 'text-purple-400 font-semibold';
-      } else if (content.includes('维度') || content.match(/^维度\d+$/)) {
-        colorClass = 'text-purple-400';
-      }
-
-      parts.push(
-        <span key={match.index} className={colorClass}>
-          【{content}】
-        </span>
-      );
-
-      lastIndex = match.index + match[0].length;
-    }
-
-    // 添加剩余文本
-    if (lastIndex < text.length) {
-      parts.push(renderTextWithColors(text.slice(lastIndex)));
-    }
-
-    return parts.length > 0 ? parts : text;
+    const renderedLines = lines.map((line, index) => renderFormattedLine(line, index, lines));
+    return renderedLines.flatMap((node, index) =>
+      index === 0 ? [node] : [<br key={`br-${index}`} />, node]
+    );
   };
 
   // 渲染带颜色的文本（场景、角色、剧情、钩子）
   const renderTextWithColors = (text: string): React.ReactNode => {
-    // 检测并着色特定关键词
-    const patterns = [
-      { regex: /(场景[:：]\s*)([^\n,，]+)/g, labelClass: 'text-slate-400', valueClass: 'text-blue-300' },
-      { regex: /(角色[:：]\s*)([^\n,，]+)/g, labelClass: 'text-slate-400', valueClass: 'text-amber-300' },
-      { regex: /(剧情[:：]\s*)([^\n,，]+)/g, labelClass: 'text-slate-400', valueClass: 'text-emerald-300' },
-      { regex: /(钩子[:：]\s*)([^\n,，]+)/g, labelClass: 'text-slate-400', valueClass: 'text-pink-300' },
-      { regex: /(剧情钩子[:：]\s*)([^\n,，]+)/g, labelClass: 'text-slate-400', valueClass: 'text-pink-300' },
-      { regex: /(事件[:：]\s*)([^\n,，]+)/g, labelClass: 'text-slate-400', valueClass: 'text-emerald-300' },
-      { regex: /(钩子类型[:：]\s*)([^\n,，]+)/g, labelClass: 'text-slate-400', valueClass: 'text-pink-300' },
-    ];
-
-    // 简单处理：直接返回文本，复杂着色在 CSS 中处理
-    for (const pattern of patterns) {
-      if (pattern.regex.test(text)) {
-        // 重置 regex
-        pattern.regex.lastIndex = 0;
-        return text;
-      }
-    }
-
     return text;
   };
 
-  // 构建标题信息
-  // 格式: 批次:2   当前任务:剧集拆解/质量检查  次数:1
-  const buildHeaderInfo = () => {
-    const parts: string[] = [];
+  const buildStatusInfo = () => {
+    const taskName = currentStep
+      .replace(/🚀/g, '')
+      .replace(/✅/g, '')
+      .replace(/❌/g, '')
+      .replace(/⚠️/g, '')
+      .replace(/◈/g, '')
+      .trim();
+    const total = _totalRounds > 0 ? `/${_totalRounds}` : '';
 
-    // 批次号
-    if (batchNumber > 0) {
-      parts.push(`批次:${batchNumber}`);
-    }
-
-    // 当前任务
-    if (currentStep) {
-      // 提取任务名称（去掉 emoji 和前缀）
-      const taskName = currentStep
-        .replace(/🚀/g, '')
-        .replace(/✅/g, '')
-        .replace(/❌/g, '')
-        .replace(/⚠️/g, '')
-        .replace(/◈/g, '')
-        .trim();
-
-      // 统一名称映射
-      let displayName = taskName;
-      if (taskName.includes('网文改编剧情拆解') || taskName.includes('剧情拆解') || taskName.includes('剧集拆解')) {
-        displayName = '剧集拆解';
-      } else if (taskName.includes('剧情拆解质量校验') || taskName.includes('质量校验') || taskName.includes('质量检查') || taskName.includes('质检')) {
-        displayName = '质量检查';
-      }
-
-      parts.push(`当前任务:${displayName}`);
-    }
-
-    // 次数
-    if (currentRound > 0) {
-      parts.push(`次数:${currentRound}`);
-    }
-
-    return parts.join('   ');
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        {batchNumber > 0 && (
+          <span className="px-2.5 py-0.5 rounded bg-slate-800/80 text-slate-200 border border-slate-700 text-[11px]">
+            拆解批次：{batchNumber}
+          </span>
+        )}
+        {taskName && (
+          <span className="px-2.5 py-0.5 rounded bg-slate-800/80 text-slate-200 border border-slate-700 text-[11px]">
+            当前任务: {normalizeTaskName(taskName)}
+          </span>
+        )}
+        {currentRound > 0 && (
+          <span className="px-2.5 py-0.5 rounded bg-slate-800/80 text-slate-200 border border-slate-700 text-[11px]">
+            轮次: {currentRound}{total}
+          </span>
+        )}
+        <span className="px-2.5 py-0.5 rounded bg-slate-800/80 text-slate-200 border border-slate-700 text-[11px]">
+          进度: {progress}%
+        </span>
+      </div>
+    );
   };
 
   return (
@@ -295,47 +306,36 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
           <Terminal size={14} className="text-cyan-400 flex-shrink-0" />
           <span className="text-xs font-medium text-slate-300 flex-shrink-0">System Console</span>
 
-          {/* 进度和状态显示 */}
-          {isProcessing && (
-            <div className="flex items-center gap-2 ml-2 flex-1 min-w-0">
-              {/* 闪烁指示器 */}
-              <span className="flex h-2 w-2 relative flex-shrink-0">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
-              </span>
-
-              {/* 批次和任务信息 */}
-              <span className="text-xs text-slate-400 truncate">
-                {buildHeaderInfo()}
-              </span>
-            </div>
-          )}
+          {/* 进度和状态显示移至上区 */}
         </div>
 
         <div className="flex items-center gap-1 flex-shrink-0">
           {/* RAW / Formatted 切换按钮 */}
           {!isMinimized && (
-            <div className="flex mr-2" onClick={(e) => e.stopPropagation()}>
-              <button
-                onClick={() => setViewMode('formatted')}
-                className={`px-2 py-0.5 text-[10px] rounded-l border transition-colors ${
-                  viewMode === 'formatted'
-                    ? 'bg-cyan-600 text-white border-cyan-600'
-                    : 'bg-slate-700 text-slate-400 border-slate-600 hover:bg-slate-600'
-                }`}
-              >
-                Format
-              </button>
-              <button
-                onClick={() => setViewMode('raw')}
-                className={`px-2 py-0.5 text-[10px] rounded-r border-t border-r border-b transition-colors ${
-                  viewMode === 'raw'
-                    ? 'bg-cyan-600 text-white border-cyan-600'
-                    : 'bg-slate-700 text-slate-400 border-slate-600 hover:bg-slate-600'
-                }`}
-              >
-                RAW
-              </button>
+            <div className="flex mr-2 items-center" onClick={(e) => e.stopPropagation()}>
+              <div className="relative flex items-center w-[104px] h-6 rounded-full bg-slate-800/80 border border-slate-700 p-[1px]">
+                <span
+                  className={`absolute left-[1px] top-[1px] h-[20px] w-[50px] rounded-full bg-teal-500/35 border border-teal-400/50 shadow-sm transition-transform duration-200 ${
+                    viewMode === 'raw' ? 'translate-x-[50px]' : 'translate-x-0'
+                  }`}
+                />
+                <button
+                  onClick={() => setViewMode('formatted')}
+                  className={`relative z-10 w-[50px] h-6 text-[10px] tracking-wide transition-colors ${
+                    viewMode === 'formatted' ? 'text-teal-100' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Format
+                </button>
+                <button
+                  onClick={() => setViewMode('raw')}
+                  className={`relative z-10 w-[50px] h-6 text-[10px] tracking-wide transition-colors ${
+                    viewMode === 'raw' ? 'text-teal-100' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Raw
+                </button>
+              </div>
             </div>
           )}
           <button
@@ -385,6 +385,13 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
               )}
             </div>
           )}
+
+          {/* 状态/进度面板 */}
+          <div className="px-4 py-2 bg-slate-900/80 border-b border-slate-800">
+            <div className="text-[11px] leading-4 text-slate-300">
+              {buildStatusInfo()}
+            </div>
+          </div>
 
           {/* 日志内容 */}
           <div

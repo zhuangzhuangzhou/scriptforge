@@ -15,7 +15,7 @@ import os
 import time
 import logging
 
-from sqlalchemy import select, desc, and_, func
+from sqlalchemy import select, desc, and_, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
@@ -798,11 +798,107 @@ def consume_credits_for_task_sync(db: "Session", user_id: str, task_type: str, r
     }
 
 
+def _get_pricing_from_model(
+    db: "Session",
+    model_config_id: Optional[str],
+    task_uuid: UUID,
+    default_input_per_1k: int,
+    default_output_per_1k: int
+) -> tuple:
+    """从模型配置或 LLMCallLog 获取计费规则
+
+    优先级：
+    1. 使用传入的 model_config_id 查询 AIModelPricing
+    2. 从 LLMCallLog 获取 provider+model_name，查询 AIModel -> AIModelPricing
+    3. 使用系统默认配置
+
+    Args:
+        db: 数据库会话
+        model_config_id: 模型配置ID（可选）
+        task_uuid: 任务ID（用于查询 LLMCallLog）
+        default_input_per_1k: 默认输入计费
+        default_output_per_1k: 默认输出计费
+
+    Returns:
+        (input_per_1k, output_per_1k) 元组
+    """
+    from app.models.llm_call_log import LLMCallLog
+    from app.models.ai_model import AIModel
+    from app.models.ai_model_provider import AIModelProvider
+    from app.models.ai_model_pricing import AIModelPricing
+    from datetime import datetime
+
+    # 1. 优先使用传入的 model_config_id
+    if model_config_id:
+        try:
+            model_uuid = UUID(model_config_id) if isinstance(model_config_id, str) else model_config_id
+            pricing = db.query(AIModelPricing).filter(
+                AIModelPricing.model_id == model_uuid,
+                AIModelPricing.is_active == True,
+                AIModelPricing.effective_from <= datetime.utcnow()
+            ).filter(
+                or_(
+                    AIModelPricing.effective_until.is_(None),
+                    AIModelPricing.effective_until > datetime.utcnow()
+                )
+            ).first()
+            if pricing:
+                logger.info(f"使用模型定价 (model_config_id): input={pricing.input_credits_per_1k_tokens}, output={pricing.output_credits_per_1k_tokens}")
+                return (int(pricing.input_credits_per_1k_tokens), int(pricing.output_credits_per_1k_tokens))
+        except Exception as e:
+            logger.warning(f"查询模型定价失败 (model_config_id={model_config_id}): {e}")
+
+    # 2. 从 LLMCallLog 获取 provider + model_name
+    log = db.query(LLMCallLog).filter(
+        LLMCallLog.task_id == task_uuid
+    ).first()
+
+    if log and log.provider and log.model_name:
+        try:
+            # 通过 provider 字符串找到 AIModelProvider
+            provider = db.query(AIModelProvider).filter(
+                AIModelProvider.key == log.provider,
+                AIModelProvider.is_active == True
+            ).first()
+
+            if provider:
+                # 找到对应的 AIModel
+                ai_model = db.query(AIModel).filter(
+                    AIModel.provider_id == provider.id,
+                    AIModel.model_key == log.model_name,
+                    AIModel.is_enabled == True
+                ).first()
+
+                if ai_model:
+                    # 查询当前生效的 AIModelPricing
+                    pricing = db.query(AIModelPricing).filter(
+                        AIModelPricing.model_id == ai_model.id,
+                        AIModelPricing.is_active == True,
+                        AIModelPricing.effective_from <= datetime.utcnow()
+                    ).filter(
+                        or_(
+                            AIModelPricing.effective_until.is_(None),
+                            AIModelPricing.effective_until > datetime.utcnow()
+                        )
+                    ).order_by(AIModelPricing.effective_from.desc()).first()
+
+                    if pricing:
+                        logger.info(f"使用模型定价 (provider={log.provider}, model={log.model_name}): input={pricing.input_credits_per_1k_tokens}, output={pricing.output_credits_per_1k_tokens}")
+                        return (int(pricing.input_credits_per_1k_tokens), int(pricing.output_credits_per_1k_tokens))
+        except Exception as e:
+            logger.warning(f"查询模型定价失败 (provider={log.provider}, model={log.model_name}): {e}")
+
+    # 3. 使用默认配置
+    logger.info(f"使用默认定价: input={default_input_per_1k}, output={default_output_per_1k}")
+    return (default_input_per_1k, default_output_per_1k)
+
+
 def consume_token_credits_sync(
     db: "Session",
     user_id: str,
     task_id: str,
-    task_type: str = "breakdown"
+    task_type: str = "breakdown",
+    model_config_id: Optional[str] = None
 ) -> dict:
     """消耗 Token 积分（同步版本）
 
@@ -812,22 +908,32 @@ def consume_token_credits_sync(
     注意：无论 token_billing_enabled 配置如何，只要有 token 消耗就会扣费。
     这是因为实际消耗了 API 资源，必须计费。
 
+    计费逻辑：
+    1. 优先使用传入的 model_config_id 查询 AIModelPricing
+    2. 如果没有传入，从 LLMCallLog 的 provider+model_name 推断
+    3. 如果都没有，使用系统默认配置
+
     Args:
         db: 同步数据库会话
         user_id: 用户ID
         task_id: 任务ID（用于从 LLMCallLog 汇总 token）
         task_type: 任务类型（用于描述）
+        model_config_id: 模型配置ID（可选，用于查询 AIModelPricing）
 
     Returns:
         {success: bool, balance: int, token_credits: int, input_tokens: int, output_tokens: int, message: str}
     """
     from app.models.user import User
     from app.models.llm_call_log import LLMCallLog
+    from app.models.ai_model import AIModel
+    from app.models.ai_model_provider import AIModelProvider
     from sqlalchemy import func
 
-    # 从数据库读取 token 计费配置
+    # 从数据库读取 token 计费配置（默认配置）
     config = get_credits_config_sync(db)
     token_config = config.get("token", {})
+    default_input_per_1k = token_config.get("input_per_1k", 1)
+    default_output_per_1k = token_config.get("output_per_1k", 2)
 
     # 从 LLMCallLog 汇总该任务的 token 使用量
     task_uuid = UUID(task_id) if isinstance(task_id, str) else task_id
@@ -845,10 +951,8 @@ def consume_token_credits_sync(
 
     # 如果没有精确的 token 数据，尝试从文本长度估算
     if input_tokens == 0 and output_tokens == 0:
-        # 查询该任务的所有日志记录
         logs = db.query(LLMCallLog).filter(LLMCallLog.task_id == task_uuid).all()
         for log in logs:
-            # 估算 token 数量（中文约 2 字符/token，取保守值）
             if log.prompt:
                 input_tokens += len(log.prompt) // 2
             if log.response:
@@ -865,9 +969,14 @@ def consume_token_credits_sync(
             "message": "无 Token 消耗"
         }
 
-    # 计算 token 积分
-    input_per_1k = token_config.get("input_per_1k", 1)
-    output_per_1k = token_config.get("output_per_1k", 2)
+    # 获取计费规则（优先使用 AIModelPricing，其次使用默认配置）
+    input_per_1k, output_per_1k = _get_pricing_from_model(
+        db=db,
+        model_config_id=model_config_id,
+        task_uuid=task_uuid,
+        default_input_per_1k=default_input_per_1k,
+        default_output_per_1k=default_output_per_1k
+    )
 
     # 向上取整计算积分
     input_credits = (input_tokens + 999) // 1000 * input_per_1k

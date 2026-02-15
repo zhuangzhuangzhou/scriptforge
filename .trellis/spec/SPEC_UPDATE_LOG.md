@@ -56,6 +56,28 @@ const variableRefs = extractVariableRefs(previousSteps);
 
 ---
 
+## 2026-02-15 - 任务/批次状态规范统一
+
+### 更新的规范
+
+1. **`backend/index.md`** - 更新
+   - 新增任务/批次状态规范与映射规则
+   - 指定 `normalize_task_status()` 与 `map_task_status_to_batch()` 为单一来源
+
+2. **`frontend/index.md`** - 更新
+   - 新增状态常量来源 (`frontend/src/constants/status.ts`)
+   - 明确 UI 只依赖批次状态展示“拆解中”
+
+### 学到的关键知识
+
+#### 1. 状态分层能减少耦合
+
+任务状态用于执行控制，批次状态用于 UI 展示。两者分层后，前端不会因为任务短暂波动而抖动。
+
+#### 2. 映射规则必须集中管理
+
+散落的字符串判断会导致 `processing/running` 混用，必须通过统一映射函数维护。
+
 ## 2026-02-08 - 移除加密功能的经验总结
 
 ### 更新的规范

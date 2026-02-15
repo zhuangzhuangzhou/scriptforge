@@ -15,6 +15,7 @@ from app.models.user import User
 from app.models.project import Project, ProjectLog
 from app.models.chapter import Chapter
 from app.models.batch import Batch
+from app.core.status import BatchStatus
 from app.models.split_rule import SplitRule
 from app.api.v1.auth import get_current_user
 from app.utils.file_parser import get_parser
@@ -387,7 +388,7 @@ async def get_project_chapters(
     items = []
     for ch in chapters:
         # 判断状态：batch_id 存在且对应批次已完成才标记为 processed
-        if ch.batch_id and batch_status_map.get(ch.batch_id) == "completed":
+        if ch.batch_id and batch_status_map.get(ch.batch_id) == BatchStatus.COMPLETED:
             status = "processed"
         else:
             status = "unprocessed"
@@ -805,4 +806,3 @@ async def create_batches(
     await db.commit()
 
     return {"message": "分批完成", "batch_count": len(batches_data), "created": True}
-

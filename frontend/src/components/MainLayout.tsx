@@ -143,7 +143,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">积分</span>
               <span className="text-sm font-semibold bg-gradient-to-r from-pink-400 to-purple-500 bg-clip-text text-transparent">
-                {(user?.balance ?? 0).toLocaleString()}
+                {(user?.credits ?? 0).toLocaleString()}
               </span>
             </div>
           </div>

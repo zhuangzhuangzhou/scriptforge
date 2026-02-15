@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.models.skill import Skill
 from app.ai.adapters import get_adapter
+from app.ai.llm_logger import llm_context
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,9 @@ class TemplateSkillExecutor:
         self,
         skill_id: str,
         variables: Dict[str, Any],
-        user_id: Optional[str] = None
+        user_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+        project_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """执行模板 Skill
 
@@ -74,12 +77,20 @@ class TemplateSkillExecutor:
 
         # 4. 渲染模板
         prompt = self._render_template(skill.prompt_template, variables)
+        system_prompt = skill.system_prompt or ""
 
         logger.info(f"执行模板 Skill: {skill.name}, 变量: {list(variables.keys())}")
 
         # 5. 调用 LLM（传递 user_id 以支持用户自定义配置）
         model_adapter = await self._get_model_adapter(user_id)
-        response = model_adapter.generate(prompt)
+        with llm_context(
+            task_id=task_id,
+            user_id=user_id,
+            project_id=project_id,
+            skill_name=skill.name,
+            stage=skill.display_name or skill.name
+        ):
+            response = model_adapter.generate(prompt, system_prompt=system_prompt)
 
         # 6. 解析结果
         result = self._parse_response(response, skill.output_schema)

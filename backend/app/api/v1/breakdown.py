@@ -14,8 +14,12 @@ from app.api.v1.auth import get_current_user
 from app.core.celery_app import celery_app
 from app.tasks.breakdown_tasks import run_breakdown_task
 from app.core.quota import QuotaService, refund_episode_quota_sync
+from app.core.status import normalize_task_status, TaskStatus, BatchStatus
 
 router = APIRouter()
+
+
+_normalize_task_status = normalize_task_status
 
 
 class BreakdownStartRequest(BaseModel):
@@ -118,7 +122,7 @@ async def start_breakdown(
     existing_task_result = await db.execute(
         select(AITask).where(
             AITask.batch_id == request.batch_id,
-            AITask.status.in_(["queued", "running"])
+            AITask.status.in_([TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLING])
         )
     )
     existing_task = existing_task_result.scalar_one_or_none()
@@ -130,12 +134,12 @@ async def start_breakdown(
         )
     
     # 如果批次状态是 failed，允许重新提交（清理旧的失败任务记录）
-    if batch.breakdown_status == "failed":
+    if batch.breakdown_status == BatchStatus.FAILED:
         # 查找失败的任务记录
         failed_task_result = await db.execute(
             select(AITask).where(
                 AITask.batch_id == request.batch_id,
-                AITask.status == "failed"
+                AITask.status == TaskStatus.FAILED
             )
         )
         failed_tasks = failed_task_result.scalars().all()
@@ -199,7 +203,7 @@ async def start_breakdown(
         project_id=batch.project_id,
         batch_id=batch.id,
         task_type="breakdown",
-        status="queued",
+        status=TaskStatus.QUEUED,
         depends_on=[],
         config=task_config
     )
@@ -227,13 +231,13 @@ async def start_breakdown(
         )
 
     # 更新批次状态
-    batch.breakdown_status = "queued"
+    batch.breakdown_status = BatchStatus.QUEUED
     
     # 提交事务
     await db.commit()
     await db.refresh(task)
 
-    return {"task_id": str(task.id), "status": "queued"}
+    return {"task_id": str(task.id), "status": TaskStatus.QUEUED}
 
 
 @router.get("/batch/{batch_id}/current-task")
@@ -261,11 +265,11 @@ async def get_batch_current_task(
             detail="批次不存在"
         )
 
-    # 查询正在执行的任务（queued 或 running 状态）
+    # 查询正在执行的任务（任务级状态）
     task_result = await db.execute(
         select(AITask).where(
             AITask.batch_id == batch_id,
-            AITask.status.in_(["queued", "running"])
+            AITask.status.in_([TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.IN_PROGRESS, TaskStatus.RETRYING, TaskStatus.CANCELLING])
         ).order_by(AITask.created_at.desc()).limit(1)
     )
     task = task_result.scalar_one_or_none()
@@ -275,7 +279,7 @@ async def get_batch_current_task(
 
     return {
         "task_id": str(task.id),
-        "status": task.status,
+        "status": _normalize_task_status(task.status),
         "progress": task.progress,
         "current_step": task.current_step
     }
@@ -309,7 +313,7 @@ async def get_breakdown_task(
 
     return {
         "task_id": str(task.id),
-        "status": task.status,
+        "status": _normalize_task_status(task.status),
         "progress": task.progress,
         "current_step": task.current_step,
         "error_message": task.error_message,  # 保留原始错误信息
@@ -612,7 +616,7 @@ async def start_all_breakdowns(
     pending_batches = await db.execute(
         select(Batch).where(
             Batch.project_id == project_id,
-            Batch.breakdown_status == 'pending'
+            Batch.breakdown_status == BatchStatus.PENDING
         ).order_by(Batch.batch_number)
     )
     batches = pending_batches.scalars().all()
@@ -630,7 +634,7 @@ async def start_all_breakdowns(
     )
     prev_batch = prev_batch_result.scalar_one_or_none()
 
-    if prev_batch and prev_batch.breakdown_status != 'completed':
+    if prev_batch and prev_batch.breakdown_status != BatchStatus.COMPLETED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"上一批次（第{prev_batch.batch_number}集）尚未完成拆解，无法批量拆解"
@@ -641,7 +645,7 @@ async def start_all_breakdowns(
     existing_tasks_result = await db.execute(
         select(AITask).where(
             AITask.batch_id.in_(batch_ids),
-            AITask.status.in_(["queued", "running"])
+            AITask.status.in_([TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLING])
         )
     )
     existing_tasks = existing_tasks_result.scalars().all()
@@ -689,7 +693,7 @@ async def start_all_breakdowns(
                 project_id=batch.project_id,
                 batch_id=batch.id,
                 task_type="breakdown",
-                status="queued",
+                status=TaskStatus.QUEUED,
                 depends_on=[],
                 config={
                     "model_config_id": str(project.breakdown_model_id),  # 从项目配置读取
@@ -713,19 +717,19 @@ async def start_all_breakdowns(
             except Exception as celery_error:
                 # Celery 提交失败，标记任务为失败
                 import json
-                task.status = "failed"
+                task.status = TaskStatus.FAILED
                 task.error_message = json.dumps({
                     "code": "CELERY_UNAVAILABLE",
                     "message": "任务队列服务不可用，请稍后重试",
                     "failed_at": datetime.utcnow().isoformat(),
                     "retry_count": 0
                 })
-                batch.breakdown_status = "failed"
+                batch.breakdown_status = BatchStatus.FAILED
                 failed_batches.append(str(batch.id))
                 continue
 
             # 更新批次状态
-            batch.breakdown_status = "queued"
+            batch.breakdown_status = BatchStatus.QUEUED
             task_ids.append(str(task.id))
 
         except Exception:
@@ -787,7 +791,7 @@ async def start_continue_breakdown(
     pending_batch = await db.execute(
         select(Batch).where(
             Batch.project_id == project_id,
-            Batch.breakdown_status == 'pending'
+            Batch.breakdown_status == BatchStatus.PENDING
         ).order_by(Batch.batch_number).limit(1)
     )
     batch = pending_batch.scalar_one_or_none()
@@ -804,7 +808,7 @@ async def start_continue_breakdown(
     )
     prev_batch = prev_batch_result.scalar_one_or_none()
 
-    if prev_batch and prev_batch.breakdown_status != 'completed':
+    if prev_batch and prev_batch.breakdown_status != BatchStatus.COMPLETED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"上一批次（第{prev_batch.batch_number}集）尚未完成拆解，请先完成后再继续"
@@ -814,7 +818,7 @@ async def start_continue_breakdown(
     existing_task_result = await db.execute(
         select(AITask).where(
             AITask.batch_id == batch.id,
-            AITask.status.in_(["queued", "running"])
+            AITask.status.in_([TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLING])
         )
     )
     existing_task = existing_task_result.scalar_one_or_none()
@@ -826,7 +830,7 @@ async def start_continue_breakdown(
         )
 
     # 如果批次状态是 failed，允许重新提交
-    if batch.breakdown_status == "failed":
+    if batch.breakdown_status == BatchStatus.FAILED:
         # 允许创建新任务，不删除失败任务记录（保留历史）
         pass
 
@@ -853,7 +857,7 @@ async def start_continue_breakdown(
         project_id=batch.project_id,
         batch_id=batch.id,
         task_type="breakdown",
-        status="queued",
+        status=TaskStatus.QUEUED,
         depends_on=[],
         config={
             "model_config_id": str(project.breakdown_model_id),  # 从项目配置读取
@@ -883,13 +887,13 @@ async def start_continue_breakdown(
         )
 
     # 更新批次状态
-    batch.breakdown_status = "queued"
+    batch.breakdown_status = BatchStatus.QUEUED
 
     # 提交事务
     await db.commit()
     await db.refresh(task)
 
-    return {"task_id": str(task.id), "batch_id": str(batch.id), "status": "queued"}
+    return {"task_id": str(task.id), "batch_id": str(batch.id), "status": TaskStatus.QUEUED}
 
 
 @router.get("/available-configs")
@@ -1170,7 +1174,7 @@ async def start_batch_breakdown(
     result = await db.execute(
         select(Batch).where(
             Batch.project_id == request.project_id,
-            Batch.breakdown_status.in_(['pending', 'failed'])
+            Batch.breakdown_status.in_([BatchStatus.PENDING, BatchStatus.FAILED])
         ).order_by(Batch.batch_number)
     )
     batches = result.scalars().all()
@@ -1188,7 +1192,7 @@ async def start_batch_breakdown(
     existing_tasks_result = await db.execute(
         select(AITask).where(
             AITask.batch_id.in_(batch_ids),
-            AITask.status.in_(["queued", "running"])
+            AITask.status.in_([TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLING])
         )
     )
     existing_tasks = existing_tasks_result.scalars().all()
@@ -1252,7 +1256,7 @@ async def start_batch_breakdown(
                 project_id=batch.project_id,
                 batch_id=batch.id,
                 task_type="breakdown",
-                status="queued",
+                status=TaskStatus.QUEUED,
                 depends_on=[],
                 config={
                     "model_config_id": str(project.breakdown_model_id),  # 从项目配置读取
@@ -1277,7 +1281,7 @@ async def start_batch_breakdown(
                 continue
 
             # 更新批次状态
-            batch.breakdown_status = "queued"
+            batch.breakdown_status = BatchStatus.QUEUED
             task_ids.append(str(task.id))
 
         except Exception:
@@ -1357,18 +1361,18 @@ async def get_batch_progress(
 
     # 统计各状态数量
     status_counts = {
-        "pending": 0,
-        "queued": 0,
-        "running": 0,
-        "retrying": 0,
-        "completed": 0,
-        "failed": 0
+        BatchStatus.PENDING: 0,
+        BatchStatus.QUEUED: 0,
+        TaskStatus.RUNNING: 0,
+        TaskStatus.RETRYING: 0,
+        BatchStatus.COMPLETED: 0,
+        BatchStatus.FAILED: 0
     }
 
     task_details = []
     for batch in batches:
         task = tasks.get(str(batch.id))
-        batch_status = batch.breakdown_status or "pending"
+        batch_status = batch.breakdown_status or BatchStatus.PENDING
         status_counts[batch_status] = status_counts.get(batch_status, 0) + 1
 
         task_detail = {
@@ -1381,7 +1385,7 @@ async def get_batch_progress(
         if task:
             task_detail.update({
                 "task_id": str(task.id),
-                "task_status": task.status,
+                "task_status": _normalize_task_status(task.status),
                 "progress": task.progress or 0,
                 "current_step": task.current_step or "",
                 "retry_count": task.retry_count or 0,
@@ -1402,16 +1406,16 @@ async def get_batch_progress(
 
     # 计算整体进度
     total = len(batches)
-    completed = status_counts.get("completed", 0)
+    completed = status_counts.get(BatchStatus.COMPLETED, 0)
     overall_progress = round(completed / total * 100, 1) if total > 0 else 0
 
     return {
         "project_id": project_id,
         "total_batches": total,
-        "completed": status_counts.get("completed", 0),
-        "in_progress": status_counts.get("running", 0) + status_counts.get("retrying", 0),
-        "pending": status_counts.get("pending", 0) + status_counts.get("queued", 0),
-        "failed": status_counts.get("failed", 0),
+        "completed": status_counts.get(BatchStatus.COMPLETED, 0),
+        "in_progress": status_counts.get(TaskStatus.RUNNING, 0) + status_counts.get(TaskStatus.RETRYING, 0),
+        "pending": status_counts.get(BatchStatus.PENDING, 0) + status_counts.get(BatchStatus.QUEUED, 0),
+        "failed": status_counts.get(BatchStatus.FAILED, 0),
         "overall_progress": overall_progress,
         "status_summary": status_counts,
         "task_details": task_details,
@@ -1449,7 +1453,7 @@ async def retry_failed_task(
             detail="任务不存在"
         )
 
-    if task.status != "failed":
+    if task.status != TaskStatus.FAILED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"只有失败的任务可以重试，当前状态: {task.status}"
@@ -1477,7 +1481,7 @@ async def retry_failed_task(
         )
         prev_batch = prev_batch_result.scalar_one_or_none()
 
-        if prev_batch and prev_batch.breakdown_status != 'completed':
+        if prev_batch and prev_batch.breakdown_status != BatchStatus.COMPLETED:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"上一批次（第{prev_batch.batch_number}集）尚未完成拆解，无法重新拆解"
@@ -1509,7 +1513,7 @@ async def retry_failed_task(
                 project_id=task.project_id,
                 batch_id=task.batch_id,
                 task_type="breakdown",
-                status="queued",
+                status=TaskStatus.QUEUED,
                 retry_count=task.retry_count + 1,
                 depends_on=[],
                 config=new_config
@@ -1533,7 +1537,7 @@ async def retry_failed_task(
             )
             batch = batch_result.scalar_one_or_none()
             if batch:
-                batch.breakdown_status = "queued"
+                batch.breakdown_status = BatchStatus.QUEUED
 
         # 提交事务
         await db.commit()
@@ -1541,7 +1545,7 @@ async def retry_failed_task(
 
         return {
             "task_id": str(new_task.id),
-            "status": "queued",
+            "status": TaskStatus.QUEUED,
             "retry_count": new_task.retry_count,
             "batch_id": str(task.batch_id),
             "config": new_config,
@@ -1615,7 +1619,7 @@ async def get_breakdown_detail(
 
         task_info = {
             "task_id": str(task.id),
-            "status": task.status,
+            "status": _normalize_task_status(task.status),
             "started_at": task.started_at.isoformat() if task.started_at else None,
             "completed_at": task.completed_at.isoformat() if task.completed_at else None,
             "duration_seconds": duration_seconds,
@@ -1651,11 +1655,11 @@ async def get_breakdown_detail(
                 "display_name": f"{llm_log.provider}/{llm_log.model_name}"
             }
 
-    # 获取资源信息（改编方法论）
+    # 获取资源信息（改编方法论，used_adapt_method_id 存储的是 AIResource.name）
     resource_info = {}
     if breakdown.used_adapt_method_id:
         adapt_method_result = await db.execute(
-            select(AIResource).where(AIResource.id == breakdown.used_adapt_method_id)
+            select(AIResource).where(AIResource.name == breakdown.used_adapt_method_id)
         )
         adapt_method = adapt_method_result.scalar_one_or_none()
         if adapt_method:
@@ -1723,7 +1727,7 @@ async def get_breakdown_history(
 
                 task_info = {
                     "task_id": str(task.id),
-                    "status": task.status,
+                    "status": _normalize_task_status(task.status),
                     "started_at": task.started_at.isoformat() if task.started_at else None,
                     "completed_at": task.completed_at.isoformat() if task.completed_at else None,
                     "duration_seconds": duration_seconds,
@@ -1743,11 +1747,11 @@ async def get_breakdown_history(
                     "display_name": model_config.display_name
                 }
 
-        # 获取资源信息
+        # 获取资源信息（used_adapt_method_id 存储的是 AIResource.name，不是 id）
         resource_info = {}
         if breakdown.used_adapt_method_id:
             adapt_method_result = await db.execute(
-                select(AIResource).where(AIResource.id == breakdown.used_adapt_method_id)
+                select(AIResource).where(AIResource.name == breakdown.used_adapt_method_id)
             )
             adapt_method = adapt_method_result.scalar_one_or_none()
             if adapt_method:
@@ -1788,7 +1792,7 @@ async def stop_breakdown_task(
 
     功能：
     - 使用 Celery revoke 停止正在执行的任务
-    - 更新任务状态为 cancelled
+    - 更新任务状态为 canceled
     - 返还已扣除的配额
     - 更新批次状态为 pending（允许重新提交）
     - 取消后续排队中的批次任务
@@ -1808,8 +1812,8 @@ async def stop_breakdown_task(
             detail="任务不存在"
         )
 
-    # 只有正在执行（queued 或 running）的任务可以停止
-    if task.status not in ["queued", "running"]:
+    # 只有正在执行的任务可以停止
+    if task.status not in [TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLING]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"只有正在执行的任务可以停止，当前状态: {task.status}"
@@ -1823,9 +1827,9 @@ async def stop_breakdown_task(
             celery_app.control.revoke(task.celery_task_id, terminate=True)
             print(f"已撤销 Celery 任务: {task.celery_task_id}")
 
-        # 2. 更新任务状态为 cancelled
-        task.status = "cancelled"
-        task.current_step = "用户手动停止"
+        # 2. 标记任务正在取消
+        task.status = TaskStatus.CANCELLING
+        task.current_step = "正在停止"
         task.error_message = None  # 清除错误信息
         cancelled_count += 1
 
@@ -1836,15 +1840,12 @@ async def stop_breakdown_task(
         batch = batch_result.scalar_one_or_none()
 
         if batch:
-            # 更新批次状态为 pending（允许重新提交）
-            batch.breakdown_status = "pending"
-
-            # 4. 取消该批次之后所有 queued/running 状态的任务
+            # 4. 取消该批次之后所有进行中的任务
             subsequent_tasks_result = await db.execute(
                 select(AITask).join(Batch).where(
                     Batch.project_id == batch.project_id,
                     Batch.batch_number > batch.batch_number,
-                    AITask.status.in_(["queued", "running"])
+                    AITask.status.in_([TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLING])
                 )
             )
             subsequent_tasks = subsequent_tasks_result.scalars().all()
@@ -1856,7 +1857,7 @@ async def stop_breakdown_task(
                     print(f"已撤销后续排队任务: {subsequent_task.celery_task_id}")
 
                 # 更新任务状态
-                subsequent_task.status = "cancelled"
+                subsequent_task.status = TaskStatus.CANCELED
                 subsequent_task.current_step = "因前置任务停止而被取消"
                 subsequent_task.error_message = None
 
@@ -1866,7 +1867,7 @@ async def stop_breakdown_task(
                 )
                 subsequent_batch = subsequent_batch_result.scalar_one_or_none()
                 if subsequent_batch:
-                    subsequent_batch.breakdown_status = "pending"
+                    subsequent_batch.breakdown_status = BatchStatus.PENDING
 
                 cancelled_count += 1
 
@@ -1920,7 +1921,7 @@ async def stop_breakdown_task(
 
         return {
             "task_id": str(task.id),
-            "status": "cancelled",
+            "status": TaskStatus.CANCELLING,
             "cancelled_count": cancelled_count,
             "message": message,
             "token_deducted": token_deducted

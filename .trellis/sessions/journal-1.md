@@ -1105,3 +1105,148 @@ const GlassAlert: React.FC<{
 
 ---
 
+
+## [20260215-051225] SkillsTab 重构与统计分析功能
+
+**时间**: 2026-02-15 05:12:25
+
+**提交**:
+- `9713f00` - feat: SkillsTab 重构为 Tab+卡片模式，支持动态分类
+- `e69c595` - feat: 添加管理端统计分析功能
+- `04018c4` - feat: PlotTab 添加详情弹窗组件
+- `5732342` - refactor: 提取日志格式化工具类
+- `5ac9f69` - fix: 优化日志显示与任务处理
+- `370d7d5` - chore: 添加拆解分析字段数据库迁移
+- `c2fcbea` - fix: 更新 PlotBreakdown 数据模型
+
+
+## 本次会话完成内容
+
+### SkillsTab 重构
+- 重构 SkillsTab 为 Tab + 卡片选择交互模式
+- 新增 /ai-resources/categories 接口返回分类配置
+- 添加 type_guide 类型指南分类
+- 实现自动保存功能（防抖 800ms）
+- 添加保存按钮光效动画反馈
+- 方法论分类默认全选
+
+### 统计分析功能
+- 新增管理端 /admin/analytics API 接口
+- 新增管理端统计分析页面
+- 添加拆解分析字段数据库迁移
+
+### 日志与工具
+- 新增 log_formatter.py 日志格式化工具
+- 新增 stream_json_parser.py 流式 JSON 解析工具
+- 优化 ConsoleLogger 日志显示效果
+
+### PlotTab 增强
+- 新增 BreakdownDetailModal 拆解详情弹窗
+- 新增 MethodViewModal 方法论查看弹窗
+
+---
+
+
+## [20260215-063509] Skills 页面黑屏修复与骨架屏添加
+
+**时间**: 2026-02-15 06:35:09
+
+**提交**:
+- `3d294ed` - fix: 修复 Skills 页面切换黑屏问题并添加骨架屏
+- `4b463f7` - fix: 修复小说原文拆解状态问题
+
+
+## 本次会话完成工作
+
+### 问题修复
+| 问题 | 修复方案 |
+|------|----------|
+| SkillsTab 页面切换黑屏 | 移除动画效果，使用骨架屏 |
+| 分类 Tab 切换闪烁 | GlassTabs 禁用 animated 动画 |
+| 保存按钮放大效果 | 移除 hover:scale-105 类 |
+
+### 骨架屏实现
+| 组件 | 位置 |
+|------|------|
+| SkillsTab | 卡片网格区域 (6个骨架卡片) |
+| SourceTab | 章节列表 (6个骨架卡片) |
+| ScriptTab | 剧集列表 (6个骨架卡片) |
+| BatchList | 批次列表 (3个骨架卡片) |
+| BreakdownDetail | 拆解详情 (内容骨架) |
+
+### 修改文件
+**前端 UI**:
+- `frontend/src/components/ui/GlassTabs.tsx`
+- `frontend/src/pages/user/Workspace/SkillsTab/index.tsx`
+- `frontend/src/pages/user/Workspace/SourceTab/index.tsx`
+- `frontend/src/pages/user/Workspace/ScriptTab/index.tsx`
+- `frontend/src/pages/user/Workspace/PlotTab/BatchList.tsx`
+- `frontend/src/pages/user/Workspace/PlotTab/BreakdownDetail.tsx`
+- `frontend/src/pages/user/Workspace/index.tsx`
+
+### 提交记录
+```
+3d294ed fix: 修复 Skills 页面切换黑屏问题并添加骨架屏
+4b463f7 fix: 修复小说原文拆解状态问题
+```
+
+---
+
+
+## [20260215-064605] 修复小说原文拆解状态显示问题
+
+**时间**: 2026-02-15 06:46:05
+
+**提交**:
+- `882df8c` - fix: 修复小说原文拆解状态问题
+
+
+---
+
+
+## [20260215-124356] 修复 Anthropic 流式调用与模型校验
+
+**时间**: 2026-02-15 12:43:56
+
+**提交**:
+- `084edf8` - fix: 修复 Anthropic 流式调用与模型校验问题
+
+
+## 问题修复
+
+### 1. Anthropic SDK 流式调用修复
+- **错误**: `Streaming is required for operations that may take longer than 10 minutes`
+- **原因**: SDK 必须使用 `.stream()` 上下文管理器而非 `.create()` 配合 `stream=True`
+- **修复**: 重写 `generate()` 方法，使用 `self.client.messages.stream()` 正确处理长时间请求
+
+### 2. UUID 空字符串处理
+- **错误**: `ValueError: invalid UUID ''`
+- **原因**: PostgreSQL UUID 类型不接受空字符串
+- **修复**: 在 `projects.py` 中过滤空字符串为空值
+
+### 3. 前端模型必填校验
+- **问题**: 未选中模型时允许保存导致后端报错
+- **修复**: 添加表单校验，禁用保存/开始按钮，添加 tooltip 提示
+
+### 4. 格式化日志增强
+- 新增 `normalizeStepTitle()` 和 `buildFormattedSectionHeader()` 函数
+- 支持 "剧集拆解" 和 "质量检查" 步骤的格式化显示
+
+## 变更文件
+- `backend/app/ai/adapters/anthropic_adapter.py` - 流式响应处理重构
+- `backend/app/api/v1/projects.py` - UUID 空字符串过滤
+- `frontend/src/pages/user/Workspace/index.tsx` - 模型校验 + 格式化日志
+
+---
+
+
+## [20260215-153731] PlotBreakdown 模型信息修复 + Token 计费优化 + 前后端字段一致性
+
+**时间**: 2026-02-15 15:37:31
+
+**提交**:
+- `HEAD` - fix: 修复 Anthropic 流式调用与模型校验问题
+
+
+---
+

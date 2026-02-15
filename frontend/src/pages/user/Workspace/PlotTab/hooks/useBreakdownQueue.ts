@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { breakdownApi } from '../../../../../services/api';
 import { message } from 'antd';
+import { TASK_STATUS } from '../../../../../constants/status';
 
 interface UseBreakdownQueueOptions {
   onTaskComplete?: (batchId: string, index: number, total: number) => void;
@@ -54,7 +55,7 @@ export const useBreakdownQueue = (options: UseBreakdownQueueOptions = {}) => {
           onProgress?.(data.progress || 0, data.current_step);
         }
 
-        if (data.status === 'completed') {
+        if (data.status === TASK_STATUS.COMPLETED) {
           clearPolling();
           setCurrentTaskId(null);
           onTaskComplete?.(batchId, index, queueList.length);
@@ -72,7 +73,7 @@ export const useBreakdownQueue = (options: UseBreakdownQueueOptions = {}) => {
             message.success('所有批次拆解完成');
             onQueueComplete?.();
           }
-        } else if (data.status === 'failed') {
+        } else if (data.status === TASK_STATUS.FAILED) {
           clearPolling();
           setCurrentTaskId(null);
           setIsProcessing(false);

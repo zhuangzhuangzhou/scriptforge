@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { breakdownApi } from '../../../../../services/api';
 import { message } from 'antd';
+import { TASK_STATUS } from '../../../../../constants/status';
 
 interface UseBreakdownPollingOptions {
   onComplete?: (batchId: string) => void;
@@ -44,13 +45,13 @@ export const useBreakdownPolling = (options: UseBreakdownPollingOptions = {}) =>
           onProgress?.(data.progress || 0, data.current_step);
         }
 
-        if (data.status === 'completed') {
+        if (data.status === TASK_STATUS.COMPLETED) {
           clearPolling();
           setTaskId(null);
           setIsRunning(false);
           message.success('拆解完成');
           onComplete?.(batchId);
-        } else if (data.status === 'failed') {
+        } else if (data.status === TASK_STATUS.FAILED) {
           clearPolling();
           setTaskId(null);
           setIsRunning(false);

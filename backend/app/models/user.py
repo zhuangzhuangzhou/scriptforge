@@ -21,21 +21,20 @@ class User(Base):
     # 用户等级: free(免费版), creator(创作者版), studio(工作室版), enterprise(企业版)
     tier = Column(String(20), nullable=False, default="free", index=True)
 
-    # 算力积分余额
+    # 算力积分余额（统一使用积分）
     credits = Column(Integer, default=0)
 
     # 月度积分赠送（纯积分制）
     monthly_credits_granted = Column(Integer, default=0)  # 本月已赠送积分
     credits_reset_at = Column(TIMESTAMP(timezone=True))  # 积分赠送重置时间
 
-    # [废弃] 旧配额字段，保留兼容
+    # [废弃] 旧配额/余额字段，保留兼容但不再使用
     monthly_episodes_used = Column(Integer, default=0)  # [废弃] 本月已使用的剧集数
     monthly_reset_at = Column(TIMESTAMP(timezone=True))  # [废弃] 配额重置时间
+    balance = Column(DECIMAL(10, 2), default=0.00)  # [废弃] 旧算力余额（金额），已改用 credits 积分
 
     # 用户自定义 API Key 配置（企业版）
     api_keys = Column(JSON)  # {"openai": "sk-xxx", "claude": "sk-xxx"}
-
-    balance = Column(DECIMAL(10, 2), default=0.00)
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
     created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)

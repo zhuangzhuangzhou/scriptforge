@@ -773,8 +773,8 @@ export const adminApi = {
       return {
         data: {
           items: [
-            { id: '1', email: 'admin@example.com', username: 'Admin', role: 'admin', tier: 'ENTERPRISE', balance: 99999, is_active: true, created_at: '2026-01-01' },
-            { id: '2', email: 'user@example.com', username: 'User', role: 'user', tier: 'FREE', balance: 100, is_active: true, created_at: '2026-02-01' },
+            { id: '1', email: 'admin@example.com', username: 'Admin', role: 'admin', tier: 'ENTERPRISE', credits: 99999, is_active: true, created_at: '2026-01-01' },
+            { id: '2', email: 'user@example.com', username: 'User', role: 'user', tier: 'FREE', credits: 100, is_active: true, created_at: '2026-02-01' },
           ],
           total: 2
         }
@@ -818,7 +818,7 @@ export const billingApi = {
       await delay(200);
       return {
         data: {
-          balance: 2450,
+          credits: 2450,
           monthly_granted: 3000,
           monthly_credits: 3000,
           next_grant_at: '2026-03-01T00:00:00Z',
@@ -860,7 +860,7 @@ export const billingApi = {
       return {
         data: {
           success: true,
-          balance: 2450 + amount * 100,
+          credits: 2450 + amount * 100,
           credits_added: amount * 100,
           message: '充值成功'
         }
