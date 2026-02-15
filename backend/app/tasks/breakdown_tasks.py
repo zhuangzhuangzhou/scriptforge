@@ -250,16 +250,16 @@ def _handle_retryable_error_sync(
         "will_retry_after": error.retry_after
     }
 
-        update_task_progress_sync(
-            db, task_id,
-            status=TaskStatus.RETRYING,
-            error_message=json.dumps(error_info)
-        )
+    update_task_progress_sync(
+        db, task_id,
+        status=TaskStatus.RETRYING,
+        error_message=json.dumps(error_info)
+    )
 
     if batch_record:
         batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.RETRYING) or BatchStatus.PROCESSING
         db.commit()
-    
+
     # 发布错误消息
     if log_publisher:
         log_publisher.publish_error(

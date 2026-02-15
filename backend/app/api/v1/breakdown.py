@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from pydantic import BaseModel, Field
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from app.core.database import get_db
 from app.models.user import User
 from app.models.batch import Batch
@@ -119,19 +119,54 @@ async def start_breakdown(
         )
 
     # 检查是否已有任务在执行（防止重复提交）
+    # 移除 CANCELLING，因为取消中的任务可能永远不会结束（Celery回调卡住）
+    # 我们会在下面单独处理 CANCELLING 状态的任务
+    active_statuses = [TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS]
     existing_task_result = await db.execute(
         select(AITask).where(
             AITask.batch_id == request.batch_id,
-            AITask.status.in_([TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLING])
+            AITask.status.in_(active_statuses)
         )
     )
     existing_task = existing_task_result.scalar_one_or_none()
-    
+
     if existing_task:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"该批次已有任务在执行中，任务ID: {existing_task.id}"
         )
+
+    # 检查是否有取消中的任务（CANCELLING），这些任务可能永远不会结束
+    # 需要自动清理超时的取消任务
+    cancelling_task_result = await db.execute(
+        select(AITask).where(
+            AITask.batch_id == request.batch_id,
+            AITask.status == TaskStatus.CANCELLING
+        )
+    )
+    cancelling_task = cancelling_task_result.scalar_one_or_none()
+
+    if cancelling_task:
+        # 检查取消任务是否超时（超过30分钟视为僵尸任务）
+        CANCELLING_TIMEOUT = timedelta(minutes=30)
+        now = datetime.now(timezone.utc)
+        task_age = now - cancelling_task.updated_at
+
+        if task_age > CANCELLING_TIMEOUT:
+            # 超时的取消任务，自动标记为已取消
+            print(f"检测到超时的取消任务 {cancelling_task.id}（已存在 {task_age}），自动清理")
+            cancelling_task.status = TaskStatus.CANCELLED
+            cancelling_task.error_message = "任务取消超时，自动标记为已取消"
+            # 同时更新批次状态为 pending
+            batch.breakdown_status = BatchStatus.PENDING
+            await db.flush()
+            print(f"已将任务 {cancelling_task.id} 标记为 cancelled，批次状态更新为 pending")
+        else:
+            # 取消中的任务还未超时，提示用户
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"该批次有任务正在取消中，请稍候再试（已等待 {task_age.seconds // 60} 分钟）"
+            )
     
     # 如果批次状态是 failed，允许重新提交（清理旧的失败任务记录）
     if batch.breakdown_status == BatchStatus.FAILED:
@@ -814,11 +849,13 @@ async def start_continue_breakdown(
             detail=f"上一批次（第{prev_batch.batch_number}集）尚未完成拆解，请先完成后再继续"
         )
 
-    # 检查是否已有任务在执行
+    # 检查是否已有任务在执行（防止重复提交）
+    # 移除 CANCELLING，因为取消中的任务可能永远不会结束
+    active_statuses = [TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS]
     existing_task_result = await db.execute(
         select(AITask).where(
             AITask.batch_id == batch.id,
-            AITask.status.in_([TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLING])
+            AITask.status.in_(active_statuses)
         )
     )
     existing_task = existing_task_result.scalar_one_or_none()
@@ -828,6 +865,35 @@ async def start_continue_breakdown(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"该批次已有任务在执行中，任务ID: {existing_task.id}"
         )
+
+    # 检查是否有取消中的任务（CANCELLING）
+    cancelling_task_result = await db.execute(
+        select(AITask).where(
+            AITask.batch_id == batch.id,
+            AITask.status == TaskStatus.CANCELLING
+        )
+    )
+    cancelling_task = cancelling_task_result.scalar_one_or_none()
+
+    if cancelling_task:
+        # 检查取消任务是否超时（超过30分钟视为僵尸任务）
+        CANCELLING_TIMEOUT = timedelta(minutes=30)
+        now = datetime.now(timezone.utc)
+        task_age = now - cancelling_task.updated_at
+
+        if task_age > CANCELLING_TIMEOUT:
+            # 超时的取消任务，自动标记为已取消
+            print(f"[continue_all] 检测到超时的取消任务 {cancelling_task.id}，自动清理")
+            cancelling_task.status = TaskStatus.CANCELLED
+            cancelling_task.error_message = "任务取消超时，自动标记为已取消"
+            batch.breakdown_status = BatchStatus.PENDING
+            await db.flush()
+        else:
+            # 取消中的任务还未超时
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"该批次有任务正在取消中，请稍候再试"
+            )
 
     # 如果批次状态是 failed，允许重新提交
     if batch.breakdown_status == BatchStatus.FAILED:
@@ -1840,6 +1906,9 @@ async def stop_breakdown_task(
         batch = batch_result.scalar_one_or_none()
 
         if batch:
+            # 关键修复：立即更新当前批次状态为 PENDING，让前端可以重新提交
+            batch.breakdown_status = BatchStatus.PENDING
+
             # 4. 取消该批次之后所有进行中的任务
             subsequent_tasks_result = await db.execute(
                 select(AITask).join(Batch).where(

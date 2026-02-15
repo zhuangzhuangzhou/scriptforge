@@ -144,6 +144,13 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     } | null>(null);
     const [isBatchRunning, setIsBatchRunning] = useState(false);
 
+    useEffect(() => {
+        if (showConsole && !breakdownTaskId) {
+            setBreakdownProgress(0);
+            setBreakdownCurrentStep('');
+        }
+    }, [showConsole, breakdownTaskId]);
+
     // 停止任务状态
     const [isStopping, setIsStopping] = useState(false);
     const [showStopConfirmModal, setShowStopConfirmModal] = useState(false);
@@ -337,16 +344,40 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
     // 监听 selectedBatch 变化，自动加载拆解结果
     useEffect(() => {
-        if (selectedBatch && selectedBatch.breakdown_status === BATCH_STATUS.COMPLETED) {
+        if (!selectedBatch) return;
+
+        // 切换批次时先清空旧结果，避免右侧残留上一个批次内容
+        setBreakdownResult(null);
+
+        const status = selectedBatch.breakdown_status;
+        const isRunning = status === BATCH_STATUS.PROCESSING || status === BATCH_STATUS.QUEUED;
+
+        if (!isRunning) {
+            setBreakdownTaskId(null);
+        }
+
+        if (status === BATCH_STATUS.COMPLETED) {
             console.log('[Workspace] 批次选择变化，加载拆解结果:', selectedBatch.id);
+            setBreakdownLoading(true);
             fetchBreakdownResults(selectedBatch.id);
-        } else if (selectedBatch) {
-            console.log('[Workspace] 批次选择变化，状态:', selectedBatch.breakdown_status, '- 不加载拆解结果');
-            // 清空之前的结果
-            setBreakdownResult(null);
+        } else {
+            console.log('[Workspace] 批次选择变化，状态:', status, '- 不加载拆解结果');
             setBreakdownLoading(false);
         }
     }, [selectedBatch?.id, selectedBatch?.breakdown_status]);
+
+    // 批次列表更新时，同步选中批次状态（避免完成后仍显示停止按钮）
+    useEffect(() => {
+        if (!selectedBatch) return;
+        const latest = batches.find(b => b.id === selectedBatch.id);
+        if (!latest) return;
+        if (latest.breakdown_status !== selectedBatch.breakdown_status) {
+            setSelectedBatch(latest);
+        }
+        if (latest.breakdown_status === BATCH_STATUS.COMPLETED && breakdownTaskId) {
+            setBreakdownTaskId(null);
+        }
+    }, [batches, selectedBatch?.id, selectedBatch?.breakdown_status, breakdownTaskId]);
 
     // 处理 processing/queued 状态但缺少 taskId 的情况
     useEffect(() => {
@@ -486,6 +517,11 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 setBatches(newItems);
                 if (newItems.length > 0 && !selectedBatch && pageNum === 1) {
                     setSelectedBatch(newItems[0]);
+                } else if (selectedBatch) {
+                    const latest = newItems.find(b => b.id === selectedBatch.id);
+                    if (latest && latest.breakdown_status !== selectedBatch.breakdown_status) {
+                        setSelectedBatch(latest);
+                    }
                 }
 
                 // 自动检测正在处理的批次，连接 console
@@ -500,7 +536,12 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                             const taskId = taskRes.data?.task_id;
                             if (taskId) {
                                 console.log('[Workspace] 检测到正在处理的批次，自动连接 console:', processingBatch.batch_number, taskId);
-                                setSelectedBatch(processingBatch);
+                                if (!selectedBatch || selectedBatch.id !== processingBatch.id) {
+                                    message.info(`已自动跳转到正在拆解的批次：第 ${processingBatch.batch_number} 批次`);
+                                    setSelectedBatch(processingBatch);
+                                } else {
+                                    setSelectedBatch(processingBatch);
+                                }
                                 setBreakdownTaskId(taskId);
                                 addLog('info', `检测到批次 ${processingBatch.batch_number} 正在拆解中，已自动连接...`);
                             }
@@ -891,6 +932,14 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             const errorMsg = err.response?.data?.detail || '启动拆解失败';
             message.error(errorMsg);
             showError({ code: 'START_FAILED', message: errorMsg });
+
+            if (errorMsg.includes('上一批次')) {
+                const firstBlocking = batches.find(b => b.breakdown_status !== BATCH_STATUS.COMPLETED);
+                if (firstBlocking) {
+                    message.info(`需按顺序拆解，已跳转到第 ${firstBlocking.batch_number} 批次`);
+                    setSelectedBatch(firstBlocking);
+                }
+            }
         }
     };
 

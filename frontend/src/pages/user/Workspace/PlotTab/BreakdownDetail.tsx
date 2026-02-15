@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Layers, Play, Loader2, X, Activity, Swords, Lightbulb, Clock,
   Film, ChevronDown, Users, MapPin, Heart, Table as TableIcon, Grid,
@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Batch, PlotBreakdown, Episode, PlotPoint, QAReport } from '../../../../types';
-import { BATCH_STATUS } from '../../../../constants/status';
+import { BATCH_STATUS, TASK_STATUS } from '../../../../constants/status';
 import { breakdownApi } from '../../../../services/api';
 import BreakdownDetailModal from './BreakdownDetailModal';
 
@@ -543,6 +543,34 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   const [plotPointStatus, setPlotPointStatus] = useState<Record<number, 'used' | 'unused'>>({}); // 剧情点状态
   const [qaReportModalOpen, setQaReportModalOpen] = useState(false); // 质检报告弹窗
   const [detailModalOpen, setDetailModalOpen] = useState(false); // 拆解详情弹窗
+  const [currentTaskStatus, setCurrentTaskStatus] = useState<string | null>(null); // 当前任务状态
+
+  // 获取当前批次任务状态
+  useEffect(() => {
+    const fetchCurrentTask = async () => {
+      if (!selectedBatch) {
+        setCurrentTaskStatus(null);
+        return;
+      }
+
+      try {
+        const response = await breakdownApi.getBatchCurrentTask(selectedBatch.id);
+        setCurrentTaskStatus(response.data.status || null);
+      } catch (error) {
+        console.error('获取任务状态失败:', error);
+        setCurrentTaskStatus(null);
+      }
+    };
+
+    fetchCurrentTask();
+
+    // 当批次状态改变时，重新获取任务状态
+    if (selectedBatch) {
+      // 监听批次状态变化
+      const interval = setInterval(fetchCurrentTask, 5000); // 每5秒轮询
+      return () => clearInterval(interval);
+    }
+  }, [selectedBatch?.id, selectedBatch?.breakdown_status]);
 
   const toggleEpisode = (episodeNumber: number) => {
     setExpandedEpisodes(prev => {
@@ -600,6 +628,19 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
 
   // 待拆解状态
   if (selectedBatch.breakdown_status === BATCH_STATUS.PENDING) {
+    // 检查是否有取消中的任务
+    if (currentTaskStatus === TASK_STATUS.CANCELLING) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
+          <div className="w-20 h-20 rounded-2xl bg-orange-500/10 flex items-center justify-center border border-orange-500/20 animate-pulse">
+            <Loader2 size={32} className="text-orange-400 animate-spin" />
+          </div>
+          <p className="text-sm font-bold text-orange-400">任务正在取消中...</p>
+          <p className="text-xs text-slate-700">请稍候，撤销完成后可重新开始</p>
+        </div>
+      );
+    }
+
     return (
       <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
         <div className="w-20 h-20 rounded-2xl bg-slate-800/50 flex items-center justify-center border border-slate-700">

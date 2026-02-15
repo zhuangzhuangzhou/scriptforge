@@ -367,8 +367,8 @@ class SimpleSkillExecutor:
             # 6. 解析 JSON 响应
             result = self._parse_json(full_response)
 
-            # 非流式也补发日志，保证 Console 可见
-            if stream_failed and self.log_publisher and task_id:
+            # 若流式未产出任何格式化内容，则补发格式化日志，保证 Console 可见
+            if formatted_index == 0 and self.log_publisher and task_id:
                 try:
                     if full_response:
                         self.log_publisher.publish_stream_chunk(
@@ -744,6 +744,14 @@ class SimpleAgentExecutor:
             if on_fail == "stop":
                 raise
             return None
+        
+        if self.log_publisher and task_id and step_id == "breakdown_retry":
+            qa_feedback = inputs.get("qa_feedback")
+            fb_len = len(qa_feedback) if isinstance(qa_feedback, str) else 0
+            self.log_publisher.publish_info(
+                task_id,
+                f"🧩 修复输入检查: qa_feedback_len={fb_len}"
+            )
 
         # 4. 执行（支持重试）
         retry_count = 0
@@ -752,6 +760,11 @@ class SimpleAgentExecutor:
         while retry_count <= max_retries:
             try:
                 if skill_name:
+                    if self.log_publisher and task_id:
+                        self.log_publisher.publish_info(
+                            task_id,
+                            f"▶️ 执行步骤: {step_id} (skill={skill_name})"
+                        )
                     # 执行 Skill
                     result = self.skill_executor.execute_skill(
                         skill_name=skill_name,
@@ -759,6 +772,11 @@ class SimpleAgentExecutor:
                         task_id=task_id
                     )
                 else:
+                    if self.log_publisher and task_id:
+                        self.log_publisher.publish_info(
+                            task_id,
+                            f"▶️ 执行步骤: {step_id} (agent={agent_name})"
+                        )
                     # 执行子 Agent（递归调用）
                     result = self.execute_agent(
                         agent_name=agent_name,
@@ -769,6 +787,13 @@ class SimpleAgentExecutor:
                 # 5. 应用结果转换
                 if transform:
                     result = self._apply_transform(transform, result, results)
+
+                # 兼容 QA 输出为单元素数组的情况，避免条件评估失败
+                if output_key in ("qa_result", "qa") and isinstance(result, list):
+                    if len(result) == 1 and isinstance(result[0], dict):
+                        result = result[0]
+                    elif len(result) == 0:
+                        result = {}
 
                 # 6. 返回结果
                 return {
@@ -998,26 +1023,36 @@ class SimpleAgentExecutor:
             ValueError: 变量不存在
         """
         def resolve_value(value):
-            if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
-                # 变量引用
-                path = value[2:-1]  # 去掉 ${ 和 }
-                parts = path.split(".")
+            if isinstance(value, str) and "${" in value and "}" in value:
+                # 支持字符串内插（例如："问题列表: ${qa_result.issues}"）
+                import json
+                import re
 
-                current = results
-                for part in parts:
-                    if isinstance(current, dict):
-                        current = current.get(part)
-                    elif hasattr(current, part):
-                        current = getattr(current, part)
-                    else:
-                        raise ValueError(f"变量 '{path}' 的路径无效")
+                def resolve_path(path: str):
+                    parts = path.split(".")
+                    current = results
+                    for part in parts:
+                        if isinstance(current, dict):
+                            current = current.get(part)
+                        elif hasattr(current, part):
+                            current = getattr(current, part)
+                        else:
+                            raise ValueError(f"变量 '{path}' 的路径无效")
+                        if current is None:
+                            logger.warning(f"变量 '{path}' 的值为 None")
+                            return None
+                    return current
 
+                def repl(match):
+                    path = match.group(1)
+                    current = resolve_path(path)
                     if current is None:
-                        # 允许 None 值，但记录警告
-                        logger.warning(f"变量 '{path}' 的值为 None")
-                        return None
+                        return ""
+                    if isinstance(current, (dict, list)):
+                        return json.dumps(current, ensure_ascii=False)
+                    return str(current)
 
-                return current
+                return re.sub(r"\$\{([^}]+)\}", repl, value)
             elif isinstance(value, dict):
                 return {k: resolve_value(v) for k, v in value.items()}
             elif isinstance(value, list):

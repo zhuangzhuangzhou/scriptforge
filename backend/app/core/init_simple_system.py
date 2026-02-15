@@ -201,6 +201,80 @@ BUILTIN_SKILLS = [
         "model_config": {"temperature": 0.3, "max_tokens": 100000}
     },
     {
+        "name": "webtoon_breakdown_repair",
+        "display_name": "剧情拆解修复",
+        "description": "基于质量检查反馈对剧情拆解进行局部修复，保持未问题部分不变",
+        "category": "breakdown",
+        "is_template_based": True,
+        "system_prompt": "你是资深的网文改编漫剧编辑，专门做剧情拆解修复。必须严格根据反馈逐条修复，保持未问题内容不变。输出必须为 JSON 数组，不要解释。",
+        "prompt_template": """你是一名资深的网文改编漫剧编辑。请基于反馈意见对已有剧情拆解进行修复，仅修改有问题的部分，保持其他内容不变。
+
+### 改编方法论
+{adapt_method}
+
+### 当前剧情拆解结果（JSON）
+{plot_points}
+
+### 质量检查反馈（必须逐条修复）
+{qa_feedback}
+
+### 小说原文参考
+{chapters_text}
+
+### 修复要求
+- **识别修改范围**：
+  • 如果是 breakdown-aligner 的 FAIL 反馈：精准定位到具体剧情点和问题维度  
+  • 如果是 webtoon-aligner 的 FAIL 反馈：精准定位到具体集数和问题维度  
+  • 如果是用户提出的修改意见：理解用户意图，判断影响范围  
+- **执行修改策略**：
+  • 局部修改：只修改有问题的部分，保持其他内容不变  
+  • 关联修改：如修改涉及设定变更，需联动修改相关集数  
+  • 格式修正：确保修改后仍严格遵循模板格式  
+  • 风格统一：确保修改后的内容与原有风格一致  
+- **修改验证**：
+  • 修改完成后，自检是否解决了反馈中的所有问题  
+  • 确保修改没有引入新的矛盾或错误  
+  • 验证修改后的内容仍符合改编方法论  
+
+### 输出格式（必须严格遵循）
+每个剧情点使用以下 JSON 格式：
+{{
+  "id": 剧情编号,
+  "scene": "场景地点",
+  "characters": ["角色A", "角色B"],
+  "event": "角色A对角色B做了什么",
+  "hook_type": "情绪钩子类型",
+  "episode": 集数,
+  "status": "unused",
+  "source_chapter": 来源章节号
+}}
+
+请只返回 JSON 数组，不要包含其他文字。""",
+        "input_schema": {
+            "plot_points": {"type": "string", "description": "当前剧情点列表（JSON）"},
+            "qa_feedback": {"type": "string", "description": "质量检查反馈（必须逐条修复）"},
+            "chapters_text": {"type": "string", "description": "小说原文"},
+            "adapt_method": {"type": "string", "description": "改编方法论"}
+        },
+        "output_schema": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"},
+                    "scene": {"type": "string"},
+                    "characters": {"type": "array"},
+                    "event": {"type": "string"},
+                    "hook_type": {"type": "string"},
+                    "episode": {"type": "integer"},
+                    "status": {"type": "string"},
+                    "source_chapter": {"type": "integer"}
+                }
+            }
+        },
+        "model_config": {"temperature": 0.6, "max_tokens": 100000}
+    },
+    {
         "name": "webtoon_script",
         "display_name": "单集剧本创作",
         "description": "基于剧情点生成单集漫剧剧本，包含场景、动作、对话、特效标注",
@@ -401,18 +475,13 @@ BUILTIN_AGENTS = [
                 },
                 {
                     "id": "breakdown_retry",
-                    "skill": "webtoon_breakdown",
-                    "condition": "qa_result.status != 'PASS' and qa_result.score < 70",
+                    "skill": "webtoon_breakdown_repair",
+                    "condition": "qa_result.status != 'PASS' and qa_result.score < 70 and (qa_result.issues or qa_result.fix_instructions)",
                     "inputs": {
+                        "plot_points": "${plot_points}",
                         "chapters_text": "${context.chapters_text}",
                         "adapt_method": "${context.adapt_method}",
-                        "output_style": "${context.output_style}",
-                        "template": "${context.template}",
-                        "example": "${context.example}",
                         "qa_feedback": "问题列表: ${qa_result.issues}\n修复指引: ${qa_result.fix_instructions}",
-                        "start_chapter": "${context.start_chapter}",
-                        "end_chapter": "${context.end_chapter}",
-                        "start_episode": "${context.start_episode}"
                     },
                     "output_key": "plot_points",
                     "on_fail": "skip",

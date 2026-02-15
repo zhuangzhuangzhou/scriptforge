@@ -183,16 +183,12 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
 
           const [, dimensionNum, dimensionName, score, status] = match;
           const isPassed = status === '通过';
-          const scoreNum = parseInt(score, 10);
-
           parts.push(
             <span key={match.index} className="inline-flex items-center gap-1">
               <span className="text-violet-300">【维度{dimensionNum}】</span>
               <span className="text-slate-200">{dimensionName}</span>
               <span className="text-slate-500">评分</span>
-              <span className={scoreNum >= 80 ? 'text-emerald-300' : scoreNum >= 60 ? 'text-amber-300' : 'text-red-300'}>
-                {score}
-              </span>
+              <span className="text-slate-200">{score}</span>
               <span className={isPassed ? 'text-emerald-300' : 'text-red-300'}>
                 {status}
               </span>
@@ -207,6 +203,42 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
         }
 
         return parts;
+      }
+
+      // 处理质检总体格式（兼容旧版【总体】评分格式与新版“质量检查 Agent 运行结束”格式）
+      const qaSummaryRegexes = [
+        /质量检查\s*Agent\s*运行结束\s*评分\s*[:：]?\s*(\d+)\s*(通过|未通过|失败)/,
+        /【总体】\s*评分\s*[:：]?\s*(\d+)\s*(通过|未通过|失败)/
+      ];
+      let summaryMatch: RegExpMatchArray | null = null;
+      for (const regex of qaSummaryRegexes) {
+        const match = trimmed.match(regex);
+        if (match) {
+          summaryMatch = match;
+          break;
+        }
+      }
+      if (summaryMatch) {
+        const score = parseInt(summaryMatch[1], 10);
+        const status = summaryMatch[2];
+        const scoreClass = score >= 80 ? 'text-emerald-300' : score >= 60 ? 'text-amber-300' : 'text-red-300';
+        const statusClass = status === '通过' ? 'text-emerald-300' : 'text-red-300';
+        const dividerClass = 'text-sky-300/80';
+        return (
+          <>
+            <span className={dividerClass}>------</span>
+            <br />
+            <span className="inline-flex items-center gap-2 px-2.5 py-0.5 text-sky-50 bg-gradient-to-r from-sky-600/40 via-sky-500/25 to-sky-600/40 border border-sky-300/60 shadow-[0_0_0_1px_rgba(56,189,248,0.25)]">
+              <span className="h-1.5 w-1.5 bg-sky-300 rounded-full animate-pulse" />
+              <span className="tracking-wide">质量检查 Agent 运行结束</span>
+              <span className="text-slate-300">评分</span>
+              <span className={scoreClass}>{summaryMatch[1]}</span>
+              <span className={statusClass}>{status}</span>
+            </span>
+            <br />
+            <span className={dividerClass}>------</span>
+          </>
+        );
       }
 
       // 处理【】包裹的关键动作
@@ -264,6 +296,21 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
       .trim();
     const total = _totalRounds > 0 ? `/${_totalRounds}` : '';
 
+    const roundTone = (() => {
+      const totalRounds = _totalRounds > 0 ? _totalRounds : 1;
+      const base = 'bg-slate-800/80 text-slate-200 border-slate-700';
+      if (totalRounds <= 1 || currentRound <= 1) return base;
+      const ratio = Math.min(1, Math.max(0, (currentRound - 1) / (totalRounds - 1)));
+      const bands = [
+        base,
+        'bg-slate-800/80 text-slate-200 border-slate-600',
+        'bg-slate-800/80 text-slate-100 border-slate-500',
+        'bg-slate-800/80 text-slate-100 border-slate-400'
+      ];
+      const idx = Math.min(bands.length - 1, Math.round(ratio * (bands.length - 1)));
+      return bands[idx];
+    })();
+
     return (
       <div className="flex flex-wrap items-center gap-2">
         {batchNumber > 0 && (
@@ -276,14 +323,14 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
             当前任务: {normalizeTaskName(taskName)}
           </span>
         )}
-        {currentRound > 0 && (
-          <span className="px-2.5 py-0.5 rounded bg-slate-800/80 text-slate-200 border border-slate-700 text-[11px]">
-            轮次: {currentRound}{total}
-          </span>
-        )}
         <span className="px-2.5 py-0.5 rounded bg-slate-800/80 text-slate-200 border border-slate-700 text-[11px]">
           进度: {progress}%
         </span>
+        {currentRound > 0 && (
+          <span className={`px-2.5 py-0.5 rounded border text-[11px] ${roundTone}`}>
+            {currentRound}{total} 轮
+          </span>
+        )}
       </div>
     );
   };

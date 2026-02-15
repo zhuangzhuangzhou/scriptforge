@@ -123,15 +123,37 @@ def format_json_object(obj: dict, obj_type: str = "auto", index: int = 0) -> str
         else:
             obj_type = "unknown"
 
+    def build_qa_summary(report: dict) -> str:
+        status = report.get("status") or report.get("result") or ""
+        score = report.get("score") or report.get("总分") or 0
+        # 统一通过/未通过
+        status_str = "通过"
+        if isinstance(status, str):
+            if status.upper() in ["FAIL", "FAILED", "REJECT"]:
+                status_str = "未通过"
+            elif status.upper() in ["PASS", "PASSED", "OK", "SUCCESS"]:
+                status_str = "通过"
+        elif isinstance(score, (int, float)) and score < 70:
+            status_str = "未通过"
+        return f"质量检查 Agent 运行结束   评分 {score}  {status_str}"
+
     if obj_type == "plot_point":
         return format_plot_point(obj, index)
     elif obj_type == "qa_dimension":
+        # 如果是完整 QA 报告，展开 dimensions
+        dimensions = obj.get("dimensions") if isinstance(obj, dict) else None
+        if isinstance(dimensions, list):
+            lines = [format_qa_dimension(dim, idx) for idx, dim in enumerate(dimensions)]
+            lines.append(build_qa_summary(obj))
+            return "\n".join(lines)
         return format_qa_dimension(obj, index)
     else:
         # 如果包含 dimensions，按质检维度处理
         dimensions = obj.get("dimensions") if isinstance(obj, dict) else None
         if isinstance(dimensions, list):
-            return "\n".join(format_qa_dimension(dim, idx) for idx, dim in enumerate(dimensions))
+            lines = [format_qa_dimension(dim, idx) for idx, dim in enumerate(dimensions)]
+            lines.append(build_qa_summary(obj))
+            return "\n".join(lines)
         # 未知类型，返回简化的 key-value 格式
         return _format_generic_object(obj)
 
