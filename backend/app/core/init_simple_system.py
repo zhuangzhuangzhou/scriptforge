@@ -436,7 +436,7 @@ BUILTIN_AGENTS = [
     {
         "name": "breakdown_agent",
         "display_name": "剧情拆解 Agent",
-        "description": "智能剧情拆解：拆解 → 质检 → 自动修正循环，直到质量达标",
+        "description": "智能剧情拆解：拆解 → 质检 → 循环，直到质量达标",
         "category": "breakdown",
         "workflow": {
             "type": "loop",
@@ -452,7 +452,7 @@ BUILTIN_AGENTS = [
                         "output_style": "${context.output_style}",
                         "template": "${context.template}",
                         "example": "${context.example}",
-                        "qa_feedback": "",
+                        "qa_feedback": "问题列表: ${qa_result.issues}\n修复指引: ${qa_result.fix_instructions}",
                         "start_chapter": "${context.start_chapter}",
                         "end_chapter": "${context.end_chapter}",
                         "start_episode": "${context.start_episode}"
@@ -464,33 +464,6 @@ BUILTIN_AGENTS = [
                 {
                     "id": "qa",
                     "skill": "breakdown_aligner",
-                    "inputs": {
-                        "plot_points": "${plot_points}",
-                        "chapters_text": "${context.chapters_text}",
-                        "adapt_method": "${context.adapt_method}"
-                    },
-                    "output_key": "qa_result",
-                    "on_fail": "skip",
-                    "max_retries": 0
-                },
-                {
-                    "id": "breakdown_retry",
-                    "skill": "webtoon_breakdown_repair",
-                    "condition": "qa_result.status != 'PASS' and qa_result.score < 70 and (qa_result.issues or qa_result.fix_instructions)",
-                    "inputs": {
-                        "plot_points": "${plot_points}",
-                        "chapters_text": "${context.chapters_text}",
-                        "adapt_method": "${context.adapt_method}",
-                        "qa_feedback": "问题列表: ${qa_result.issues}\n修复指引: ${qa_result.fix_instructions}",
-                    },
-                    "output_key": "plot_points",
-                    "on_fail": "skip",
-                    "max_retries": 0
-                },
-                {
-                    "id": "qa_retry",
-                    "skill": "breakdown_aligner",
-                    "condition": "qa_result.status != 'PASS' and qa_result.score < 70",
                     "inputs": {
                         "plot_points": "${plot_points}",
                         "chapters_text": "${context.chapters_text}",
