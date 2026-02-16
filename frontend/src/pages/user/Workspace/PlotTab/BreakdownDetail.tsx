@@ -547,29 +547,53 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
 
   // 获取当前批次任务状态
   useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+
     const fetchCurrentTask = async () => {
       if (!selectedBatch) {
         setCurrentTaskStatus(null);
         return;
       }
 
+      // 艹！任务已完成就別再轮询了，浪费老子服务器资源！
+      if (selectedBatch.breakdown_status === BATCH_STATUS.COMPLETED) {
+        if (interval) {
+          clearInterval(interval);
+          interval = null;
+        }
+        setCurrentTaskStatus(null);
+        return;
+      }
+
       try {
         const response = await breakdownApi.getBatchCurrentTask(selectedBatch.id);
-        setCurrentTaskStatus(response.data.status || null);
+        const taskStatus = response.data?.status;
+        setCurrentTaskStatus(taskStatus || null);
+
+        // 艹！后端返回任务完成了就得停止轮询啊！
+        if (taskStatus === TASK_STATUS.COMPLETED || taskStatus === TASK_STATUS.FAILED || taskStatus === TASK_STATUS.CANCELLED) {
+          if (interval) {
+            clearInterval(interval);
+            interval = null;
+          }
+        }
       } catch (error) {
         console.error('获取任务状态失败:', error);
         setCurrentTaskStatus(null);
       }
     };
 
+    // 立即执行一次
     fetchCurrentTask();
 
-    // 当批次状态改变时，重新获取任务状态
-    if (selectedBatch) {
-      // 监听批次状态变化
-      const interval = setInterval(fetchCurrentTask, 5000); // 每5秒轮询
-      return () => clearInterval(interval);
+    // 只有在非完成状态下才启动轮询
+    if (selectedBatch && selectedBatch.breakdown_status !== BATCH_STATUS.COMPLETED) {
+      interval = setInterval(fetchCurrentTask, 5000);
     }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
   }, [selectedBatch?.id, selectedBatch?.breakdown_status]);
 
   const toggleEpisode = (episodeNumber: number) => {
@@ -652,31 +676,8 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
     );
   }
 
-  // 排队状态
-  if (selectedBatch.breakdown_status === BATCH_STATUS.QUEUED) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
-        <div className="w-20 h-20 rounded-2xl bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
-          <Clock size={32} className="text-amber-500" />
-        </div>
-        <p className="text-sm font-bold text-amber-500">任务已排队</p>
-        <p className="text-xs text-slate-700">等待执行中...</p>
-        {/* 停止按钮 */}
-        {taskId && onStopBreakdown && (
-          <button
-            onClick={onStopBreakdown}
-            className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs rounded-lg border border-red-500/30 transition-colors flex items-center gap-2"
-          >
-            <X size={14} />
-            取消排队
-          </button>
-        )}
-      </div>
-    );
-  }
-
-  // 拆解中状态
-  if (selectedBatch.breakdown_status === BATCH_STATUS.PROCESSING) {
+  // 拆解中状态（包括排队中，对用户来说都是"拆解中"）
+  if (selectedBatch.breakdown_status === BATCH_STATUS.PROCESSING || selectedBatch.breakdown_status === BATCH_STATUS.QUEUED) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
         <div className="w-20 h-20 rounded-2xl bg-cyan-500/10 flex items-center justify-center border border-cyan-500/20 animate-pulse">

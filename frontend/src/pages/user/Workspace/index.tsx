@@ -155,6 +155,10 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const [isStopping, setIsStopping] = useState(false);
     const [showStopConfirmModal, setShowStopConfirmModal] = useState(false);
 
+    // 执行模式选择弹窗状态（测试用）
+    const [showExecutionModeModal, setShowExecutionModeModal] = useState(false);
+    const [pendingBreakdownBatchId, setPendingBreakdownBatchId] = useState<string | null>(null);
+
     // 自动保存状态（用于显示光效）
     const [isAutoSaving, setIsAutoSaving] = useState(false);
     const [showSaveGlow, setShowSaveGlow] = useState(false);
@@ -437,6 +441,9 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     pollIntervalTimeRef.current = 3000; // 排队中，降低频率
                 } else if (status === TASK_STATUS.RUNNING) {
                     pollIntervalTimeRef.current = 1500; // 运行中，提高频率
+
+                    // 任务开始执行时，刷新批次列表（更新状态从 QUEUED 到 PROCESSING）
+                    fetchBatches();
                 } else if (status === TASK_STATUS.RETRYING) {
                     pollIntervalTimeRef.current = 5000; // 重试中，降低频率
                 }
@@ -896,8 +903,20 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         }
     };
 
-    // 启动拆解任务 (使用已保存的配置)
-    const handleStartBreakdownClick = async (batchId: string) => {
+    // 启动拆解任务 - 弹出模式选择弹窗
+    const handleStartBreakdownClick = (batchId: string) => {
+        setPendingBreakdownBatchId(batchId);
+        setShowExecutionModeModal(true);
+    };
+
+    // 确认执行模式后启动拆解
+    const handleConfirmExecutionMode = async (mode: string) => {
+        setShowExecutionModeModal(false);
+        if (!pendingBreakdownBatchId) return;
+
+        const batchId = pendingBreakdownBatchId;
+        setPendingBreakdownBatchId(null);
+
         // 从 SkillsTab 保存的配置中读取
         const config = loadBreakdownConfig();
 
@@ -906,12 +925,13 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             setShowConsole(true);
             clearLogs();
             lastStepRef.current = ''; // 重置步骤记录
-            addLog('info', `配置已加载，开始拆解批次 ${selectedBatch?.batch_number || ''}...`);
+            addLog('info', `配置已加载，执行模式: ${mode}，开始拆解批次 ${selectedBatch?.batch_number || ''}...`);
 
             const res = await breakdownApi.startBreakdown(batchId, {
                 selectedSkills: config.selectedBreakdownSkills,
                 resourceIds: config.breakdownConfig,
-                novelType: formData.novel_type
+                novelType: formData.novel_type,
+                executionMode: mode  // 传递执行模式
             });
             setBreakdownTaskId(res.data.task_id);
             message.info('拆解任务已启动');
@@ -1893,6 +1913,60 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 iconType="danger"
                 loading={isStopping}
             />
+
+            {/* 执行模式选择弹窗（测试用） */}
+            {showExecutionModeModal && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+                    <div className="bg-slate-900 rounded-xl p-6 w-96 border border-slate-700 shadow-2xl">
+                        <h3 className="text-white font-bold mb-2 text-lg">选择执行模式</h3>
+                        <p className="text-slate-500 text-xs mb-5">测试功能：对比不同执行模式的效果</p>
+                        <div className="space-y-3">
+                            <button
+                                onClick={() => handleConfirmExecutionMode('agent_loop')}
+                                className="w-full p-4 bg-slate-800 hover:bg-slate-700 rounded-xl text-left transition-all border border-slate-700 hover:border-slate-600"
+                            >
+                                <div className="text-cyan-400 font-semibold mb-1">Agent 全量循环</div>
+                                <div className="text-xs text-slate-500 leading-relaxed">
+                                    内部最多3轮循环，每轮全量重生成<br/>
+                                    <span className="text-amber-400/80">Token 消耗高，修正效果一般</span>
+                                </div>
+                            </button>
+                            <button
+                                onClick={() => handleConfirmExecutionMode('agent_single')}
+                                className="w-full p-4 bg-cyan-500/10 hover:bg-cyan-500/20 rounded-xl text-left transition-all border border-cyan-500/30 hover:border-cyan-500/50 relative"
+                            >
+                                <div className="absolute top-3 right-3 px-2 py-0.5 bg-cyan-500/20 text-cyan-400 text-[10px] font-bold rounded-full border border-cyan-500/30">
+                                    推荐
+                                </div>
+                                <div className="text-cyan-400 font-semibold mb-1">Agent 单轮 + Skill 修正</div>
+                                <div className="text-xs text-slate-400 leading-relaxed">
+                                    Agent 跑1轮生成初版，后续局部修正<br/>
+                                    <span className="text-emerald-400/80">Token 消耗适中，修正精准</span>
+                                </div>
+                            </button>
+                            <button
+                                onClick={() => handleConfirmExecutionMode('skill_only')}
+                                className="w-full p-4 bg-slate-800 hover:bg-slate-700 rounded-xl text-left transition-all border border-slate-700 hover:border-slate-600"
+                            >
+                                <div className="text-cyan-400 font-semibold mb-1">纯 Skill 模式</div>
+                                <div className="text-xs text-slate-500 leading-relaxed">
+                                    不用 Agent，直接 Skill + 外部质检修正<br/>
+                                    <span className="text-blue-400/80">Token 消耗最低，速度最快</span>
+                                </div>
+                            </button>
+                        </div>
+                        <button
+                            onClick={() => {
+                                setShowExecutionModeModal(false);
+                                setPendingBreakdownBatchId(null);
+                            }}
+                            className="mt-5 w-full p-2.5 text-slate-500 hover:text-slate-300 text-sm rounded-lg hover:bg-slate-800 transition-colors"
+                        >
+                            取消
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
 
     );

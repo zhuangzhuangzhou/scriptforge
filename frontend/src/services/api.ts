@@ -250,6 +250,8 @@ export const breakdownApi = {
     qualityRuleKey?: string;
     outputStyleKey?: string;
     novelType?: string;
+    // 执行模式：agent_loop / agent_single / skill_only
+    executionMode?: string;
   }) => {
     if (USE_MOCK) {
       await delay(500);
@@ -270,6 +272,7 @@ export const breakdownApi = {
     if (options?.qualityRuleKey) params.quality_rule_key = options.qualityRuleKey;
     if (options?.outputStyleKey) params.output_style_key = options.outputStyleKey;
     if (options?.novelType) params.novel_type = options.novelType;
+    if (options?.executionMode) params.execution_mode = options.executionMode;
 
     return api.post('/breakdown/start', params);
   },

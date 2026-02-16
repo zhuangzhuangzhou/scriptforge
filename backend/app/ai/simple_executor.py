@@ -541,7 +541,8 @@ class SimpleAgentExecutor:
         self,
         agent_name: str,
         context: Dict[str, Any],
-        task_id: Optional[str] = None
+        task_id: Optional[str] = None,
+        max_iterations_override: Optional[int] = None
     ) -> Dict[str, Any]:
         """执行 Agent 工作流
 
@@ -549,6 +550,7 @@ class SimpleAgentExecutor:
             agent_name: Agent 名称
             context: 初始上下文数据
             task_id: 任务 ID（用于日志推送）
+            max_iterations_override: 覆盖工作流的 max_iterations（用于控制循环次数）
 
         Returns:
             执行结果，包含所有步骤的输出
@@ -583,7 +585,7 @@ class SimpleAgentExecutor:
 
         # 3. 根据工作流类型执行
         if workflow_type == "loop":
-            results = self._execute_loop_workflow(workflow, context, task_id)
+            results = self._execute_loop_workflow(workflow, context, task_id, max_iterations_override)
         else:
             results = self._execute_sequential_workflow(workflow, context, task_id)
 
@@ -629,7 +631,8 @@ class SimpleAgentExecutor:
         self,
         workflow: Dict[str, Any],
         context: Dict[str, Any],
-        task_id: Optional[str] = None
+        task_id: Optional[str] = None,
+        max_iterations_override: Optional[int] = None
     ) -> Dict[str, Any]:
         """执行循环工作流
 
@@ -639,12 +642,13 @@ class SimpleAgentExecutor:
             workflow: 工作流配置
             context: 初始上下文
             task_id: 任务 ID
+            max_iterations_override: 覆盖工作流的 max_iterations
 
         Returns:
             执行结果
         """
         steps = workflow.get("steps", [])
-        max_iterations = workflow.get("max_iterations", 3)
+        max_iterations = max_iterations_override if max_iterations_override is not None else workflow.get("max_iterations", 3)
         exit_condition = workflow.get("exit_condition", "false")
 
         results = {"context": context, "_iteration": 0}

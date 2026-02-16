@@ -36,9 +36,6 @@ BUILTIN_SKILLS = [
 ### 示例
 {example}
 
-### 上一轮质量检查反馈（如有）
-{qa_feedback}
-
 ### 小说原文（第{start_chapter}-{end_chapter}章）
 {chapters_text}
 
@@ -47,8 +44,27 @@ BUILTIN_SKILLS = [
 - 如果 start_episode=1，则本批次拆分的集数为 1, 2, 3...
 - 如果 start_episode=4，则本批次拆分的集数为 4, 5, 6...（因为前面的批次已经拆到第3集）
 
+### 上一轮拆解结果（如有）
+{previous_plot_points}
+
+### 上一轮质检反馈（如有，请务必针对性修正）
+**质检得分**: {qa_score}
+
+**发现的问题**:
+{qa_issues}
+
+**修复指引**:
+{qa_fix_instructions}
+
 ### 任务
-请按照上述方法论和格式模板，对原文进行剧情拆解。产出统一格式的剧情点列表。
+如果上方有"上一轮拆解结果"和"质检反馈"，说明这是修正轮次：
+- 请基于上一轮结果进行**针对性修正**，不要从头重新拆解
+- 重点修复质检反馈中指出的问题
+- 保留没有问题的剧情点，只修改有问题的部分
+- 确保修正后的内容符合改编方法论
+
+如果没有上一轮结果，说明这是首次拆解：
+- 请按照上述方法论和格式模板，对原文进行剧情拆解
 
 每个剧情点使用以下 JSON 格式：
 {{
@@ -69,7 +85,10 @@ BUILTIN_SKILLS = [
             "output_style": {"type": "string", "description": "输出风格"},
             "template": {"type": "string", "description": "格式模板"},
             "example": {"type": "string", "description": "示例"},
-            "qa_feedback": {"type": "string", "description": "上一轮质量检查反馈（可选）"},
+            "previous_plot_points": {"type": "string", "description": "上一轮拆解结果（JSON，可选）"},
+            "qa_score": {"type": "string", "description": "上一轮质检得分（可选）"},
+            "qa_issues": {"type": "string", "description": "上一轮质检发现的问题（JSON，可选）"},
+            "qa_fix_instructions": {"type": "string", "description": "上一轮质检修复指引（JSON，可选）"},
             "start_chapter": {"type": "integer", "description": "起始章节号"},
             "end_chapter": {"type": "integer", "description": "结束章节号"},
             "start_episode": {"type": "integer", "description": "起始集数（本批次从第几集开始编号）"}
@@ -452,7 +471,10 @@ BUILTIN_AGENTS = [
                         "output_style": "${context.output_style}",
                         "template": "${context.template}",
                         "example": "${context.example}",
-                        "qa_feedback": "问题列表: ${qa_result.issues}\n修复指引: ${qa_result.fix_instructions}",
+                        "previous_plot_points": "${plot_points}",
+                        "qa_issues": "${qa_result.issues}",
+                        "qa_fix_instructions": "${qa_result.fix_instructions}",
+                        "qa_score": "${qa_result.score}",
                         "start_chapter": "${context.start_chapter}",
                         "end_chapter": "${context.end_chapter}",
                         "start_episode": "${context.start_episode}"

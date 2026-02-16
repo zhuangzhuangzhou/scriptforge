@@ -468,7 +468,6 @@ def _execute_breakdown_sync(
     """
     # 根据 task_config 判断执行模式
     use_v1 = task_config.get("format_version") == 1
-    use_agent = task_config.get("use_agent", True)  # 默认使用 Agent
 
     if use_v1:
         return _execute_breakdown_sync_v1(
@@ -580,40 +579,46 @@ def _execute_breakdown_sync(
         "start_episode": str(start_episode),
     }
 
-    # 尝试使用 Agent 执行
+    # ============================================================
+    # 执行模式分支（通过 execution_mode 参数控制）
+    #
+    # agent_loop：Agent 内部循环（breakdown → qa → 修复，最多3轮）
+    #   - 每轮全量重生成，Token 消耗大
+    #   - 不进入外部修正
+    #
+    # agent_single：Agent 单轮 + Skill 局部修正（推荐）
+    #   - Agent 只跑1轮生成初版
+    #   - 后续修正交给 _auto_fix_breakdown_sync（局部修正）
+    #
+    # skill_only：纯 Skill 模式
+    #   - 完全不用 Agent，直接调用 Skill
+    #   - 外部 QA + 局部修正
+    # ============================================================
+    execution_mode = task_config.get("execution_mode", "agent_single")
+    logger.info(f"执行模式: {execution_mode}")
+
+    if log_publisher:
+        mode_names = {
+            "agent_loop": "Agent 全量循环模式",
+            "agent_single": "Agent 单轮 + Skill 修正模式",
+            "skill_only": "纯 Skill 模式"
+        }
+        log_publisher.publish_info(
+            task_id,
+            f"📋 执行模式: {mode_names.get(execution_mode, execution_mode)}"
+        )
+
     plot_points = []
     qa_status = "pending"
     qa_score = None
     qa_report = None
+    used_skill_fallback = False  # 标记是否使用了 Skill 回退模式
 
-    if use_agent:
-        try:
-            _raise_if_cancelled_sync(db, task_id)
-            agent_executor = SimpleAgentExecutor(db, model_adapter, log_publisher)
-            results = agent_executor.execute_agent(
-                agent_name="breakdown_agent",
-                context=agent_context,
-                task_id=task_id
-            )
-
-            # 提取结果
-            plot_points = results.get("plot_points", [])
-            qa_result = results.get("qa_result", {})
-            qa_status = qa_result.get("status", "pending")
-            qa_score = qa_result.get("score")
-            qa_report = qa_result
-
-            # 更新进度到 50%（AI 生成完成）
-            update_task_progress_sync(db, task_id, progress=50, current_step="AI 剧情生成完成 (50%)")
-
-            logger.info(f"Agent 执行完成，plot_points: {len(plot_points)}，qa_status: {qa_status}")
-
-        except Exception as e:
-            logger.warning(f"Agent 执行失败，回退到 Skill 直接调用: {e}")
-            use_agent = False
-
-    # 回退：直接调用 Skill
-    if not use_agent or not plot_points:
+    # -------------------- 模式分支执行 --------------------
+    if execution_mode == "skill_only":
+        # 纯 Skill 模式：直接调用 Skill，不走 Agent
+        logger.info("skill_only 模式：直接调用 Skill")
+        used_skill_fallback = True
         skill_executor = SimpleSkillExecutor(db, model_adapter, log_publisher)
         try:
             _raise_if_cancelled_sync(db, task_id)
@@ -628,11 +633,10 @@ def _execute_breakdown_sync(
             logger.error(f"Skill 执行失败: {e}")
             raise AITaskException(code="SKILL_EXECUTION_ERROR", message=str(e))
 
-        # 更新进度到 50%（Skill 生成完成）
         update_task_progress_sync(db, task_id, progress=50, current_step="剧情生成完成 (50%)")
 
-        # 回退模式：执行 QA 质检
-        logger.info("回退到 Skill 模式，执行 QA 质检...")
+        # 执行 QA 质检
+        logger.info("skill_only 模式：执行 QA 质检...")
         _raise_if_cancelled_sync(db, task_id)
         qa_result = _run_breakdown_qa_sync(
             db=db,
@@ -646,14 +650,83 @@ def _execute_breakdown_sync(
         qa_status = qa_result.get("status", "pending")
         qa_score = qa_result.get("score")
         qa_report = qa_result
-        logger.info(f"Skill + QA 模式完成，qa_status: {qa_status}, qa_score: {qa_score}")
-
-        # 更新进度到 70%（QA 质检完成）
+        logger.info(f"skill_only 模式 QA 完成，qa_status: {qa_status}, qa_score: {qa_score}")
         update_task_progress_sync(db, task_id, progress=70, current_step="质检完成 (70%)")
 
-    # 如果 Agent 模式执行成功，检查是否已有 qa_result
-    if use_agent and qa_status == "pending" and not qa_report:
-        # Agent 模式下 QA 可能被跳过，补充执行
+    else:
+        # Agent 模式（agent_loop 或 agent_single）
+        # 区别在于 max_iterations_override：
+        #   - agent_loop: None（使用 Agent 配置的默认值，通常是3）
+        #   - agent_single: 1（只跑1轮）
+        max_iterations_override = 1 if execution_mode == "agent_single" else None
+        logger.info(f"Agent 模式：max_iterations_override={max_iterations_override}")
+
+        try:
+            _raise_if_cancelled_sync(db, task_id)
+
+            # 创建 Agent 执行器
+            agent_executor = SimpleAgentExecutor(db, model_adapter, log_publisher)
+
+            # 执行 breakdown_agent 工作流
+            results = agent_executor.execute_agent(
+                agent_name="breakdown_agent",
+                context=agent_context,
+                task_id=task_id,
+                max_iterations_override=max_iterations_override
+            )
+
+            # 从 Agent 结果中提取数据
+            plot_points = results.get("plot_points", [])
+            qa_result = results.get("qa_result", {})
+            qa_status = qa_result.get("status", "pending")
+            qa_score = qa_result.get("score")
+            qa_report = qa_result
+
+            update_task_progress_sync(db, task_id, progress=50, current_step="AI 剧情生成完成 (50%)")
+            logger.info(f"Agent 执行完成，plot_points: {len(plot_points)}，qa_status: {qa_status}")
+
+        except Exception as e:
+            # Agent 执行失败，回退到 Skill 模式
+            logger.warning(f"Agent 执行失败，回退到 Skill 直接调用: {e}")
+            used_skill_fallback = True
+
+            skill_executor = SimpleSkillExecutor(db, model_adapter, log_publisher)
+            try:
+                _raise_if_cancelled_sync(db, task_id)
+                plot_points = skill_executor.execute_skill(
+                    skill_name="webtoon_breakdown",
+                    inputs=agent_context,
+                    task_id=task_id
+                )
+                if isinstance(plot_points, dict):
+                    plot_points = plot_points.get("plot_points", plot_points.get("results", []))
+            except Exception as e2:
+                logger.error(f"Skill 执行失败: {e2}")
+                raise AITaskException(code="SKILL_EXECUTION_ERROR", message=str(e2))
+
+            update_task_progress_sync(db, task_id, progress=50, current_step="剧情生成完成 (50%)")
+
+            # 执行 QA 质检
+            logger.info("回退到 Skill 模式，执行 QA 质检...")
+            _raise_if_cancelled_sync(db, task_id)
+            qa_result = _run_breakdown_qa_sync(
+                db=db,
+                task_id=task_id,
+                plot_points=plot_points,
+                chapters_text=chapters_text,
+                adapt_method=adapt_method,
+                model_adapter=model_adapter,
+                log_publisher=log_publisher
+            )
+            qa_status = qa_result.get("status", "pending")
+            qa_score = qa_result.get("score")
+            qa_report = qa_result
+            logger.info(f"Skill + QA 模式完成，qa_status: {qa_status}, qa_score: {qa_score}")
+            update_task_progress_sync(db, task_id, progress=70, current_step="质检完成 (70%)")
+
+    # -------------------- 补充质检（Agent 模式可能跳过 QA）--------------------
+    # Agent 工作流中 QA 步骤可能因为条件不满足被跳过
+    if not used_skill_fallback and qa_status == "pending" and not qa_report:
         logger.info("Agent 模式无 QA 结果，补充执行质检...")
         _raise_if_cancelled_sync(db, task_id)
         qa_result = _run_breakdown_qa_sync(
@@ -673,11 +746,17 @@ def _execute_breakdown_sync(
     if not isinstance(plot_points, list):
         plot_points = [plot_points] if plot_points else []
 
-    # 4. 质检不通过时自动重试（最多3次）
+    # -------------------- 自动修正循环 --------------------
+    # agent_loop 模式：禁用外部修正（Agent 内部已经循环质检了）
+    # agent_single / skill_only 模式：启用外部修正（局部修正）
     max_auto_fix_retries = task_config.get("max_auto_fix_retries", 3)
-    auto_fix_enabled = task_config.get("auto_fix_on_fail", True)  # 默认启用
-    if use_agent:
+    auto_fix_enabled = task_config.get("auto_fix_on_fail", True)
+
+    # agent_loop 模式禁用外部修正
+    if execution_mode == "agent_loop" and not used_skill_fallback:
         auto_fix_enabled = False
+        logger.info("agent_loop 模式：禁用外部自动修正")
+
     fix_attempt = 0
 
     # 标准化 qa_status（统一转为大写）
@@ -690,6 +769,7 @@ def _execute_breakdown_sync(
         (qa_score is not None and qa_score < 60)
     )
 
+    # 自动修正循环：质检不通过时反复修正，直到通过或达到最大次数
     while (auto_fix_enabled and
            needs_fix and
            fix_attempt < max_auto_fix_retries and
@@ -711,14 +791,14 @@ def _execute_breakdown_sync(
             current_step=f"自动修正中 (第 {fix_attempt} 次)..."
         )
 
-        # 提取修正指令
+        # 从 QA 报告中提取修正指令
         fix_instructions = _extract_fix_instructions_from_qa_report(qa_report)
 
         if not fix_instructions:
             logger.info("无法提取修正指令，跳过自动修正")
             break
 
-        # 执行自动修正
+        # 执行自动修正：根据 QA 反馈修改 plot_points
         plot_points = _auto_fix_breakdown_sync(
             plot_points=plot_points,
             fix_instructions=fix_instructions,
@@ -728,7 +808,7 @@ def _execute_breakdown_sync(
             task_id=task_id
         )
 
-        # 重新执行质检
+        # 修正后重新执行质检
         logger.info(f"第 {fix_attempt} 次修正完成，重新执行质检...")
         _raise_if_cancelled_sync(db, task_id)
         qa_result = _run_breakdown_qa_sync(
@@ -753,6 +833,7 @@ def _execute_breakdown_sync(
             (qa_score is not None and qa_score < 60)
         )
 
+        # 质检通过，退出循环
         if not needs_fix:
             if log_publisher:
                 log_publisher.publish_success(
@@ -761,7 +842,7 @@ def _execute_breakdown_sync(
                 )
             break
 
-    # 记录最终修正次数
+    # 记录最终修正次数（用于数据分析）
     if fix_attempt > 0:
         if qa_report is None:
             qa_report = {}
@@ -771,22 +852,23 @@ def _execute_breakdown_sync(
 
     update_task_progress_sync(db, task_id, progress=90, current_step=f"拆解完成，生成 {len(plot_points)} 个剧情点 (90%)")
 
-    # 4. 保存结果（90%-100%）
+    # -------------------- 第五步：保存结果到数据库 --------------------
     # 标准化 qa_status 为大写（前端期望 'PASS' | 'FAIL' | 'pending'）
     normalized_qa_status_for_db = qa_status.upper() if isinstance(qa_status, str) and qa_status.upper() in ("PASS", "FAIL") else "pending"
 
-    # 获取 model_config_id 用于保存拆解记录
+    # 获取 model_config_id 用于保存拆解记录（便于后续数据分析）
     model_config_id = task_config.get("model_config_id")
 
+    # 创建 PlotBreakdown 记录
     breakdown = PlotBreakdown(
         batch_id=batch_id,
         project_id=project_id,
-        task_id=task_id,  # 关联任务 ID
-        ai_model_id=model_config_id,  # 关联 AI 模型 ID
-        model_config_id=model_config_id,  # 模型配置 ID
-        plot_points=plot_points,
-        format_version=2,
-        consistency_status="pending",
+        task_id=task_id,                    # 关联任务 ID（便于追溯）
+        ai_model_id=model_config_id,        # 关联 AI 模型 ID
+        model_config_id=model_config_id,    # 模型配置 ID
+        plot_points=plot_points,            # 剧情点列表（核心输出）
+        format_version=2,                   # 输出格式版本
+        consistency_status="pending",       # 一致性检查状态
         qa_status=normalized_qa_status_for_db,
         qa_score=qa_score,
         qa_report=qa_report,
@@ -795,6 +877,18 @@ def _execute_breakdown_sync(
 
     db.add(breakdown)
     db.commit()
+
+    # 更新进度并返回结果
+    update_task_progress_sync(db, task_id, progress=95, current_step="拆解结果已保存 (95%)")
+
+    return {
+        "breakdown_id": str(breakdown.id),
+        "format_version": 2,
+        "plot_points_count": len(plot_points),
+        "qa_status": qa_status,
+        "qa_score": qa_score,
+        "use_agent": use_agent and not used_skill_fallback,  # 实际是否使用了 Agent 模式
+    }
 
 
 def _raise_if_cancelled_sync(db: Session, task_id: str) -> None:
@@ -811,7 +905,8 @@ def _handle_task_cancelled_sync(
     log_publisher=None,
     message: str = "任务已被取消"
 ):
-    # 更新任务状态为 canceled（规范化为 canceled）
+    """处理任务取消"""
+    # 更新任务状态为 canceled
     task = task_record or db.query(AITask).filter(AITask.id == task_id).first()
     if task:
         task.status = TaskStatus.CANCELED
@@ -830,16 +925,6 @@ def _handle_task_cancelled_sync(
             log_publisher.publish_task_complete(task_id, status=TaskStatus.CANCELED, message=message)
         except Exception:
             pass
-    update_task_progress_sync(db, task_id, progress=95, current_step="拆解结果已保存 (95%)")
-
-    return {
-        "breakdown_id": str(breakdown.id),
-        "format_version": 2,
-        "plot_points_count": len(plot_points),
-        "qa_status": qa_status,
-        "qa_score": qa_score,
-        "use_agent": use_agent,
-    }
 
 
 def _execute_breakdown_sync_v1(
@@ -1265,13 +1350,14 @@ def _auto_fix_breakdown_sync(
             )
         return plot_points
 
+    # 格式化剧情点为易读文本（对大模型更友好）
+    plot_points_text = _format_plot_points_for_llm(plot_points)
+
     # 使用 AI 进行复杂修正
     prompt = f"""你是一个专业的剧情拆解修正专家。请根据质检反馈修正以下剧情点。
 
 ## 当前剧情点
-```json
-{json.dumps(plot_points, ensure_ascii=False, indent=2)}
-```
+{plot_points_text}
 
 ## 质检修正指令
 {instructions_text}
@@ -2401,3 +2487,46 @@ def _run_breakdown_qa_sync(
             "score": 0,
             "error": str(e)
         }
+
+
+def _format_plot_points_for_llm(plot_points: list) -> str:
+    """将剧情点列表格式化为易读文本（对大模型更友好）
+
+    把 JSON 格式转换为结构化的文本格式，便于大模型理解和修正。
+
+    Args:
+        plot_points: 剧情点列表
+
+    Returns:
+        str: 格式化后的文本
+    """
+    if not plot_points:
+        return "（无剧情点）"
+
+    lines = []
+    for i, point in enumerate(plot_points, 1):
+        if isinstance(point, dict):
+            # 提取关键字段
+            scene = point.get("scene", point.get("场景", ""))
+            characters = point.get("characters", point.get("角色", []))
+            event = point.get("event", point.get("事件", ""))
+            emotion_hook = point.get("emotion_hook", point.get("情绪钩子", ""))
+            episode = point.get("episode", point.get("集数", ""))
+
+            # 格式化角色列表
+            if isinstance(characters, list):
+                characters_str = "、".join(characters)
+            else:
+                characters_str = str(characters)
+
+            lines.append(f"【剧情{i}】第{episode}集")
+            lines.append(f"  场景：{scene}")
+            lines.append(f"  角色：{characters_str}")
+            lines.append(f"  事件：{event}")
+            lines.append(f"  情绪钩子：{emotion_hook}")
+            lines.append("")
+        elif isinstance(point, str):
+            lines.append(f"【剧情{i}】{point}")
+            lines.append("")
+
+    return "\n".join(lines)

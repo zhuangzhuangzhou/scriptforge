@@ -41,6 +41,12 @@ class BreakdownStartRequest(BaseModel):
     adapt_method_key: Optional[str] = None
     quality_rule_key: Optional[str] = None
     output_style_key: Optional[str] = None
+    # 执行模式：agent_loop(Agent全量循环), agent_single(Agent单轮+Skill修正), skill_only(纯Skill)
+    execution_mode: Optional[str] = Field(
+        default="agent_single",
+        pattern="^(agent_loop|agent_single|skill_only)$",
+        description="执行模式: agent_loop(Agent全量循环), agent_single(Agent单轮+Skill修正), skill_only(纯Skill)"
+    )
 
 
 class BatchStartRequest(BaseModel):
@@ -204,6 +210,7 @@ async def start_breakdown(
         "model_config_id": str(project.breakdown_model_id),  # 从项目配置读取
         "selected_skills": request.selected_skills or [],
         "pipeline_id": request.pipeline_id,
+        "execution_mode": request.execution_mode or "agent_single",  # 执行模式
     }
 
     # 添加小说类型（优先使用请求参数，否则从项目配置读取）
