@@ -20,6 +20,7 @@ import AdminDashboard from './pages/admin/Dashboard';
 import UserManagement from './pages/admin/UserManagement';
 import ModelManagement from './pages/admin/ModelManagement';
 import ResourcesPage from './pages/admin/Resources';
+import SplitRulesPage from './pages/admin/SplitRules';
 import SystemSettings from './pages/admin/SystemSettings';
 import SystemConfiguration from './pages/admin/ModelManagement/SystemConfiguration';
 import AnalyticsPage from './pages/admin/Analytics';
@@ -85,6 +86,7 @@ const AppContent: React.FC = () => {
             <Route path="/admin/agents" element={<AgentsPage />} />
             <Route path="/admin/logs" element={<LogsPage />} />
             <Route path="/admin/resources" element={<ResourcesPage />} />
+            <Route path="/admin/split-rules" element={<SplitRulesPage />} />
             <Route path="/admin/analytics" element={<AnalyticsPage />} />
             <Route path="/admin/configurations" element={<SystemConfiguration />} />
             <Route path="/admin/settings" element={<SystemSettings />} />
