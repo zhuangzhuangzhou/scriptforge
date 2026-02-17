@@ -224,6 +224,45 @@ async def create_project(
     await db.refresh(new_project)
     return new_project
 
+
+# ============ 拆分规则 Schema ============
+
+class SplitRuleOption(BaseModel):
+    """拆分规则选项（用于用户选择）"""
+    id: str  # 使用字符串 ID 方便前端处理
+    name: str
+    display_name: str
+    pattern_type: str
+    example: Optional[str] = None
+    is_default: bool = False
+
+
+@router.get("/split-rules", response_model=List[SplitRuleOption])
+async def get_split_rule_options(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取可用的拆分规则列表（用户选择用）"""
+    result = await db.execute(
+        select(SplitRule)
+        .where(SplitRule.is_active == True)
+        .order_by(SplitRule.is_default.desc(), SplitRule.display_name)
+    )
+    rules = result.scalars().all()
+
+    return [
+        SplitRuleOption(
+            id=str(rule.id),
+            name=rule.name,
+            display_name=rule.display_name,
+            pattern_type=rule.pattern_type,
+            example=rule.example,
+            is_default=rule.is_default,
+        )
+        for rule in rules
+    ]
+
+
 @router.get("", response_model=List[ProjectResponse])
 async def get_projects(
     current_user: User = Depends(get_current_user),
@@ -654,10 +693,29 @@ async def split_chapters(
         splitter = ChapterSplitter(project.chapter_split_rule)
         chapters_data = splitter.split(content)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"拆分失败: {str(e)}")
+        # 提供更友好的错误信息
+        error_msg = str(e)
+        if "regex" in error_msg.lower() or "pattern" in error_msg.lower():
+            raise HTTPException(
+                status_code=400,
+                detail="拆分规则正则表达式有误，请检查规则配置或尝试其他拆分方式"
+            )
+        elif "memory" in error_msg.lower() or "memoryerror" in error_msg.lower():
+            raise HTTPException(
+                status_code=500,
+                detail="文件内容过大，超出处理范围，请尝试减小文件大小或联系管理员"
+            )
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"拆分过程出现异常: {error_msg}"
+            )
 
     if not chapters_data:
-        raise HTTPException(status_code=400, detail="未识别到章节，请检查拆分规则")
+        raise HTTPException(
+            status_code=400,
+            detail="未识别到任何章节！\n\n可能原因：\n1. 文件内容格式不符合所选拆分规则\n2. 章节标记格式与预定义规则不匹配\n\n建议操作：\n- 尝试使用「空行分隔」或「双换行分隔」规则\n- 检查文件内容是否包含章节标记（如「第一章」）\n- 手动调整文件格式后重新上传"
+        )
 
     # 4. 清理旧数据并保存新章节
     # 清理该项目的所有旧章节和旧批次，确保状态重置

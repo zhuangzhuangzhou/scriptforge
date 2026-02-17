@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Steps, Form, Input, Select, Button, Upload, message, Typography, Divider } from 'antd';
-import { InboxOutlined, LeftOutlined } from '@ant-design/icons';
+import { Card, Steps, Form, Input, Select, Button, Upload, message, Typography, Divider, Tooltip, Space, Tag } from 'antd';
+import { InboxOutlined, LeftOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { projectApi } from '../../services/api';
 import QuotaLimitModal from '../../components/modals/QuotaLimitModal';
@@ -10,6 +10,15 @@ const { Dragger } = Upload;
 const { Title, Paragraph } = Typography;
 const { Option } = Select;
 
+interface SplitRuleOption {
+  id: string;
+  name: string;
+  display_name: string;
+  pattern_type: string;
+  example?: string;
+  is_default: boolean;
+}
+
 const CreateProject: React.FC = () => {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(0);
@@ -17,6 +26,29 @@ const CreateProject: React.FC = () => {
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [form] = Form.useForm();
   const [showQuotaModal, setShowQuotaModal] = useState(false);
+  const [splitRules, setSplitRules] = useState<SplitRuleOption[]>([]);
+  const [loadingRules, setLoadingRules] = useState(false);
+
+  // 获取拆分规则列表
+  useEffect(() => {
+    const fetchSplitRules = async () => {
+      setLoadingRules(true);
+      try {
+        const response = await projectApi.getSplitRuleOptions();
+        setSplitRules(response.data);
+      } catch (error) {
+        console.error('获取拆分规则失败:', error);
+        // 使用默认规则作为后备
+        setSplitRules([
+          { id: '1', name: 'standard_chinese', display_name: '中文标准 - 第N章', pattern_type: 'regex', is_default: true },
+          { id: '2', name: 'blank_line', display_name: '空行分隔', pattern_type: 'blank_line', is_default: false },
+        ]);
+      } finally {
+        setLoadingRules(false);
+      }
+    };
+    fetchSplitRules();
+  }, []);
 
   const novelTypes = ['都市', '古装', '科幻', '玄幻', '武侠', '言情', '悬疑', '其他'];
 
@@ -28,8 +60,16 @@ const CreateProject: React.FC = () => {
 
     setLoading(true);
     try {
+      // 处理拆分规则：将规则ID转换为规则对象
+      const { split_rule_id, ...rest } = values;
+      const projectData = {
+        ...rest,
+        // 如果选择了拆分规则，传递规则ID
+        ...(split_rule_id && { split_rule_id }),
+      };
+
       // 1. 使用封装的 API 创建项目
-      const projectResponse = await projectApi.createProject(values);
+      const projectResponse = await projectApi.createProject(projectData);
       const project = projectResponse.data;
 
       // 2. 上传文件
@@ -47,6 +87,21 @@ const CreateProject: React.FC = () => {
       if (error.response?.status === 403 && (errorDetail.includes('积分') || errorDetail.includes('配额'))) {
         // 积分不足，显示升级引导弹窗
         setShowQuotaModal(true);
+      } else if (errorDetail.includes('未识别到任何章节') || errorDetail.includes('拆分规则')) {
+        // 拆分失败，显示友好提示
+        const lines = errorDetail.split('\n').filter((l: string) => l.trim());
+        const friendlyMessage = lines[0] || '章节拆分失败';
+        message.error({
+          content: (
+            <div>
+              <div>{friendlyMessage}</div>
+              <div className="text-xs text-gray-400 mt-1">
+                建议：尝试选择「空行分隔」或「双换行分隔」规则
+              </div>
+            </div>
+          ),
+          duration: 5,
+        });
       } else {
         // 其他错误，显示具体错误信息
         const errorMessage = errorDetail || error.message || '操作失败，请稍后重试';
@@ -148,13 +203,26 @@ const CreateProject: React.FC = () => {
                   <Input type="number" min={1} max={20} />
                 </Form.Item>
                 <Form.Item
-                  name="chapter_split_rule"
-                  label="章节拆分规则"
+                  name="split_rule_id"
+                  label={
+                    <span>
+                      章节拆分规则 <Tooltip title="选择如何识别和拆分小说章节"><InfoCircleOutlined /></Tooltip>
+                    </span>
+                  }
                   style={{ display: 'inline-block', width: 'calc(50% - 8px)' }}
                 >
-                  <Select>
-                    <Option value="auto">自动识别</Option>
-                    <Option value="blank_line">空行分隔</Option>
+                  <Select
+                    placeholder="选择章节拆分规则"
+                    loading={loadingRules}
+                  >
+                    {splitRules.map(rule => (
+                      <Option key={rule.id} value={rule.id}>
+                        <Space>
+                          {rule.display_name}
+                          {rule.is_default && <Tag color="blue">默认</Tag>}
+                        </Space>
+                      </Option>
+                    ))}
                   </Select>
                 </Form.Item>
               </Form.Item>

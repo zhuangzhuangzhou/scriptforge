@@ -21,6 +21,8 @@ from app.models.ai_model_pricing import AIModelPricing
 from app.models.system_model_config import SystemModelConfig
 from app.models.ai_resource import AIResource
 
+from app.models.split_rule import SplitRule
+
 __all__ = [
     "User",
     "Project",
@@ -49,4 +51,5 @@ __all__ = [
     "AIModelPricing",
     "SystemModelConfig",
     "AIResource",
+    "SplitRule",
 ]
