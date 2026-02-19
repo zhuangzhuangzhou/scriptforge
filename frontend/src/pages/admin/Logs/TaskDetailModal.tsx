@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Descriptions, Tag, Spin, message, Tabs } from 'antd';
-import dayjs from 'dayjs';
+import { Descriptions, Tag, Spin, message, Tabs, Button, Tooltip } from 'antd';
+import { CopyOutlined, CheckOutlined } from '@ant-design/icons';
 import api from '../../../services/api';
 import LogViewer from './LogViewer';
 import { GlassModal } from '../../../components/ui/GlassModal';
+import { formatFullTime, getStatusTag, getTaskTypeTag, handleApiError } from './utils';
 
 interface TaskDetail {
   id: string;
@@ -57,40 +58,10 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       const response = await api.get(`/admin/tasks/${taskId}`);
       setTask(response.data);
     } catch (error: unknown) {
-      const err = error as { response?: { data?: { detail?: string } } };
-      message.error(err.response?.data?.detail || '加载任务详情失败');
+      message.error(handleApiError(error, '加载任务详情失败'));
     } finally {
       setLoading(false);
     }
-  };
-
-  // 状态标签
-  const getStatusTag = (status: string) => {
-    const config: Record<string, { color: string; text: string }> = {
-      queued: { color: 'default', text: '排队中' },
-      running: { color: 'processing', text: '运行中' },
-      completed: { color: 'success', text: '已完成' },
-      failed: { color: 'error', text: '失败' }
-    };
-    const { color, text } = config[status] || { color: 'default', text: status };
-    return <Tag color={color}>{text}</Tag>;
-  };
-
-  // 任务类型标签
-  const getTaskTypeTag = (type: string) => {
-    const config: Record<string, { color: string; text: string }> = {
-      breakdown: { color: 'blue', text: '剧情拆解' },
-      script: { color: 'purple', text: '剧本生成' },
-      consistency_check: { color: 'cyan', text: '一致性检查' }
-    };
-    const { color, text } = config[type] || { color: 'default', text: type };
-    return <Tag color={color}>{text}</Tag>;
-  };
-
-  // 格式化时间
-  const formatTime = (timeStr: string | null) => {
-    if (!timeStr) return '-';
-    return dayjs(timeStr).format('YYYY-MM-DD HH:mm:ss');
   };
 
   // 格式化时长
@@ -99,6 +70,19 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
     if (seconds < 60) return `${seconds.toFixed(1)} 秒`;
     if (seconds < 3600) return `${(seconds / 60).toFixed(1)} 分钟`;
     return `${(seconds / 3600).toFixed(1)} 小时`;
+  };
+
+  // 复制到剪贴板
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const handleCopy = async (text: string, field: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedField(field);
+      message.success('复制成功');
+      setTimeout(() => setCopiedField(null), 2000);
+    } catch {
+      message.error('复制失败');
+    }
   };
 
   const tabItems = [
@@ -135,13 +119,13 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
               {formatDuration(task.duration)}
             </Descriptions.Item>
             <Descriptions.Item label="创建时间" span={2}>
-              {formatTime(task.created_at)}
+              {formatFullTime(task.created_at)}
             </Descriptions.Item>
             <Descriptions.Item label="开始时间" span={2}>
-              {formatTime(task.started_at)}
+              {formatFullTime(task.started_at)}
             </Descriptions.Item>
             <Descriptions.Item label="完成时间" span={2}>
-              {formatTime(task.completed_at)}
+              {formatFullTime(task.completed_at)}
             </Descriptions.Item>
             {task.current_step && (
               <Descriptions.Item label="当前步骤" span={2}>
@@ -170,7 +154,18 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
           {/* 配置信息 */}
           {task.config && Object.keys(task.config).length > 0 && (
             <div className="mt-4">
-              <div className="text-sm text-slate-400 mb-2">任务配置</div>
+              <div className="flex justify-between items-center mb-2">
+                <div className="text-sm text-slate-400">任务配置</div>
+                <Tooltip title={copiedField === 'config' ? '已复制' : '复制配置'}>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={copiedField === 'config' ? <CheckOutlined /> : <CopyOutlined />}
+                    onClick={() => handleCopy(JSON.stringify(task.config, null, 2), 'config')}
+                    className={copiedField === 'config' ? 'text-green-400' : 'text-slate-400'}
+                  />
+                </Tooltip>
+              </div>
               <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg">
                 <pre className="text-slate-300 text-xs whitespace-pre-wrap font-mono">
                   {JSON.stringify(task.config, null, 2)}
@@ -182,7 +177,18 @@ const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
           {/* 执行结果 */}
           {task.result && Object.keys(task.result).length > 0 && (
             <div className="mt-4">
-              <div className="text-sm text-slate-400 mb-2">执行结果</div>
+              <div className="flex justify-between items-center mb-2">
+                <div className="text-sm text-slate-400">执行结果</div>
+                <Tooltip title={copiedField === 'result' ? '已复制' : '复制结果'}>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={copiedField === 'result' ? <CheckOutlined /> : <CopyOutlined />}
+                    onClick={() => handleCopy(JSON.stringify(task.result, null, 2), 'result')}
+                    className={copiedField === 'result' ? 'text-green-400' : 'text-slate-400'}
+                  />
+                </Tooltip>
+              </div>
               <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg max-h-60 overflow-y-auto">
                 <pre className="text-slate-300 text-xs whitespace-pre-wrap font-mono">
                   {JSON.stringify(task.result, null, 2)}

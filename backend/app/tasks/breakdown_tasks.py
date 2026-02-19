@@ -119,7 +119,7 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
             task_config=task_config,
             log_publisher=log_publisher
         )
-        
+
         # 任务完成：更新状态
         update_task_progress_sync(
             db, task_id,
@@ -128,15 +128,10 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
             current_step="任务完成 (100%)"
         )
 
-        # 发布任务完成消息到 logs 频道（供 WebSocket 客户端接收）
-        if log_publisher:
-            log_publisher.publish_task_complete(task_id, status=TaskStatus.COMPLETED, message="拆解任务执行完成")
-
         # 批次状态与任务状态保持同步：任务完成 => batch.completed
         if batch_record:
             batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.COMPLETED) or BatchStatus.COMPLETED
             batch_record.ai_processed = True  # 标记为已处理
-            db.commit()
 
         # Token 计费：从 LLMCallLog 汇总该任务的 token 使用量并扣费
         # 从 task_config 中获取 model_config_id，用于查询 AIModelPricing
@@ -147,13 +142,20 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
             task_type="breakdown",
             model_config_id=task_config.get("model_config_id")
         )
+
+        # 统一 commit（无论是否有 Token 消耗，都要提交批次状态）
+        db.commit()
+
         if token_result.get("token_credits", 0) > 0:
-            db.commit()
             logger.info(
                 f"Token 扣费完成: input={token_result.get('input_tokens', 0)}, "
                 f"output={token_result.get('output_tokens', 0)}, "
                 f"credits={token_result.get('token_credits', 0)}"
             )
+
+        # 发布任务完成消息到 logs 频道（在 commit 之后发送，确保前端查询到最新状态）
+        if log_publisher:
+            log_publisher.publish_task_complete(task_id, status=TaskStatus.COMPLETED, message="拆解任务执行完成")
 
         return {"status": TaskStatus.COMPLETED, "task_id": task_id}
 
@@ -162,6 +164,14 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
             db, task_id, batch_record, task_record, log_publisher, str(e)
         )
         return {"status": TaskStatus.CANCELED, "task_id": task_id}
+
+    except QuotaExceededError as e:
+        # 配额不足错误：专门处理，不重试
+        _handle_quota_exceeded_sync(
+            db, task_id, batch_record, task_record, user_id, e, log_publisher
+        )
+        raise
+
     except AITaskException as e:
         # 其他AI任务错误：标记失败，不重试
         _handle_task_failure_sync(
@@ -213,12 +223,12 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
             _handle_retryable_error_sync(
                 db, task_id, batch_record, task_record, classified_error, log_publisher
             )
-            raise
+            raise classified_error from e  # 抛出分类后的异常，保留原始异常链
         else:
             _handle_task_failure_sync(
                 db, task_id, batch_record, task_record, user_id, classified_error, log_publisher
             )
-            raise
+            raise classified_error from e  # 抛出分类后的异常，保留原始异常链
 
     finally:
         # 清理资源
@@ -226,7 +236,15 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
             try:
                 log_publisher.close()
             except Exception as e:
-                print(f"关闭 RedisLogPublisher 失败: {e}")
+                logger.warning(f"关闭 RedisLogPublisher 失败: {e}")
+
+        # 关闭模型适配器（如果有 close 方法）
+        if 'model_adapter' in locals() and hasattr(model_adapter, 'close'):
+            try:
+                model_adapter.close()
+            except Exception as e:
+                logger.warning(f"关闭 model_adapter 失败: {e}")
+
         db.close()
 
 
@@ -242,31 +260,46 @@ def _handle_retryable_error_sync(
 
     更新状态为retrying，等待Celery自动重试。
     """
-    error_info = {
-        "code": error.code,
-        "message": error.message,
-        "retry_count": task_record.retry_count if task_record else 0,
-        "retrying_at": datetime.utcnow().isoformat(),
-        "will_retry_after": error.retry_after
-    }
+    try:
+        # 如果当前事务已经 abort，先回滚
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
-    update_task_progress_sync(
-        db, task_id,
-        status=TaskStatus.RETRYING,
-        error_message=json.dumps(error_info)
-    )
+        error_info = {
+            "code": error.code,
+            "message": error.message,
+            "retry_count": task_record.retry_count if task_record else 0,
+            "retrying_at": datetime.utcnow().isoformat(),
+            "will_retry_after": error.retry_after
+        }
 
-    if batch_record:
-        batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.RETRYING) or BatchStatus.PROCESSING
-        db.commit()
-
-    # 发布错误消息
-    if log_publisher:
-        log_publisher.publish_error(
-            task_id,
-            error.message,
-            error_code=error.code
+        update_task_progress_sync(
+            db, task_id,
+            status=TaskStatus.RETRYING,
+            error_message=json.dumps(error_info)
         )
+
+        if batch_record:
+            batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.RETRYING) or BatchStatus.PROCESSING
+            db.commit()
+
+        # 发布错误消息
+        if log_publisher:
+            log_publisher.publish_error(
+                task_id,
+                error.message,
+                error_code=error.code
+            )
+
+    except Exception as e:
+        # 如果更新状态失败，记录日志但不抛出异常
+        logger.error(f"更新任务重试状态时出错: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
 
 def _handle_quota_exceeded_sync(
@@ -283,28 +316,44 @@ def _handle_quota_exceeded_sync(
     标记任务失败。
     注意：采用后扣费模式，不需要回滚积分。
     """
-    # 更新任务状态
-    error_info = error.to_dict()
-    error_info["failed_at"] = datetime.utcnow().isoformat()
+    try:
+        # 如果当前事务已经 abort，先回滚
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
-    update_task_progress_sync(
-        db, task_id,
-        status=TaskStatus.FAILED,
-        error_message=json.dumps(error_info)
-    )
+        # 更新任务状态
+        error_info = error.to_dict()
+        error_info["failed_at"] = datetime.utcnow().isoformat()
 
-    # 更新批次状态
-    if batch_record:
-        batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.FAILED) or BatchStatus.FAILED
+        update_task_progress_sync(
+            db, task_id,
+            status=TaskStatus.FAILED,
+            error_message=json.dumps(error_info)
+        )
+
+        # 更新批次状态
+        if batch_record:
+            batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.FAILED) or BatchStatus.FAILED
+
         db.commit()
 
-    # 发布错误消息
-    if log_publisher:
-        log_publisher.publish_error(
-            task_id,
-            error.message,
-            error_code=error.code
-        )
+        # 发布错误消息
+        if log_publisher:
+            log_publisher.publish_error(
+                task_id,
+                error.message,
+                error_code=error.code
+            )
+
+    except Exception as e:
+        # 如果更新状态失败，记录日志但不抛出异常
+        logger.error(f"更新配额不足任务状态时出错: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
 
 def _handle_timeout_failure_sync(
@@ -390,47 +439,63 @@ def _handle_task_failure_sync(
     更新状态，记录错误信息。
     注意：即使任务失败，也需要扣除已消耗的 Token 费用（因为实际调用了 API）。
     """
-    # 更新任务状态
-    error_info = error.to_dict()
-    error_info["failed_at"] = datetime.utcnow().isoformat()
-    error_info["retry_count"] = task_record.retry_count if task_record else 0
+    try:
+        # 如果当前事务已经 abort，先回滚
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
-    update_task_progress_sync(
-        db, task_id,
-        status=TaskStatus.FAILED,
-        error_message=json.dumps(error_info)
-    )
+        # 更新任务状态
+        error_info = error.to_dict()
+        error_info["failed_at"] = datetime.utcnow().isoformat()
+        error_info["retry_count"] = task_record.retry_count if task_record else 0
 
-    # 更新批次状态
-    if batch_record:
-        batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.FAILED) or BatchStatus.FAILED
-        db.commit()
-
-    # Token 计费：即使任务失败，也需要扣除已消耗的 Token 费用
-    # 从 task_record.config 中获取 model_config_id
-    task_config = task_record.config if task_record else {}
-    token_result = consume_token_credits_sync(
-        db=db,
-        user_id=user_id,
-        task_id=task_id,
-        task_type="breakdown",
-        model_config_id=task_config.get("model_config_id")
-    )
-    if token_result.get("token_credits", 0) > 0:
-        db.commit()
-        logger.info(
-            f"任务失败但仍扣除 Token 费用: input={token_result.get('input_tokens', 0)}, "
-            f"output={token_result.get('output_tokens', 0)}, "
-            f"credits={token_result.get('token_credits', 0)}"
+        update_task_progress_sync(
+            db, task_id,
+            status=TaskStatus.FAILED,
+            error_message=json.dumps(error_info)
         )
 
-    # 发布错误消息
-    if log_publisher:
-        log_publisher.publish_error(
-            task_id,
-            error.message,
-            error_code=error.code
+        # 更新批次状态
+        if batch_record:
+            batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.FAILED) or BatchStatus.FAILED
+            db.commit()
+
+        # Token 计费：即使任务失败，也需要扣除已消耗的 Token 费用
+        # 从 task_record.config 中获取 model_config_id
+        task_config = task_record.config if task_record else {}
+        token_result = consume_token_credits_sync(
+            db=db,
+            user_id=user_id,
+            task_id=task_id,
+            task_type="breakdown",
+            model_config_id=task_config.get("model_config_id")
         )
+        if token_result.get("token_credits", 0) > 0:
+            db.commit()
+            logger.info(
+                f"任务失败但仍扣除 Token 费用: input={token_result.get('input_tokens', 0)}, "
+                f"output={token_result.get('output_tokens', 0)}, "
+                f"credits={token_result.get('token_credits', 0)}"
+            )
+
+        # 发布错误消息
+        if log_publisher:
+            log_publisher.publish_error(
+                task_id,
+                error.message,
+                error_code=error.code
+            )
+
+    except Exception as e:
+        # 如果更新状态失败，记录日志但不抛出异常
+        # 确保原始错误能够被正确传播
+        logger.error(f"更新任务失败状态时出错: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
 
 
@@ -485,7 +550,7 @@ def _execute_breakdown_sync(
 
     # 1. 加载章节数据（10%）
     _raise_if_cancelled_sync(db, task_id)
-    update_task_progress_sync(db, task_id, progress=5, current_step="加载章节数据中... (5%)")
+    update_task_progress_sync(db, task_id, progress=5, current_step="章节数据加载中... (5%)")
 
     batch = db.query(Batch).filter(Batch.id == batch_id).first()
     if not batch:
@@ -531,7 +596,7 @@ def _execute_breakdown_sync(
 
     # 2. 加载 AI 资源文档（15%）
     _raise_if_cancelled_sync(db, task_id)
-    update_task_progress_sync(db, task_id, progress=12, current_step="加载 AI 资源文档中... (12%)")
+    update_task_progress_sync(db, task_id, progress=12, current_step="AI Skills 加载中 ... (12%)")
 
     novel_type = task_config.get("novel_type")
     resource_ids = task_config.get("resource_ids", [])
@@ -540,6 +605,11 @@ def _execute_breakdown_sync(
     output_style = ""
     template = ""
     example = ""
+    # 新增资源变量
+    hook_types = ""
+    hook_boundary_rules = ""
+    genre_guidelines = ""
+    qa_dimensions = ""
     grouped_resources = {}
 
     if resource_ids:
@@ -553,6 +623,15 @@ def _execute_breakdown_sync(
             adapt_method = (adapt_method + "\n\n---\n\n" + qa_content) if adapt_method else qa_content
         if grouped_resources.get("template"):
             template = "\n\n---\n\n".join(grouped_resources["template"])
+        # 新增分类处理
+        if grouped_resources.get("hook_types"):
+            hook_types = "\n\n---\n\n".join(grouped_resources["hook_types"])
+        if grouped_resources.get("hook_rules"):
+            hook_boundary_rules = "\n\n---\n\n".join(grouped_resources["hook_rules"])
+        if grouped_resources.get("type_guide"):
+            genre_guidelines = "\n\n---\n\n".join(grouped_resources["type_guide"])
+        if grouped_resources.get("qa_dimensions"):
+            qa_dimensions = "\n\n---\n\n".join(grouped_resources["qa_dimensions"])
     else:
         layered_resources = load_layered_resources_sync(db, stage="breakdown", novel_type=novel_type)
         adapt_method_parts = [layered_resources.get(k) for k in ("core", "breakdown", "type") if layered_resources.get(k)]
@@ -561,11 +640,21 @@ def _execute_breakdown_sync(
         template = _load_ai_resource_sync(db, task_config.get("template_id"), "template")
         example = _load_ai_resource_sync(db, task_config.get("example_id"), "example")
 
-    update_task_progress_sync(db, task_id, progress=15, current_step="AI 资源文档加载完成 (15%)")
+    # 未选择时加载系统默认资源
+    if not hook_types:
+        hook_types = _load_default_resource_sync(db, "hook_types")
+    if not hook_boundary_rules:
+        hook_boundary_rules = _load_default_resource_sync(db, "hook_rules")
+    if not genre_guidelines:
+        genre_guidelines = _load_default_resource_sync(db, "type_guide")
+    if not qa_dimensions:
+        qa_dimensions = _load_default_resource_sync(db, "qa_dimensions")
+
+    update_task_progress_sync(db, task_id, progress=15, current_step="AI Skills 加载完成 (15%)")
 
     # 3. 执行拆解（20%-90%）
     _raise_if_cancelled_sync(db, task_id)
-    update_task_progress_sync(db, task_id, progress=20, current_step="执行剧情拆解中... (20%)")
+    update_task_progress_sync(db, task_id, progress=20, current_step="剧集拆解 Agent 正在运行中 ...(20%)")
 
     # 构建 Agent 上下文
     agent_context = {
@@ -577,6 +666,11 @@ def _execute_breakdown_sync(
         "start_chapter": str(batch.start_chapter),
         "end_chapter": str(batch.end_chapter),
         "start_episode": str(start_episode),
+        # 新增资源参数
+        "hook_types": hook_types or HOOK_TYPES_COMPACT_DEFAULT,
+        "hook_boundary_rules": hook_boundary_rules or HOOK_BOUNDARY_RULES_DEFAULT,
+        "genre_guidelines": genre_guidelines or GENRE_GUIDELINES_DEFAULT,
+        "qa_dimensions": qa_dimensions or QA_DIMENSIONS_DEFAULT,
     }
 
     # ============================================================
@@ -633,8 +727,10 @@ def _execute_breakdown_sync(
             logger.error(f"Skill 执行失败: {e}")
             raise AITaskException(code="SKILL_EXECUTION_ERROR", message=str(e))
 
-        update_task_progress_sync(db, task_id, progress=50, current_step="剧情生成完成 (50%)")
+        update_task_progress_sync(db, task_id, progress=50, current_step="剧集拆解 Agent 拆解结束 (50%)")
 
+
+        update_task_progress_sync(db, task_id, progress=55, current_step="质量检查 Agent 工作中 ...(55%)")
         # 执行 QA 质检
         logger.info("skill_only 模式：执行 QA 质检...")
         _raise_if_cancelled_sync(db, task_id)
@@ -645,13 +741,17 @@ def _execute_breakdown_sync(
             chapters_text=chapters_text,
             adapt_method=adapt_method,
             model_adapter=model_adapter,
-            log_publisher=log_publisher
+            log_publisher=log_publisher,
+            hook_types=agent_context.get("hook_types"),
+            hook_boundary_rules=agent_context.get("hook_boundary_rules"),
+            genre_guidelines=agent_context.get("genre_guidelines"),
+            qa_dimensions=agent_context.get("qa_dimensions")
         )
-        qa_status = qa_result.get("status", "pending")
-        qa_score = qa_result.get("score")
+        qa_status = qa_result.get("qa_status", "pending")
+        qa_score = qa_result.get("qa_score")
         qa_report = qa_result
         logger.info(f"skill_only 模式 QA 完成，qa_status: {qa_status}, qa_score: {qa_score}")
-        update_task_progress_sync(db, task_id, progress=70, current_step="质检完成 (70%)")
+        update_task_progress_sync(db, task_id, progress=80, current_step="质检Agent 已完成质检 (80%)")
 
     else:
         # Agent 模式（agent_loop 或 agent_single）
@@ -678,11 +778,17 @@ def _execute_breakdown_sync(
             # 从 Agent 结果中提取数据
             plot_points = results.get("plot_points", [])
             qa_result = results.get("qa_result", {})
-            qa_status = qa_result.get("status", "pending")
-            qa_score = qa_result.get("score")
+            qa_status = qa_result.get("qa_status", "pending")
+            qa_score = qa_result.get("qa_score")
             qa_report = qa_result
 
-            update_task_progress_sync(db, task_id, progress=50, current_step="AI 剧情生成完成 (50%)")
+            # 调试日志：检查 plot_points 是否为空
+            if not plot_points or len(plot_points) == 0:
+                logger.warning(f"⚠️ plot_points 为空！results 键: {list(results.keys())}")
+                if "plot_points" in results:
+                    logger.warning(f"⚠️ plot_points 值: {results.get('plot_points')}")
+
+            update_task_progress_sync(db, task_id, progress=50, current_step="剧集拆解 Agent 拆解结束 (50%)")
             logger.info(f"Agent 执行完成，plot_points: {len(plot_points)}，qa_status: {qa_status}")
 
         except Exception as e:
@@ -704,8 +810,7 @@ def _execute_breakdown_sync(
                 logger.error(f"Skill 执行失败: {e2}")
                 raise AITaskException(code="SKILL_EXECUTION_ERROR", message=str(e2))
 
-            update_task_progress_sync(db, task_id, progress=50, current_step="剧情生成完成 (50%)")
-
+            update_task_progress_sync(db, task_id, progress=50, current_step="剧集拆解 Agent 拆解结束 (50%)")
             # 执行 QA 质检
             logger.info("回退到 Skill 模式，执行 QA 质检...")
             _raise_if_cancelled_sync(db, task_id)
@@ -716,13 +821,17 @@ def _execute_breakdown_sync(
                 chapters_text=chapters_text,
                 adapt_method=adapt_method,
                 model_adapter=model_adapter,
-                log_publisher=log_publisher
+                log_publisher=log_publisher,
+                hook_types=agent_context.get("hook_types"),
+                hook_boundary_rules=agent_context.get("hook_boundary_rules"),
+                genre_guidelines=agent_context.get("genre_guidelines"),
+                qa_dimensions=agent_context.get("qa_dimensions")
             )
-            qa_status = qa_result.get("status", "pending")
-            qa_score = qa_result.get("score")
+            qa_status = qa_result.get("qa_status", "pending")
+            qa_score = qa_result.get("qa_score")
             qa_report = qa_result
             logger.info(f"Skill + QA 模式完成，qa_status: {qa_status}, qa_score: {qa_score}")
-            update_task_progress_sync(db, task_id, progress=70, current_step="质检完成 (70%)")
+            update_task_progress_sync(db, task_id, progress=80, current_step="质检Agent 已完成质检 (80%)")
 
     # -------------------- 补充质检（Agent 模式可能跳过 QA）--------------------
     # Agent 工作流中 QA 步骤可能因为条件不满足被跳过
@@ -736,10 +845,14 @@ def _execute_breakdown_sync(
             chapters_text=chapters_text,
             adapt_method=adapt_method,
             model_adapter=model_adapter,
-            log_publisher=log_publisher
+            log_publisher=log_publisher,
+            hook_types=agent_context.get("hook_types"),
+            hook_boundary_rules=agent_context.get("hook_boundary_rules"),
+            genre_guidelines=agent_context.get("genre_guidelines"),
+            qa_dimensions=agent_context.get("qa_dimensions")
         )
-        qa_status = qa_result.get("status", "pending")
-        qa_score = qa_result.get("score")
+        qa_status = qa_result.get("qa_status", "pending")
+        qa_score = qa_result.get("qa_score")
         qa_report = qa_result
 
     # 确保 plot_points 是列表
@@ -805,7 +918,9 @@ def _execute_breakdown_sync(
             chapters_text=chapters_text,
             model_adapter=model_adapter,
             log_publisher=log_publisher,
-            task_id=task_id
+            task_id=task_id,
+            db=db,
+            adapt_method=adapt_method
         )
 
         # 修正后重新执行质检
@@ -818,10 +933,14 @@ def _execute_breakdown_sync(
             chapters_text=chapters_text,
             adapt_method=adapt_method,
             model_adapter=model_adapter,
-            log_publisher=log_publisher
+            log_publisher=log_publisher,
+            hook_types=agent_context.get("hook_types"),
+            hook_boundary_rules=agent_context.get("hook_boundary_rules"),
+            genre_guidelines=agent_context.get("genre_guidelines"),
+            qa_dimensions=agent_context.get("qa_dimensions")
         )
-        qa_status = qa_result.get("status", "pending")
-        qa_score = qa_result.get("score")
+        qa_status = qa_result.get("qa_status", "pending")
+        qa_score = qa_result.get("qa_score")
         qa_report = qa_result
 
         logger.info(f"第 {fix_attempt} 次修正后质检结果: status={qa_status}, score={qa_score}")
@@ -853,11 +972,22 @@ def _execute_breakdown_sync(
     update_task_progress_sync(db, task_id, progress=90, current_step=f"拆解完成，生成 {len(plot_points)} 个剧情点 (90%)")
 
     # -------------------- 第五步：保存结果到数据库 --------------------
-    # 标准化 qa_status 为大写（前端期望 'PASS' | 'FAIL' | 'pending'）
-    normalized_qa_status_for_db = qa_status.upper() if isinstance(qa_status, str) and qa_status.upper() in ("PASS", "FAIL") else "pending"
+    # 标准化 qa_status（前端期望 'PASS' | 'FAIL' | 'ERROR' | 'pending'）
+    if isinstance(qa_status, str):
+        upper_status = qa_status.upper()
+        if upper_status in ("PASS", "FAIL", "ERROR"):
+            normalized_qa_status_for_db = upper_status
+        else:
+            normalized_qa_status_for_db = "pending"
+    else:
+        normalized_qa_status_for_db = "pending"
 
     # 获取 model_config_id 用于保存拆解记录（便于后续数据分析）
     model_config_id = task_config.get("model_config_id")
+
+    # 将剧情点转换为结构化文本格式存储（用于调试和对比）
+    from app.ai.simple_executor import format_plot_points_to_text
+    plot_points_raw = format_plot_points_to_text(plot_points) if plot_points else None
 
     # 创建 PlotBreakdown 记录
     breakdown = PlotBreakdown(
@@ -866,8 +996,9 @@ def _execute_breakdown_sync(
         task_id=task_id,                    # 关联任务 ID（便于追溯）
         ai_model_id=model_config_id,        # 关联 AI 模型 ID
         model_config_id=model_config_id,    # 模型配置 ID
-        plot_points=plot_points,            # 剧情点列表（核心输出）
-        format_version=2,                   # 输出格式版本
+        plot_points=plot_points,            # 剧情点列表（解析后的 JSON）
+        plot_points_raw=plot_points_raw,    # 原始结构化文本（用于调试）
+        format_version=3,                   # 输出格式版本：3=结构化文本格式
         consistency_status="pending",       # 一致性检查状态
         qa_status=normalized_qa_status_for_db,
         qa_score=qa_score,
@@ -883,11 +1014,11 @@ def _execute_breakdown_sync(
 
     return {
         "breakdown_id": str(breakdown.id),
-        "format_version": 2,
+        "format_version": 3,
         "plot_points_count": len(plot_points),
         "qa_status": qa_status,
         "qa_score": qa_score,
-        "use_agent": use_agent and not used_skill_fallback,  # 实际是否使用了 Agent 模式
+        "use_agent": not used_skill_fallback,  # 实际是否使用了 Agent 模式
     }
 
 
@@ -906,23 +1037,38 @@ def _handle_task_cancelled_sync(
     message: str = "任务已被取消"
 ):
     """处理任务取消"""
-    # 更新任务状态为 canceled
-    task = task_record or db.query(AITask).filter(AITask.id == task_id).first()
-    if task:
-        task.status = TaskStatus.CANCELED
-        task.current_step = "用户已取消"
-        task.error_message = None
-
-    # 批次状态与任务状态保持同步：任务取消 => batch.pending
-    if batch_record:
-        batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.CANCELED) or BatchStatus.PENDING
-
-    db.commit()
-
-    if log_publisher:
+    try:
+        # 如果当前事务已经 abort，先回滚
         try:
-            log_publisher.publish_warning(task_id, message)
-            log_publisher.publish_task_complete(task_id, status=TaskStatus.CANCELED, message=message)
+            db.rollback()
+        except Exception:
+            pass
+
+        # 更新任务状态为 canceled
+        task = task_record or db.query(AITask).filter(AITask.id == task_id).first()
+        if task:
+            task.status = TaskStatus.CANCELED
+            task.current_step = "用户已取消"
+            task.error_message = None
+
+        # 批次状态与任务状态保持同步：任务取消 => batch.pending
+        if batch_record:
+            batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.CANCELED) or BatchStatus.PENDING
+
+        db.commit()
+
+        if log_publisher:
+            try:
+                log_publisher.publish_warning(task_id, message)
+                log_publisher.publish_task_complete(task_id, status=TaskStatus.CANCELED, message=message)
+            except Exception:
+                pass
+
+    except Exception as e:
+        # 如果更新状态失败，记录日志但不抛出异常
+        logger.error(f"处理任务取消时出错: {e}")
+        try:
+            db.rollback()
         except Exception:
             pass
 
@@ -938,7 +1084,8 @@ def _execute_breakdown_sync_v1(
 ) -> dict:
     """执行拆解逻辑 v1（旧版：Agent 系统 + 6 字段格式）
 
-    保留作为 fallback，当 task_config.format_version == 1 时使用。
+    保留作为只读兼容层，当 task_config.format_version == 1 时使用。
+    注意：v1 格式已废弃，新项目应使用 v3 格式。
     """
     from app.models.chapter import Chapter
     from app.models.plot_breakdown import PlotBreakdown
@@ -970,119 +1117,28 @@ def _execute_breakdown_sync_v1(
 
     context = {"chapters_text": chapters_text}
 
-    try:
-        results = executor.execute_agent(
-            agent_name="breakdown_agent",
-            context=context,
-            task_id=task_id
-        )
+    results = executor.execute_agent(
+        agent_name="breakdown_agent",
+        context=context,
+        task_id=task_id
+    )
 
-        conflicts = results.get("conflicts", [])
-        plot_hooks = results.get("plot_hooks", [])
-        characters = results.get("characters", [])
-        scenes = results.get("scenes", [])
-        emotions = results.get("emotions", [])
-        episodes = results.get("episodes", [])
+    conflicts = results.get("conflicts", [])
+    plot_hooks = results.get("plot_hooks", [])
+    characters = results.get("characters", [])
+    scenes = results.get("scenes", [])
+    emotions = results.get("emotions", [])
+    episodes = results.get("episodes", [])
 
-    except Exception as e:
-        if log_publisher:
-            log_publisher.publish_warning(
-                task_id,
-                f"Agent 系统执行失败，回退到传统方法: {str(e)}"
-            )
-
-        update_task_progress_sync(db, task_id, progress=20, current_step="提取冲突中... (20%)")
-        conflicts = _extract_conflicts_sync(
-            chapters_text, model_adapter, task_config, log_publisher, task_id
-        )
-
-        update_task_progress_sync(db, task_id, progress=35, current_step="识别情节钩子中... (35%)")
-        plot_hooks = _identify_plot_hooks_sync(
-            chapters_text, model_adapter, task_config, log_publisher, task_id
-        )
-
-        update_task_progress_sync(db, task_id, progress=50, current_step="分析角色中... (50%)")
-        characters = _analyze_characters_sync(
-            chapters_text, model_adapter, task_config, log_publisher, task_id
-        )
-
-        update_task_progress_sync(db, task_id, progress=65, current_step="识别场景中... (65%)")
-        scenes = _identify_scenes_sync(
-            chapters_text, model_adapter, task_config, log_publisher, task_id
-        )
-
-        update_task_progress_sync(db, task_id, progress=80, current_step="提取情感中... (80%)")
-        emotions = _extract_emotions_sync(
-            chapters_text, model_adapter, task_config, log_publisher, task_id
-        )
-
-        update_task_progress_sync(db, task_id, progress=85, current_step="规划剧集结构中... (85%)")
-        episodes = _plan_episodes_sync(
-            conflicts=conflicts,
-            plot_hooks=plot_hooks,
-            characters=characters,
-            scenes=scenes,
-            emotions=emotions,
-            chapters=chapters,
-            model_adapter=model_adapter,
-            task_config=task_config,
-            log_publisher=log_publisher,
-            task_id=task_id
-        )
-
-    # 质量检查（可选）
-    qa_status = "pending"
-    qa_score = None
-    qa_report = None
-
-    enable_qa = task_config.get("enable_qa", False)
-
-    if enable_qa:
-        update_task_progress_sync(db, task_id, progress=88, current_step="质量检查中... (88%)")
-
-        breakdown_data = {
-            "conflicts": conflicts,
-            "plot_hooks": plot_hooks,
-            "characters": characters,
-            "scenes": scenes,
-            "emotions": emotions,
-            "episodes": episodes
-        }
-
-        adapt_method_config = _get_adapt_method_sync(db, task_config)
-
-        qa_result = _run_qa_loop_sync(
-            db=db,
-            task_id=task_id,
-            breakdown_data=breakdown_data,
-            chapters=chapters,
-            adapt_method=adapt_method_config,
-            model_adapter=model_adapter,
-            log_publisher=log_publisher
-        )
-
-        qa_status = qa_result.get("qa_status", "pending")
-        qa_score = qa_result.get("qa_score")
-        qa_report = qa_result.get("qa_report")
-
-        if qa_result.get("modified_data"):
-            modified = qa_result["modified_data"]
-            conflicts = modified.get("conflicts", conflicts)
-            plot_hooks = modified.get("plot_hooks", plot_hooks)
-            characters = modified.get("characters", characters)
-            scenes = modified.get("scenes", scenes)
-            emotions = modified.get("emotions", emotions)
-            episodes = modified.get("episodes", episodes)
-
-    # 获取 model_config_id 用于数据分析（来自 model_configs 表）
+    # 获取 model_config_id 用于数据分析
     model_config_id = task_config.get("model_config_id")
 
     breakdown = PlotBreakdown(
         batch_id=batch_id,
         project_id=project_id,
-        task_id=task_id,  # 关联任务 ID
-        ai_model_id=model_config_id,  # ai_models 表的 ID（复用 model_config_id 的值，因为实际存储的是 ai_models 的 ID）
-        model_config_id=model_config_id,  # model_configs 表的 ID（可能为空，因为 model_configs 表目前为空）
+        task_id=task_id,
+        ai_model_id=model_config_id,
+        model_config_id=model_config_id,
         conflicts=conflicts,
         plot_hooks=plot_hooks,
         characters=characters,
@@ -1093,9 +1149,9 @@ def _execute_breakdown_sync_v1(
         consistency_status="pending",
         consistency_score=None,
         consistency_results=None,
-        qa_status=qa_status,
-        qa_score=qa_score,
-        qa_report=qa_report,
+        qa_status="pending",
+        qa_score=None,
+        qa_report=None,
         used_adapt_method_id=task_config.get("adapt_method_key")
     )
 
@@ -1187,6 +1243,7 @@ def _load_resources_by_ids_sync(db: Session, resource_ids: list) -> dict:
 def _extract_fix_instructions_from_qa_report(qa_report: dict) -> str:
     """从 QA 报告中提取修正指令
 
+    支持新格式（结构化文本解析后的 dict）和旧格式（JSON 解析后的 dict）。
     将问题列表和修复指引组合成提示词，用于自动修正。
 
     Args:
@@ -1198,6 +1255,16 @@ def _extract_fix_instructions_from_qa_report(qa_report: dict) -> str:
     if not qa_report:
         return ""
 
+    # 检查是否是新格式（dimensions 是 list 且包含 fix_suggestion）
+    dimensions = qa_report.get("dimensions", [])
+    if isinstance(dimensions, list) and dimensions:
+        first_dim = dimensions[0] if dimensions else {}
+        if isinstance(first_dim, dict) and "fix_suggestion" in first_dim:
+            # 新格式：使用 format_qa_result_to_text
+            from app.ai.simple_executor import format_qa_result_to_text
+            return format_qa_result_to_text(qa_report)
+
+    # 旧格式：保持原有逻辑
     instructions_parts = []
 
     # 1. 提取问题列表
@@ -1235,20 +1302,7 @@ def _extract_fix_instructions_from_qa_report(qa_report: dict) -> str:
                         instructions_parts.append(f"{i}. {action}")
         instructions_parts.append("")
 
-    # 3. 提取改进建议
-    suggestions = qa_report.get("suggestions", [])
-    if suggestions:
-        instructions_parts.append("## 改进建议\n")
-        for i, suggestion in enumerate(suggestions, 1):
-            if isinstance(suggestion, str):
-                instructions_parts.append(f"{i}. {suggestion}")
-            elif isinstance(suggestion, dict):
-                action = suggestion.get("action") or suggestion.get("suggestion") or str(suggestion)
-                instructions_parts.append(f"{i}. {action}")
-        instructions_parts.append("")
-
-    # 4. 提取各维度的详细问题
-    dimensions = qa_report.get("dimensions", {})
+    # 3. 提取各维度的详细问题
     if dimensions:
         failed_dimensions = []
         if isinstance(dimensions, dict):
@@ -1279,11 +1333,14 @@ def _auto_fix_breakdown_sync(
     chapters_text: str,
     model_adapter,
     log_publisher=None,
-    task_id: str = None
+    task_id: str = None,
+    db: Session = None,
+    adapt_method: str = ""
 ) -> list:
-    """根据质检反馈自动修正剧情点（针对性修正策略）
+    """根据质检反馈自动修正剧情点（复用 webtoon_breakdown Skill 的修复模式）
 
     优化版本：
+    - 复用 webtoon_breakdown Skill，使用 previous_plot_points 和 qa_feedback 参数触发修复模式
     - 支持结构化修正指令（fix_instructions_list）
     - 按问题类型分类处理
     - 优先使用直接替换，减少 AI 调用
@@ -1295,10 +1352,14 @@ def _auto_fix_breakdown_sync(
         model_adapter: 模型适配器
         log_publisher: 日志发布器（可选）
         task_id: 任务 ID（可选）
+        db: 数据库会话（可选，用于调用 Skill）
+        adapt_method: 改编方法论（可选）
 
     Returns:
         list: 修正后的剧情点 JSON 数组
     """
+    from app.ai.simple_executor import format_plot_points_to_text, parse_text_plot_points, format_qa_feedback_to_text
+
     step_name = "自动修正剧情点"
 
     if log_publisher and task_id:
@@ -1310,6 +1371,7 @@ def _auto_fix_breakdown_sync(
 
     if isinstance(fix_instructions, list):
         instructions_list = fix_instructions
+        instructions_text = format_qa_feedback_to_text(fix_instructions)
     elif isinstance(fix_instructions, str):
         instructions_text = fix_instructions
         # 尝试从文本中解析结构化指令
@@ -1350,10 +1412,48 @@ def _auto_fix_breakdown_sync(
             )
         return plot_points
 
-    # 格式化剧情点为易读文本（对大模型更友好）
-    plot_points_text = _format_plot_points_for_llm(plot_points)
+    # 优先使用 webtoon_breakdown Skill 进行修复（如果有 db 会话）
+    if db is not None:
+        try:
+            from app.ai.simple_executor import SimpleSkillExecutor
 
-    # 使用 AI 进行复杂修正
+            skill_executor = SimpleSkillExecutor(db, model_adapter, log_publisher)
+
+            # 调用 webtoon_breakdown Skill（修复模式）
+            result = skill_executor.execute_skill(
+                skill_name="webtoon_breakdown",
+                inputs={
+                    "previous_plot_points": plot_points,  # 上一轮结果，触发修复模式
+                    "qa_feedback": instructions_text,  # 质检反馈
+                    "chapters_text": chapters_text[:5000],  # 限制长度
+                    "adapt_method": adapt_method or "",
+                    "output_style": "",  # 修复模式下可为空
+                    "template": "",  # 修复模式下可为空
+                    "example": "",  # 修复模式下可为空
+                    "start_chapter": 1,  # 修复模式下使用默认值
+                    "end_chapter": 1,  # 修复模式下使用默认值
+                    "start_episode": 1  # 修复模式下使用默认值
+                },
+                task_id=task_id
+            )
+
+            # 确保返回列表
+            if isinstance(result, list) and result:
+                if log_publisher and task_id:
+                    log_publisher.publish_step_end(
+                        task_id, step_name,
+                        {"status": "success", "method": "skill_repair", "count": len(result)}
+                    )
+                return result
+
+            logger.warning("webtoon_breakdown Skill 返回空结果，回退到直接调用模型")
+
+        except Exception as e:
+            logger.warning(f"调用 webtoon_breakdown Skill 失败，回退到直接调用模型: {e}")
+
+    # 回退：直接调用模型（兼容没有 db 会话的情况）
+    plot_points_text = format_plot_points_to_text(plot_points)
+
     prompt = f"""你是一个专业的剧情拆解修正专家。请根据质检反馈修正以下剧情点。
 
 ## 当前剧情点
@@ -1368,12 +1468,15 @@ def _auto_fix_breakdown_sync(
 
 ## 修正要求
 1. 严格按照修正指令进行修改
-2. 保持 JSON 数组格式不变
-3. 只修改需要修正的部分，不要改动正确的内容
-4. 确保修正后的内容与原文一致
-5. 每个剧情点必须包含：场景、角色、事件、情绪钩子类型、集数
+2. 只修改需要修正的部分，不要改动正确的内容
+3. 确保修正后的内容与原文一致
+4. 每个剧情点必须包含：场景、角色、事件、情绪钩子类型、集数
 
-请直接返回修正后的完整 JSON 数组，不要包含其他文字。
+## 输出格式（必须严格遵循）
+每个剧情点占一行，使用 | 分隔各字段，格式如下：
+【剧情N】场景地点|角色A/角色B|事件描述|情绪钩子类型|第X集|第Y章
+
+请直接输出修正后的完整剧情点列表，每行一个，不要输出 JSON 或其他格式。
 """
 
     try:
@@ -1383,7 +1486,20 @@ def _auto_fix_breakdown_sync(
                 log_publisher.publish_stream_chunk(task_id, step_name, chunk)
             full_response += chunk
 
-        result = _parse_json_response_sync(full_response, default=plot_points)
+        # 优先尝试结构化文本格式解析
+        if '【剧情' in full_response:
+            result = parse_text_plot_points(full_response)
+            if result:
+                if log_publisher and task_id:
+                    log_publisher.publish_step_end(
+                        task_id, step_name,
+                        {"status": "success", "method": "ai_fix_text", "count": len(result)}
+                    )
+                return result
+
+        # 回退到 JSON 解析
+        from app.ai.simple_executor import parse_llm_response
+        result = parse_llm_response(full_response, default=plot_points)
 
         # 确保返回列表
         if isinstance(result, dict):
@@ -1394,7 +1510,7 @@ def _auto_fix_breakdown_sync(
         if log_publisher and task_id:
             log_publisher.publish_step_end(
                 task_id, step_name,
-                {"status": "success", "method": "ai_fix", "count": len(result)}
+                {"status": "success", "method": "ai_fix_json", "count": len(result)}
             )
 
         return result
@@ -1516,83 +1632,6 @@ def _format_remaining_instructions(instructions: list) -> str:
     return "\n".join(lines)
 
 
-def _simplify_plot_points(plot_points: list) -> list:
-    """简化剧情点列表（降级策略）
-
-    当质检分数过低时，只保留核心剧情点，删除低强度内容。
-
-    策略：
-    1. 只保留包含高强度情绪钩子的剧情点
-    2. 每6章最多保留5个剧情点
-    3. 确保每集至少有1个剧情点
-
-    Args:
-        plot_points: 原始剧情点列表
-
-    Returns:
-        list: 简化后的剧情点列表
-    """
-    if not plot_points:
-        return []
-
-    # 高强度情绪钩子类型
-    high_intensity_hooks = {
-        "打脸爽点", "碾压爽点", "金手指觉醒", "身份曝光", "真相揭露",
-        "绝境反杀", "底牌爆发", "复仇成功", "反转爽点", "虐心高潮",
-        "打脸蓄力", "实力突破", "危机出现"
-    }
-
-    # 中等强度情绪钩子类型
-    medium_intensity_hooks = {
-        "初露锋芒", "身份提升", "悬念开场", "误会产生", "甜宠时刻",
-        "吃醋争风", "先知优势"
-    }
-
-    simplified = []
-    episode_counts = {}  # 记录每集的剧情点数量
-
-    for point in plot_points:
-        # 提取情绪钩子类型
-        hook_type = ""
-        episode = None
-
-        if isinstance(point, dict):
-            hook_type = point.get("emotion_hook", point.get("hook_type", ""))
-            episode = point.get("episode", point.get("集数"))
-        elif isinstance(point, str):
-            # 从字符串中提取
-            for hook in high_intensity_hooks | medium_intensity_hooks:
-                if hook in point:
-                    hook_type = hook
-                    break
-            # 提取集数
-            import re
-            match = re.search(r'第(\d+)集', point)
-            if match:
-                episode = int(match.group(1))
-
-        # 判断是否保留
-        is_high = hook_type in high_intensity_hooks
-        is_medium = hook_type in medium_intensity_hooks
-
-        if is_high:
-            # 高强度：必须保留
-            simplified.append(point)
-            if episode:
-                episode_counts[episode] = episode_counts.get(episode, 0) + 1
-        elif is_medium:
-            # 中等强度：如果该集还没有剧情点，则保留
-            if episode and episode_counts.get(episode, 0) == 0:
-                simplified.append(point)
-                episode_counts[episode] = 1
-
-    # 如果简化后太少，保留前 5 个
-    if len(simplified) < 3 and len(plot_points) >= 3:
-        simplified = plot_points[:5]
-
-    return simplified
-
-
 def _format_chapters_sync(chapters) -> str:
     """格式化章节文本
 
@@ -1614,796 +1653,48 @@ def _format_chapters_sync(chapters) -> str:
     return "\n\n".join(formatted)
 
 
-def _extract_conflicts_sync(
-    chapters_text: str,
-    model_adapter,
-    task_config: dict,
-    log_publisher=None,
-    task_id: str = None
-) -> list:
-    """提取冲突（支持流式输出）
-    
-    Args:
-        chapters_text: 章节文本
-        model_adapter: 模型适配器
-        task_config: 任务配置
-        log_publisher: Redis 日志发布器（可选）
-        task_id: 任务 ID（可选）
-    
-    Returns:
-        list: 冲突列表
-    """
-    step_name = "提取冲突"
-    
-    # 发布步骤开始消息
-    if log_publisher and task_id:
-        log_publisher.publish_step_start(task_id, step_name)
-    
-    prompt = f"""你是一个专业的剧情分析师。请分析以下章节内容，提取其中的主要冲突。
-
-章节内容：
-{chapters_text}
-
-请以 JSON 数组格式返回冲突列表，每个冲突包含以下字段：
-- type: 冲突类型（如：人物冲突、内心冲突、环境冲突等）
-- description: 冲突描述
-- participants: 参与者列表
-- intensity: 冲突强度（1-10）
-- chapter_range: 涉及的章节范围
-
-示例格式：
-[
-  {{
-    "type": "人物冲突",
-    "description": "主角与反派之间的权力斗争",
-    "participants": ["主角", "反派"],
-    "intensity": 8,
-    "chapter_range": [1, 3]
-  }}
-]
-
-请只返回 JSON 数组，不要包含其他文字。
-"""
-    
-    try:
-        # 使用流式生成
-        full_response = ""
-        for chunk in model_adapter.stream_generate(prompt):
-            # 发布流式内容片段
-            if log_publisher and task_id:
-                log_publisher.publish_stream_chunk(task_id, step_name, chunk)
-            full_response += chunk
-        
-        # 解析结果
-        result = _parse_json_response_sync(full_response, default=[])
-        
-        # 发布步骤结束消息
-        if log_publisher and task_id:
-            log_publisher.publish_step_end(task_id, step_name, {"count": len(result)})
-        
-        return result
-        
-    except Exception as e:
-        # 发布错误消息
-        if log_publisher and task_id:
-            log_publisher.publish_error(task_id, str(e), error_code=None, step_name=step_name)
-        print(f"提取冲突失败: {e}")
-        return []
-
-
-def _identify_plot_hooks_sync(
-    chapters_text: str,
-    model_adapter,
-    task_config: dict,
-    log_publisher=None,
-    task_id: str = None
-) -> list:
-    """识别情节钩子（支持流式输出）
-    
-    Args:
-        chapters_text: 章节文本
-        model_adapter: 模型适配器
-        task_config: 任务配置
-        log_publisher: Redis 日志发布器（可选）
-        task_id: 任务 ID（可选）
-    
-    Returns:
-        list: 情节钩子列表
-    """
-    step_name = "识别情节钩子"
-    
-    # 发布步骤开始消息
-    if log_publisher and task_id:
-        log_publisher.publish_step_start(task_id, step_name)
-    
-    prompt = f"""你是一个专业的剧情分析师。请分析以下章节内容，识别其中的情节钩子（吸引读者继续阅读的关键点）。
-
-章节内容：
-{chapters_text}
-
-请以 JSON 数组格式返回情节钩子列表，每个钩子包含以下字段：
-- type: 钩子类型（如：悬念、转折、伏笔、高潮等）
-- description: 钩子描述
-- chapter: 所在章节
-- impact: 影响力（1-10）
-
-示例格式：
-[
-  {{
-    "type": "悬念",
-    "description": "主角发现了一个神秘的线索",
-    "chapter": 2,
-    "impact": 7
-  }}
-]
-
-请只返回 JSON 数组，不要包含其他文字。
-"""
-    
-    try:
-        # 使用流式生成
-        full_response = ""
-        for chunk in model_adapter.stream_generate(prompt):
-            # 发布流式内容片段
-            if log_publisher and task_id:
-                log_publisher.publish_stream_chunk(task_id, step_name, chunk)
-            full_response += chunk
-        
-        # 解析结果
-        result = _parse_json_response_sync(full_response, default=[])
-        
-        # 发布步骤结束消息
-        if log_publisher and task_id:
-            log_publisher.publish_step_end(task_id, step_name, {"count": len(result)})
-        
-        return result
-        
-    except Exception as e:
-        # 发布错误消息
-        if log_publisher and task_id:
-            log_publisher.publish_error(task_id, str(e), error_code=None, step_name=step_name)
-        print(f"识别情节钩子失败: {e}")
-        return []
-
-
-def _analyze_characters_sync(
-    chapters_text: str,
-    model_adapter,
-    task_config: dict,
-    log_publisher=None,
-    task_id: str = None
-) -> list:
-    """分析角色（支持流式输出）
-    
-    Args:
-        chapters_text: 章节文本
-        model_adapter: 模型适配器
-        task_config: 任务配置
-        log_publisher: Redis 日志发布器（可选）
-        task_id: 任务 ID（可选）
-    
-    Returns:
-        list: 角色列表
-    """
-    step_name = "分析角色"
-    
-    # 发布步骤开始消息
-    if log_publisher and task_id:
-        log_publisher.publish_step_start(task_id, step_name)
-    
-    prompt = f"""你是一个专业的剧情分析师。请分析以下章节内容，提取并分析其中的主要角色。
-
-章节内容：
-{chapters_text}
-
-请以 JSON 数组格式返回角色列表，每个角色包含以下字段：
-- name: 角色名称
-- role: 角色定位（如：主角、配角、反派等）
-- traits: 性格特征列表
-- relationships: 与其他角色的关系
-- arc: 角色弧光描述
-
-示例格式：
-[
-  {{
-    "name": "张三",
-    "role": "主角",
-    "traits": ["勇敢", "善良", "冲动"],
-    "relationships": {{"李四": "好友", "王五": "敌人"}},
-    "arc": "从懦弱到勇敢的成长"
-  }}
-]
-
-请只返回 JSON 数组，不要包含其他文字。
-"""
-    
-    try:
-        # 使用流式生成
-        full_response = ""
-        for chunk in model_adapter.stream_generate(prompt):
-            # 发布流式内容片段
-            if log_publisher and task_id:
-                log_publisher.publish_stream_chunk(task_id, step_name, chunk)
-            full_response += chunk
-        
-        # 解析结果
-        result = _parse_json_response_sync(full_response, default=[])
-        
-        # 发布步骤结束消息
-        if log_publisher and task_id:
-            log_publisher.publish_step_end(task_id, step_name, {"count": len(result)})
-        
-        return result
-        
-    except Exception as e:
-        # 发布错误消息
-        if log_publisher and task_id:
-            log_publisher.publish_error(task_id, str(e), error_code=None, step_name=step_name)
-        print(f"分析角色失败: {e}")
-        return []
-
-
-def _identify_scenes_sync(
-    chapters_text: str,
-    model_adapter,
-    task_config: dict,
-    log_publisher=None,
-    task_id: str = None
-) -> list:
-    """识别场景（支持流式输出）
-    
-    Args:
-        chapters_text: 章节文本
-        model_adapter: 模型适配器
-        task_config: 任务配置
-        log_publisher: Redis 日志发布器（可选）
-        task_id: 任务 ID（可选）
-    
-    Returns:
-        list: 场景列表
-    """
-    step_name = "识别场景"
-    
-    # 发布步骤开始消息
-    if log_publisher and task_id:
-        log_publisher.publish_step_start(task_id, step_name)
-    
-    prompt = f"""你是一个专业的剧情分析师。请分析以下章节内容，识别其中的主要场景。
-
-章节内容：
-{chapters_text}
-
-请以 JSON 数组格式返回场景列表，每个场景包含以下字段：
-- location: 场景地点
-- time: 时间（如：白天、夜晚、具体时间等）
-- description: 场景描述
-- characters: 出现的角色列表
-- chapter: 所在章节
-- mood: 场景氛围
-
-示例格式：
-[
-  {{
-    "location": "古老的城堡",
-    "time": "深夜",
-    "description": "月光透过破碎的窗户洒进大厅",
-    "characters": ["主角", "神秘人"],
-    "chapter": 1,
-    "mood": "紧张、神秘"
-  }}
-]
-
-请只返回 JSON 数组，不要包含其他文字。
-"""
-    
-    try:
-        # 使用流式生成
-        full_response = ""
-        for chunk in model_adapter.stream_generate(prompt):
-            # 发布流式内容片段
-            if log_publisher and task_id:
-                log_publisher.publish_stream_chunk(task_id, step_name, chunk)
-            full_response += chunk
-        
-        # 解析结果
-        result = _parse_json_response_sync(full_response, default=[])
-        
-        # 发布步骤结束消息
-        if log_publisher and task_id:
-            log_publisher.publish_step_end(task_id, step_name, {"count": len(result)})
-        
-        return result
-        
-    except Exception as e:
-        # 发布错误消息
-        if log_publisher and task_id:
-            log_publisher.publish_error(task_id, str(e), error_code=None, step_name=step_name)
-        print(f"识别场景失败: {e}")
-        return []
-
-
-def _extract_emotions_sync(
-    chapters_text: str,
-    model_adapter,
-    task_config: dict,
-    log_publisher=None,
-    task_id: str = None
-) -> list:
-    """提取情感（支持流式输出）
-    
-    Args:
-        chapters_text: 章节文本
-        model_adapter: 模型适配器
-        task_config: 任务配置
-        log_publisher: Redis 日志发布器（可选）
-        task_id: 任务 ID（可选）
-    
-    Returns:
-        list: 情感列表
-    """
-    step_name = "提取情感"
-    
-    # 发布步骤开始消息
-    if log_publisher and task_id:
-        log_publisher.publish_step_start(task_id, step_name)
-    
-    prompt = f"""你是一个专业的剧情分析师。请分析以下章节内容，提取其中的情感变化。
-
-章节内容：
-{chapters_text}
-
-请以 JSON 数组格式返回情感列表，每个情感包含以下字段：
-- emotion: 情感类型（如：喜悦、悲伤、愤怒、恐惧等）
-- intensity: 情感强度（1-10）
-- character: 相关角色
-- trigger: 触发事件
-- chapter: 所在章节
-
-示例格式：
-[
-  {{
-    "emotion": "愤怒",
-    "intensity": 8,
-    "character": "主角",
-    "trigger": "发现被背叛",
-    "chapter": 3
-  }}
-]
-
-请只返回 JSON 数组，不要包含其他文字。
-"""
-    
-    try:
-        # 使用流式生成
-        full_response = ""
-        for chunk in model_adapter.stream_generate(prompt):
-            # 发布流式内容片段
-            if log_publisher and task_id:
-                log_publisher.publish_stream_chunk(task_id, step_name, chunk)
-            full_response += chunk
-        
-        # 解析结果
-        result = _parse_json_response_sync(full_response, default=[])
-        
-        # 发布步骤结束消息
-        if log_publisher and task_id:
-            log_publisher.publish_step_end(task_id, step_name, {"count": len(result)})
-        
-        return result
-        
-    except Exception as e:
-        # 发布错误消息
-        if log_publisher and task_id:
-            log_publisher.publish_error(task_id, str(e), error_code=None, step_name=step_name)
-        print(f"提取情感失败: {e}")
-        return []
-
-
-def _plan_episodes_sync(
-    conflicts: list,
-    plot_hooks: list,
-    characters: list,
-    scenes: list,
-    emotions: list,
-    chapters: list,
-    model_adapter,
-    task_config: dict,
-    log_publisher=None,
-    task_id: str = None
-) -> list:
-    """规划剧集结构（支持流式输出）
-
-    基于拆解结果，AI智能规划剧集结构，将章节内容分配到不同剧集。
+def _format_qa_report_for_console(qa_result: dict) -> str:
+    """将 QA 结果格式化为易读的文本（用于 Console Logger 显示）
 
     Args:
-        conflicts: 冲突列表
-        plot_hooks: 剧情钩子列表
-        characters: 角色列表
-        scenes: 场景列表
-        emotions: 情感列表
-        chapters: 章节列表
-        model_adapter: 模型适配器
-        task_config: 任务配置
-        log_publisher: Redis 日志发布器（可选）
-        task_id: 任务 ID（可选）
+        qa_result: QA 结果字典
 
     Returns:
-        list: 剧集列表
+        str: 格式化后的质检报告文本
     """
-    step_name = "规划剧集结构"
+    if not qa_result:
+        return "质检结果为空"
 
-    if log_publisher and task_id:
-        log_publisher.publish_step_start(task_id, step_name)
+    lines = []
+    lines.append("【质检报告】")
 
-    # 构建章节信息
-    chapter_info = [{"chapter_number": ch.chapter_number, "title": ch.title} for ch in chapters]
+    # 总分和状态
+    score = qa_result.get("qa_score", 0)
+    status = qa_result.get("qa_status", "pending")
+    status_icon = "✅ PASS" if status == "PASS" else "❌ FAIL"
+    lines.append(f"总分：{score}/100")
+    lines.append(f"状态：{status_icon}")
+    lines.append("")
 
-    # 构建提示词
-    prompt = f"""你是一个专业的剧集规划师。基于以下剧情拆解结果，智能规划剧集结构。
-
-章节信息：
-{json.dumps(chapter_info, ensure_ascii=False)}
-
-拆解结果统计：
-- 冲突点：{len(conflicts)}个
-- 剧情钩子：{len(plot_hooks)}个
-- 角色：{len(characters)}个
-- 场景：{len(scenes)}个
-- 情感点：{len(emotions)}个
-
-详细数据：
-冲突：{json.dumps(conflicts, ensure_ascii=False)}
-钩子：{json.dumps(plot_hooks, ensure_ascii=False)}
-角色：{json.dumps(characters, ensure_ascii=False)}
-场景：{json.dumps(scenes, ensure_ascii=False)}
-情感：{json.dumps(emotions, ensure_ascii=False)}
-
-请规划剧集结构，将章节内容合理分配到不同剧集中。每集应该：
-1. 有完整的故事弧线
-2. 包含主要冲突和高潮
-3. 有吸引人的剧情钩子
-4. 时长适中（建议每集包含2-4个章节）
-
-以JSON格式返回：
-[
-  {{
-    "episode_number": 1,
-    "title": "第一集标题",
-    "main_conflict": "主要冲突描述",
-    "key_scenes": ["关键场景1", "关键场景2"],
-    "chapter_range": [1, 3],
-    "conflicts": [],
-    "plot_hooks": [],
-    "characters": [],
-    "scenes": [],
-    "emotions": []
-  }}
-]
-
-注意：
-- conflicts/plot_hooks/characters/scenes/emotions 字段应该从上面的详细数据中筛选出该集包含的内容
-- 根据 chapter 字段或 chapter_range 字段判断是否属于该集
-- 如果某个数据项没有明确的章节信息，可以根据内容判断
-
-请只返回JSON数组，不要包含其他文字。
-"""
-
-    try:
-        # 使用流式生成
-        full_response = ""
-        for chunk in model_adapter.stream_generate(prompt):
-            if log_publisher and task_id:
-                log_publisher.publish_stream_chunk(task_id, step_name, chunk)
-            full_response += chunk
-
-        # 解析结果
-        result = _parse_json_response_sync(full_response, default=[])
-
-        if log_publisher and task_id:
-            log_publisher.publish_step_end(task_id, step_name, {"count": len(result)})
-
-        return result
-
-    except Exception as e:
-        if log_publisher and task_id:
-            log_publisher.publish_error(task_id, str(e), error_code=None, step_name=step_name)
-        print(f"规划剧集结构失败: {e}")
-        return []
-
-
-def _get_adapt_method_sync(db: Session, task_config: dict) -> dict:
-    """获取改编方法论配置（同步版本）
-
-    Args:
-        db: 数据库会话
-        task_config: 任务配置
-
-    Returns:
-        dict: 改编方法论配置（包含 content 字段为 Markdown 内容）
-    """
-    from app.models.ai_resource import AIResource
-    import re
-
-    adapt_method_key = task_config.get("adapt_method_key")
-
-    if not adapt_method_key:
-        # 返回默认配置
-        return {
-            "description": "标准网文适配漫画原则",
-            "content": "",
-            "rules": [
-                "确保内容连贯，冲突明显",
-                "每集包含完整的故事弧线",
-                "设置吸引人的剧情钩子"
-            ]
-        }
-
-    # 判断是否为 UUID
-    is_uuid = bool(re.match(r"^[0-9a-fA-F-]{36}$", adapt_method_key))
-
-    # 从 AIResource 查询
-    if is_uuid:
-        resource = db.query(AIResource).filter(
-            AIResource.id == adapt_method_key,
-            AIResource.is_active == True
-        ).first()
-    else:
-        resource = db.query(AIResource).filter(
-            AIResource.name == adapt_method_key,
-            AIResource.category == "methodology",
-            AIResource.is_active == True
-        ).first()
-
-    if not resource:
-        return {
-            "description": "标准网文适配漫画原则",
-            "content": "",
-            "rules": []
-        }
-
-    return {
-        "description": resource.description or resource.display_name or "标准网文适配漫画原则",
-        "content": resource.content or "",
-        "rules": []  # AIResource 使用 Markdown 内容，不再使用 rules 列表
-    }
-
-
-def _run_qa_loop_sync(
-    db: Session,
-    task_id: str,
-    breakdown_data: dict,
-    chapters: list,
-    adapt_method: dict,
-    model_adapter,
-    log_publisher=None
-) -> dict:
-    """执行质检循环（同步版本）
-
-    使用 SimpleSkillExecutor 调用 breakdown_aligner Skill（模板驱动）。
-
-    Args:
-        db: 数据库会话
-        task_id: 任务 ID
-        breakdown_data: 拆解数据
-        chapters: 章节列表
-        adapt_method: 改编方法论配置
-        model_adapter: 模型适配器
-        log_publisher: 日志发布器
-
-    Returns:
-        dict: 质检结果
-    """
-    from app.ai.simple_executor import SimpleSkillExecutor
-
-    try:
-        # 格式化章节文本
-        chapters_text = "\n\n".join([
-            f"## 第 {ch.chapter_number} 章：{ch.title or ''}\n\n{ch.content or ''}"
-            for ch in chapters
-        ])
-
-        # 格式化拆解数据为 JSON
-        plot_points_json = json.dumps(breakdown_data, ensure_ascii=False)
-
-        # 格式化改编方法论
-        adapt_method_text = adapt_method.get("description", "")
-        if adapt_method.get("rules"):
-            adapt_method_text += "\n\n规则：\n" + "\n".join(
-                f"- {rule}" for rule in adapt_method["rules"]
-            )
-
-        # 使用 SimpleSkillExecutor 调用 breakdown_aligner Skill
-        skill_executor = SimpleSkillExecutor(db, model_adapter, log_publisher)
-
-        result = skill_executor.execute_skill(
-            skill_name="breakdown_aligner",
-            inputs={
-                "plot_points": plot_points_json,
-                "chapters_text": chapters_text,
-                "adapt_method": adapt_method_text,
-            },
-            task_id=task_id
-        )
-
-        # 解析质检结果
-        qa_status = "PASS" if result.get("status") == "PASS" else "FAIL"
-        qa_score = result.get("score", 0)
-
-        # 发布质检结果
-        if log_publisher:
-            if qa_status == "PASS":
-                log_publisher.publish_success(
-                    task_id,
-                    f"✓ 质量检查通过！得分: {qa_score}"
-                )
+    # 各维度评分
+    lines.append("【维度评分】")
+    dimensions = qa_result.get("dimensions", [])
+    if dimensions:
+        for idx, dim in enumerate(dimensions, 1):
+            name = dim.get("name", "")
+            dim_score = dim.get("score", 0)
+            # max_score = dim.get("max_score", 12.5)  # 不再显示满分
+            passed = dim.get("passed", False)
+            # 状态: 通过/未通过/失败
+            if passed:
+                status = "通过"
             else:
-                log_publisher.publish_warning(
-                    task_id,
-                    f"⚠ 质量检查未通过，得分: {qa_score}"
-                )
+                status = "未通过"
+            lines.append(f"【维度{idx}】{name} 评分 {dim_score} {status}")
+    else:
+        lines.append("（无维度评分数据）")
 
-        return {
-            "qa_status": qa_status,
-            "qa_score": qa_score,
-            "qa_report": result
-        }
-
-    except Exception as e:
-        print(f"质检执行失败: {e}")
-        if log_publisher:
-            log_publisher.publish_error(
-                task_id,
-                f"质检执行失败: {str(e)}",
-                error_code="QA_ERROR"
-            )
-
-        return {
-            "qa_status": "ERROR",
-            "qa_score": 0,
-            "qa_report": {
-                "error": str(e),
-                "status": "ERROR"
-            }
-        }
-
-
-def _try_fix_incomplete_json(json_str: str) -> str:
-    """尝试修复不完整的 JSON 字符串
-
-    常见问题：
-    - 缺少结尾的 } 或 ]
-    - 字符串未闭合
-    - 尾部有多余字符
-
-    Args:
-        json_str: 可能不完整的 JSON 字符串
-
-    Returns:
-        修复后的 JSON 字符串
-    """
-    import re
-
-    # 移除尾部的 ``` 标记
-    json_str = re.sub(r'`+\s*$', '', json_str)
-
-    # 统计括号
-    open_braces = json_str.count('{')
-    close_braces = json_str.count('}')
-    open_brackets = json_str.count('[')
-    close_brackets = json_str.count(']')
-
-    # 补充缺失的闭合括号
-    if open_braces > close_braces:
-        # 检查是否在字符串中间被截断（查找未闭合的引号）
-        # 简单处理：如果最后一个字符不是 } 或 ]，尝试截断到最后一个完整的值
-        last_valid_pos = max(
-            json_str.rfind('},'),
-            json_str.rfind('}]'),
-            json_str.rfind('"}'),
-            json_str.rfind('"]'),
-            json_str.rfind('" }'),
-            json_str.rfind('" ]'),
-        )
-        if last_valid_pos > 0:
-            # 截断到最后一个完整的位置
-            json_str = json_str[:last_valid_pos + 1]
-            # 重新统计
-            open_braces = json_str.count('{')
-            close_braces = json_str.count('}')
-            open_brackets = json_str.count('[')
-            close_brackets = json_str.count(']')
-
-        # 补充缺失的 }
-        json_str += '}' * (open_braces - close_braces)
-
-    if open_brackets > close_brackets:
-        json_str += ']' * (open_brackets - close_brackets)
-
-    return json_str
-
-
-def _parse_json_response_sync(response: str, default=None):
-    """解析 JSON 响应（高度容错版本）
-
-    解析策略（按优先级）：
-    1. 直接解析整个响应
-    2. 提取 ```json ... ``` 代码块
-    3. 提取 ``` ... ```（无语言标记）
-    4. 提取 { ... } JSON 对象
-    5. 提取 [ ... ] JSON 数组
-    6. 尝试修复不完整的 JSON
-
-    Args:
-        response: AI 模型的响应文本
-        default: 解析失败时返回的默认值
-
-    Returns:
-        解析后的 JSON 对象，或默认值
-    """
-    import re
-
-    if default is None:
-        default = []
-
-    # 检查响应是否为空
-    if not response or not isinstance(response, str):
-        return default
-
-    response = response.strip()
-    if not response:
-        return default
-
-    try:
-        # 策略1：直接解析
-        return json.loads(response)
-    except json.JSONDecodeError:
-        pass
-
-    # 策略2：提取 ```json ... ``` 代码块
-    json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
-    if json_match:
-        json_str = json_match.group(1).strip()
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError:
-            json_str = _try_fix_incomplete_json(json_str)
-            try:
-                return json.loads(json_str)
-            except json.JSONDecodeError:
-                pass
-
-    # 策略3：提取 ``` ... ```（无语言标记）
-    json_match = re.search(r'```\s*(.*?)\s*```', response, re.DOTALL)
-    if json_match:
-        json_str = json_match.group(1).strip()
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError:
-            json_str = _try_fix_incomplete_json(json_str)
-            try:
-                return json.loads(json_str)
-            except json.JSONDecodeError:
-                pass
-
-    # 策略4：提取 { ... } 或 [ ... ]
-    json_match = re.search(r'(\{[\s\S]*\}|\[[\s\S]*\])', response)
-    if json_match:
-        json_str = json_match.group(1).strip()
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError:
-            json_str = _try_fix_incomplete_json(json_str)
-            try:
-                return json.loads(json_str)
-            except json.JSONDecodeError:
-                pass
-
-    # 策略5：检查是否包含空响应关键词
-    if any(keyword in response for keyword in ['没有', '无', '空', 'null', 'None', '[]', '{}']):
-        return []
-
-    # 解析失败，返回默认值
-    return default
+    return "\n".join(lines)
 
 
 def _run_breakdown_qa_sync(
@@ -2413,11 +1704,16 @@ def _run_breakdown_qa_sync(
     chapters_text: str,
     adapt_method: str,
     model_adapter,
-    log_publisher=None
+    log_publisher=None,
+    hook_types: str = "",
+    hook_boundary_rules: str = "",
+    genre_guidelines: str = "",
+    qa_dimensions: str = ""
 ) -> dict:
-    """执行剧情拆解 QA 质检（v2 版本）
+    """执行剧情拆解 QA 质检
 
     调用 breakdown_aligner skill 对拆解结果进行质量检查。
+    只支持结构化文本 QA 报告格式，解析失败直接报错。
 
     Args:
         db: 数据库会话
@@ -2427,38 +1723,91 @@ def _run_breakdown_qa_sync(
         adapt_method: 改编方法论
         model_adapter: 模型适配器
         log_publisher: 日志发布器
+        hook_types: 钩子类型定义文档内容
+        hook_boundary_rules: 钩子边界规则文档内容
+        genre_guidelines: 类型特性指南文档内容
+        qa_dimensions: 质检维度定义文档内容
 
     Returns:
         dict: 质检结果
+
+    Raises:
+        ValueError: QA 报告解析失败
     """
-    from app.ai.simple_executor import SimpleSkillExecutor
+    from app.ai.simple_executor import SimpleSkillExecutor, parse_text_qa_result
 
     try:
-        # 格式化剧情点为 JSON 字符串
-        plot_points_json = json.dumps(plot_points, ensure_ascii=False)
-
         # 调用 breakdown_aligner skill
         skill_executor = SimpleSkillExecutor(db, model_adapter, log_publisher)
         result = skill_executor.execute_skill(
             skill_name="breakdown_aligner",
             inputs={
-                "plot_points": plot_points_json,
+                "plot_points": plot_points,
                 "chapters_text": chapters_text,
-                "adapt_method": adapt_method or ""
+                "adapt_method": adapt_method or "",
+                "hook_types": hook_types or HOOK_TYPES_COMPACT_DEFAULT,
+                "hook_boundary_rules": hook_boundary_rules or HOOK_BOUNDARY_RULES_DEFAULT,
+                "genre_guidelines": genre_guidelines or GENRE_GUIDELINES_DEFAULT,
+                "qa_dimensions": qa_dimensions or QA_DIMENSIONS_DEFAULT
             },
             task_id=task_id
         )
 
-        # 解析结果
-        qa_status = "pending"
-        qa_score = None
+        # QA 结果必须是结构化文本格式，解析失败直接报错
+        if isinstance(result, str):
+            if '【质检报告】' in result:
+                result = parse_text_qa_result(result)
+                # 验证解析结果
+                if not result.get("qa_status") or result.get("qa_score") is None:
+                    error_msg = f"QA 报告解析不完整：缺少 qa_status 或 qa_score。响应片段: {result}"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+            else:
+                # LLM 没有按照要求的格式输出
+                error_msg = f"QA 报告格式错误：未找到【质检报告】标记。响应片段: {result[:200]}..."
+                logger.error(error_msg)
+                if log_publisher:
+                    log_publisher.publish_error(
+                        task_id,
+                        "质检失败：LLM 输出格式不符合要求，请检查 Prompt 配置",
+                        error_code="QA_FORMAT_ERROR"
+                    )
+                raise ValueError(error_msg)
 
-        if isinstance(result, dict):
-            qa_status = result.get("status", "pending")
-            qa_score = result.get("score")
+        # 兼容 list 类型（可能是解析器误判，尝试提取 dict）
+        if isinstance(result, list):
+            if len(result) == 1 and isinstance(result[0], dict):
+                result = result[0]
+                logger.warning("QA 结果为单元素 list，已自动提取 dict")
+            elif len(result) == 0:
+                error_msg = "QA 结果为空列表，解析失败"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            else:
+                # list 中有多个元素，说明解析器把 QA 报告误判为剧情点了
+                error_msg = f"QA 结果类型错误：解析器可能误判为剧情点格式。结果数量: {len(result)}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
+        # 验证结果是 dict 类型
+        if not isinstance(result, dict):
+            error_msg = f"QA 结果类型错误：期望 dict，实际 {type(result).__name__}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        qa_status = result.get("qa_status", "pending")
+        qa_score = result.get("qa_score")
 
         # 发布 QA 完成
         if log_publisher:
+            # 发布格式化质检报告
+            formatted_text = _format_qa_report_for_console(result)
+            log_publisher.publish_formatted_chunk(
+                task_id=task_id,
+                step_name="质检报告",
+                formatted_text=formatted_text
+            )
+
             if qa_status == "PASS":
                 log_publisher.publish_success(
                     task_id,
@@ -2471,9 +1820,11 @@ def _run_breakdown_qa_sync(
                 )
 
         logger.info(f"QA 质检完成: status={qa_status}, score={qa_score}")
+        return result
 
-        return result if isinstance(result, dict) else {"status": "pending", "score": None}
-
+    except ValueError:
+        # ValueError 直接抛出，不要吞掉
+        raise
     except Exception as e:
         logger.error(f"QA 质检失败: {e}")
         if log_publisher:
@@ -2482,51 +1833,180 @@ def _run_breakdown_qa_sync(
                 f"质检失败: {str(e)}",
                 error_code="QA_ERROR"
             )
-        return {
-            "status": "ERROR",
-            "score": 0,
-            "error": str(e)
-        }
+        raise ValueError(f"QA 质检执行失败: {str(e)}") from e
 
 
-def _format_plot_points_for_llm(plot_points: list) -> str:
-    """将剧情点列表格式化为易读文本（对大模型更友好）
+# ==================== 默认资源加载辅助函数 ====================
 
-    把 JSON 格式转换为结构化的文本格式，便于大模型理解和修正。
+def _load_default_resource_sync(db: Session, category: str) -> str:
+    """加载指定分类的系统默认资源
+
+    当用户没有选择特定资源时，自动加载系统内置的默认资源。
 
     Args:
-        plot_points: 剧情点列表
+        db: 数据库会话
+        category: 资源分类（hook_types/hook_rules/type_guide/qa_dimensions）
 
     Returns:
-        str: 格式化后的文本
+        str: 资源内容，如果不存在则返回空字符串
     """
-    if not plot_points:
-        return "（无剧情点）"
+    from app.models.ai_resource import AIResource
 
-    lines = []
-    for i, point in enumerate(plot_points, 1):
-        if isinstance(point, dict):
-            # 提取关键字段
-            scene = point.get("scene", point.get("场景", ""))
-            characters = point.get("characters", point.get("角色", []))
-            event = point.get("event", point.get("事件", ""))
-            emotion_hook = point.get("emotion_hook", point.get("情绪钩子", ""))
-            episode = point.get("episode", point.get("集数", ""))
+    resource = db.query(AIResource).filter(
+        AIResource.category == category,
+        AIResource.is_builtin == True,
+        AIResource.is_active == True
+    ).first()
 
-            # 格式化角色列表
-            if isinstance(characters, list):
-                characters_str = "、".join(characters)
-            else:
-                characters_str = str(characters)
+    return resource.content if resource else ""
 
-            lines.append(f"【剧情{i}】第{episode}集")
-            lines.append(f"  场景：{scene}")
-            lines.append(f"  角色：{characters_str}")
-            lines.append(f"  事件：{event}")
-            lines.append(f"  情绪钩子：{emotion_hook}")
-            lines.append("")
-        elif isinstance(point, str):
-            lines.append(f"【剧情{i}】{point}")
-            lines.append("")
 
-    return "\n".join(lines)
+# ==================== 向后兼容默认值常量 ====================
+# 当数据库资源不存在时，使用这些硬编码默认值
+
+HOOK_TYPES_COMPACT_DEFAULT = """
+【爽感类】打脸蓄力、打脸爽点、碾压爽点、绝境反杀、装X成功、以弱胜强
+【震撼类】身份曝光、真相揭露、反转冲击、背叛揭露、阴谋曝光
+【虐心类】虐心痛点、生离死别、误会虐心、牺牲奉献、无奈抉择
+【悬念类】悬念设置、伏笔埋设、危机预告、神秘出现
+【成长类】金手指觉醒、实力突破、获得宝物、人物结交、拜师学艺
+【情感类】心动瞬间、表白告白、误会和解、守护承诺、甜蜜互动
+【冲突类】正面对决、危机降临、被陷害、势力对抗、生死危机
+""".strip()
+
+HOOK_BOUNDARY_RULES_DEFAULT = """
+【易混淆钩子区分】
+- 打脸蓄力 vs 打脸爽点：主角"被打脸"=蓄力，主角"打别人脸"=爽点
+- 碾压爽点 vs 打脸爽点：有"之前被看不起"的铺垫=打脸，无铺垫直接碾压=碾压
+- 真相揭露 vs 身份曝光：揭露的是"事"=真相，揭露的是"人"=身份
+- 悬念设置 vs 真相揭露：观众"更好奇"=悬念，观众"恍然大悟"=真相
+- 人物结交 vs 打脸蓄力：对方态度"友好"=结交，对方态度"敌意"=蓄力
+""".strip()
+
+GENRE_GUIDELINES_DEFAULT = """
+【都市爽文类】
+- 必保留：打脸场景、身份反转、实力碾压
+- 必删除：日常生活、感情纠葛（除非是核心线）
+- 节奏要求：快节奏，每集必须有爽点
+
+【悬疑推理类】
+- 必保留：线索铺设、真相揭露、反转
+- 必删除：无关的日常、过多的心理描写
+- 节奏要求：信息密度高，每集必须有新线索或新悬念
+
+【言情甜宠类】
+- 必保留：互动场景、情感升温、误会与和解
+- 必删除：与感情线无关的支线
+- 节奏要求：甜虐交替，每集必须有心动或心痛瞬间
+
+【玄幻修仙类】
+- 必保留：战斗场景、实力提升、宝物获取
+- 必删除：修炼过程的详细描述、世界观解释
+- 节奏要求：升级打怪节奏，每集必须有战斗或突破
+
+【重生复仇类】
+- 必保留：复仇计划推进、打脸前世仇人、改变命运
+- 必删除：前世回忆（除非是关键信息）
+- 节奏要求：复仇进度推进，每集必须有复仇成果
+""".strip()
+
+QA_DIMENSIONS_DEFAULT = """
+【角色定义】
+你是"网文改编漫剧剧情拆解质量校验员(breakdown-aligner)"，负责对剧情拆解结果进行多维度质量检查。
+
+核心职责：确保拆解结果符合改编方法论要求、验证剧情点的完整性和准确性、检查钩子类型和分集标注的合理性、输出可执行的修改建议。
+
+【检查步骤】
+第一步：读取基准文档（改编方法论 adapt-method.md + 原文 + 待检查内容）
+第二步：执行 8 维度检查
+第三步：汇总问题
+第四步：输出结果（PASS/FAIL）
+
+【通过标准】总分 ≥ 70 分，优秀标准 ≥ 85 分，任一维度 0 分自动不及格
+
+【维度1：冲突强度评估】
+强度评判标准：⭐⭐⭐ 高强度（改变主角命运、大幅改变格局、生死攸关）| ⭐⭐ 中强度（推动剧情发展、影响人物关系）| ⭐ 低强度（日常冲突、小摩擦、铺垫性质）
+评分标准：12.5分=所有高强度冲突都符合标准 | 8-10分=个别偏差 | 5-7分=多个不准确 | 0-4分=严重误判
+
+【维度2：情绪钩子识别】
+强度评分标准：10分="卧槽！"（身份大反转、绝境反杀、真相揭露）| 8-9分=爽/虐/急（打脸爽点、虐心痛点、悬念高潮）| 6-7分=有感觉（小打脸、小甜蜜、小悬念）| 4-5分=一般（日常互动、铺垫情节）
+评分标准：12.5分=全部正确 | 8-10分=个别有误 | 5-7分=多个错误 | 0-4分=大量错误
+自检要点：是否有易混淆钩子标注错误？10分钩子是否真的能让观众"卧槽"？
+
+【维度3：冲突密度达标性】
+密度标准：高潮章节=核心冲突5+，高强度钩子6-8个 | 过渡章节=核心冲突2-4，高强度钩子3-5个 | 铺垫章节=核心冲突0-2，高强度钩子1-2个（需说明铺垫目的）
+评分标准：12.5分=符合预期 | 8-10分=略低可接受 | 5-7分=偏低影响观感 | 0-4分=严重不足
+
+【维度4：分集标注合理性】
+分集规则：10分钩子=必须单独成集作为集尾 | 8-9分=建议单独成集或作为集尾 | 6-7分=可与其他合并
+每集剧情点合理数量：1-3个
+评分标准：12.5分=节奏完美 | 8-10分=个别略有问题 | 5-7分=多集节奏不当 | 0-4分=分集混乱
+
+【维度5：压缩策略正确性】
+必删清单：❌ 环境描写超过20字 | ❌ 纯心理独白 | ❌ 与主线无关的过渡场景 | ❌ 支线剧情（除非伏笔）| ❌ 重复情绪渲染
+必留清单：✅ 冲突对话 | ✅ 动作场景 | ✅ 情绪爆点 | ✅ 悬念设置 | ✅ 人物关系变化
+评分标准：12.5分=完美执行 | 8-10分=个别有待商榷 | 5-7分=该删没删/该留没留 | 0-4分=严重误判
+
+【维度6：剧情点内容完整性】
+数据格式：剧情点序号|场景|角色|剧情|钩子|第X集
+完整性要求：场景具体到地点 | 角色=主角+关键配角 | 剧情30-50字动作+结果 | 钩子使用标准类型 | 集数用"第X集"格式
+评分标准：12.5分=全部完整 | 8-10分=个别略不清楚 | 5-7分=多个缺失 | 0-4分=大量不完整
+
+【维度7：原文还原准确性】
+核查方法：对照原文检查每个剧情点 | 验证角色关系 | 确认事件顺序 | 检查是否有虚构内容
+评分标准：12.5分=完全忠实 | 8-10分=个别出入 | 5-7分=多处不符 | 0-4分=严重曲解
+
+【维度8：类型特性符合度】
+各类型必保留/必删除：
+- 都市爽文：必保留=打脸场景、身份反转、实力碾压 | 必删除=日常生活、无关感情线
+- 悬疑推理：必保留=线索铺设、真相揭露、反转 | 必删除=无关日常、过多心理描写
+- 言情甜宠：必保留=互动场景、情感升温、误会和解 | 必删除=与感情线无关支线
+- 玄幻修仙：必保留=战斗场景、实力提升、宝物获取 | 必删除=修炼细节、世界观解释
+- 重生复仇：必保留=复仇推进、打脸仇人、改变命运 | 必删除=前世回忆（除非关键）
+评分标准：12.5分=完全符合 | 8-10分=基本符合 | 5-7分=把握不准 | 0-4分=严重偏离
+
+【输出格式】
+**【重要】必须严格按照以下格式输出，禁止使用 Markdown 格式（如 ###、** 等）**
+
+【质检报告】
+总分：XX
+状态：通过/不通过
+
+【维度1】冲突强度评估 评分 XX 通过/未通过
+说明：简要说明
+
+【维度2】情绪钩子识别 评分 XX 通过/未通过
+说明：简要说明
+
+...（维度3-8同理）
+
+【修改清单】
+1. 【剧情X】钩子类型错误：'原钩子' → '新钩子'，原因
+2. 【剧情Y】分集不合理：第X集 → 第Y集，原因
+
+**格式要点**：
+- 维度格式：`【维度N】名称 评分 XX 通过/未通过`（N为阿拉伯数字1-8）
+- 状态词：只能使用"通过"或"未通过"（不要用"良好"、"需调整"等）
+- 评分：只写数字，不要写"/12.5分"
+- 禁止使用 Markdown 格式（###、**、- 等）
+- 禁止添加额外符号（⭐、✓、✗等）
+
+**正确示例**：
+【质检报告】
+总分：75
+状态：通过
+
+【维度1】冲突强度评估 评分 10 通过
+说明：核心冲突识别准确，高强度冲突标注正确
+
+【维度2】情绪钩子识别 评分 6 未通过
+说明：第3个剧情点钩子类型有误
+
+【修改清单】
+1. 【剧情3】钩子类型错误：'打脸蓄力' → '人物结交'，因为对方态度友好
+
+**错误示例**（禁止使用）：
+❌ ### 维度1：冲突强度评估 ⭐⭐⭐
+❌ **评估结果**：8/10分
+❌ 【维度1】冲突强度评估 10/12.5分 ✓ 良好
+""".strip()

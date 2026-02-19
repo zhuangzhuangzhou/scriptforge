@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, or_
+from sqlalchemy import select, func, and_, or_, case
 from sqlalchemy.orm import selectinload
-from pydantic import BaseModel
-from typing import Optional, List
-from datetime import datetime, timedelta
+from pydantic import BaseModel, Field
+from typing import Optional, List, Literal
+from datetime import datetime, timedelta, timezone
 from app.core.database import get_db
 from app.models.user import User
 from app.api.v1.auth import get_current_user
@@ -15,28 +15,74 @@ from app.core.status import TaskStatus
 from app.models.batch import Batch
 from app.models.api_log import APILog
 from app.models.llm_call_log import LLMCallLog
+from app.api.v1.admin.helpers import check_admin
 
 router = APIRouter()
 
-# 在文件末尾注册模型管理子路由，避免循环导入
+
+# 敏感字段列表，日志中需要脱敏
+SENSITIVE_FIELDS = ['password', 'token', 'secret', 'api_key', 'api_secret', 'authorization', 'cookie']
 
 
-def check_admin(current_user: User = Depends(get_current_user)):
-    """检查是否为管理员"""
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="需要管理员权限"
-        )
-    return current_user
+def sanitize_log_data(data: any) -> any:
+    """脱敏日志数据中的敏感信息
+
+    Args:
+        data: 原始数据（字符串、字典或列表）
+
+    Returns:
+        脱敏后的数据
+    """
+    if data is None:
+        return None
+
+    # 如果是字符串，尝试解析为 JSON
+    if isinstance(data, str):
+        try:
+            import json
+            parsed = json.loads(data)
+            sanitized = sanitize_log_data(parsed)
+            return json.dumps(sanitized)
+        except (json.JSONDecodeError, TypeError):
+            # 不是 JSON，直接检查是否包含敏感信息
+            lower_data = data.lower()
+            for field in SENSITIVE_FIELDS:
+                if field in lower_data:
+                    return "[REDACTED - contains sensitive data]"
+            return data
+
+    # 如果是字典，递归处理
+    if isinstance(data, dict):
+        result = {}
+        for key, value in data.items():
+            lower_key = key.lower()
+            if any(field in lower_key for field in SENSITIVE_FIELDS):
+                result[key] = "***"
+            else:
+                result[key] = sanitize_log_data(value)
+        return result
+
+    # 如果是列表，递归处理每个元素
+    if isinstance(data, list):
+        return [sanitize_log_data(item) for item in data]
+
+    # 其他类型直接返回
+    return data
+
+
+def escape_like(value: str) -> str:
+    """转义 LIKE 查询中的特殊字符，防止 SQL 注入"""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 class UserUpdateRequest(BaseModel):
     """更新用户请求"""
+    model_config = {"extra": "forbid"}  # 禁止额外字段
+
     is_active: Optional[bool] = None
-    role: Optional[str] = None
-    credits: Optional[int] = None  # 使用积分替代旧算力余额
-    tier: Optional[str] = None
+    role: Optional[Literal["admin", "user"]] = None
+    credits: Optional[int] = Field(None, ge=0, description="积分余额，必须大于等于0")
+    tier: Optional[Literal["FREE", "BASIC", "PRO", "ENTERPRISE"]] = None
 
 
 @router.get("/users")
@@ -51,9 +97,10 @@ async def get_users(
     query = select(User)
 
     if keyword:
+        escaped_keyword = escape_like(keyword)
         query = query.where(
-            (User.username.ilike(f"%{keyword}%")) |
-            (User.email.ilike(f"%{keyword}%"))
+            (User.username.ilike(f"%{escaped_keyword}%", escape="\\")) |
+            (User.email.ilike(f"%{escaped_keyword}%", escape="\\"))
         )
 
     result = await db.execute(
@@ -64,9 +111,10 @@ async def get_users(
     # 获取总数
     count_query = select(func.count(User.id))
     if keyword:
+        escaped_keyword = escape_like(keyword)
         count_query = count_query.where(
-            (User.username.ilike(f"%{keyword}%")) |
-            (User.email.ilike(f"%{keyword}%"))
+            (User.username.ilike(f"%{escaped_keyword}%", escape="\\")) |
+            (User.email.ilike(f"%{escaped_keyword}%", escape="\\"))
         )
 
     count_result = await db.execute(count_query)
@@ -348,18 +396,25 @@ async def get_tasks(
             from_date = datetime.strptime(date_from, "%Y-%m-%d")
             conditions.append(AITask.created_at >= from_date)
         except ValueError:
-            pass
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"开始日期格式错误，应为 YYYY-MM-DD"
+            )
     if date_to:
         try:
             to_date = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
             conditions.append(AITask.created_at < to_date)
         except ValueError:
-            pass
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"结束日期格式错误，应为 YYYY-MM-DD"
+            )
     if keyword:
+        escaped_keyword = escape_like(keyword)
         conditions.append(
             or_(
-                AITask.current_step.ilike(f"%{keyword}%"),
-                AITask.error_message.ilike(f"%{keyword}%")
+                AITask.current_step.ilike(f"%{escaped_keyword}%", escape="\\"),
+                AITask.error_message.ilike(f"%{escaped_keyword}%", escape="\\")
             )
         )
 
@@ -374,12 +429,16 @@ async def get_tasks(
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
 
-    # 状态统计
-    status_stats = {}
-    for s in [TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.COMPLETED, TaskStatus.FAILED]:
-        stat_query = select(func.count(AITask.id)).where(AITask.status == s)
-        stat_result = await db.execute(stat_query)
-        status_stats[s] = stat_result.scalar() or 0
+    # 状态统计（使用单次 GROUP BY 查询替代循环查询）
+    status_query = (
+        select(AITask.status, func.count(AITask.id))
+        .group_by(AITask.status)
+    )
+    status_result = await db.execute(status_query)
+    status_stats = {s: 0 for s in [TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.COMPLETED, TaskStatus.FAILED]}
+    for row in status_result.all():
+        if row[0] in status_stats:
+            status_stats[row[0]] = row[1]
 
     # 获取任务列表
     result = await db.execute(
@@ -545,7 +604,7 @@ async def get_logs_stats(
     db: AsyncSession = Depends(get_db)
 ):
     """管理员：获取日志统计"""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # 根据周期确定时间范围
     if period == "week":
@@ -555,58 +614,56 @@ async def get_logs_stats(
     else:  # day
         start_date = now - timedelta(days=1)
 
-    # 总任务数
-    total_query = select(func.count(AITask.id)).where(AITask.created_at >= start_date)
-    total_result = await db.execute(total_query)
-    total_tasks = total_result.scalar() or 0
-
-    # 成功任务数
-    success_query = select(func.count(AITask.id)).where(
-        and_(AITask.created_at >= start_date, AITask.status == TaskStatus.COMPLETED)
-    )
-    success_result = await db.execute(success_query)
-    success_tasks = success_result.scalar() or 0
+    # 使用单次查询获取总数和成功数
+    stats_query = select(
+        func.count(AITask.id).label("total"),
+        func.count(case((AITask.status == TaskStatus.COMPLETED, 1))).label("success")
+    ).where(AITask.created_at >= start_date)
+    stats_result = await db.execute(stats_query)
+    stats_row = stats_result.first()
+    total_tasks = stats_row[0] or 0
+    success_tasks = stats_row[1] or 0
 
     # 成功率
     success_rate = round(success_tasks / total_tasks * 100, 1) if total_tasks > 0 else 0
 
-    # 按类型统计
-    type_stats = {}
-    for task_type in ["breakdown", "script", "consistency_check"]:
-        type_query = select(func.count(AITask.id)).where(
-            and_(AITask.created_at >= start_date, AITask.task_type == task_type)
-        )
-        type_result = await db.execute(type_query)
-        type_stats[task_type] = type_result.scalar() or 0
+    # 按类型统计（使用单次 GROUP BY 查询）
+    type_query = (
+        select(AITask.task_type, func.count(AITask.id))
+        .where(AITask.created_at >= start_date)
+        .group_by(AITask.task_type)
+    )
+    type_result = await db.execute(type_query)
+    type_stats = {"breakdown": 0, "script": 0, "consistency_check": 0}
+    for row in type_result.all():
+        if row[0] in type_stats:
+            type_stats[row[0]] = row[1]
 
-    # 每日趋势（最近7天）
+    # 每日趋势（使用单次查询获取7天数据）
+    seven_days_ago = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+    daily_query = (
+        select(
+            func.date_trunc('day', AITask.created_at).label("day"),
+            func.count(AITask.id).label("total"),
+            func.count(case((AITask.status == TaskStatus.COMPLETED, 1))).label("success")
+        )
+        .where(AITask.created_at >= seven_days_ago)
+        .group_by(func.date_trunc('day', AITask.created_at))
+        .order_by(func.date_trunc('day', AITask.created_at))
+    )
+    daily_result = await db.execute(daily_query)
+    daily_data = {row[0].strftime("%Y-%m-%d"): {"total": row[1], "success": row[2]} for row in daily_result.all()}
+
+    # 填充缺失的日期
     daily_trend = []
-    for i in range(7):
-        day_start = (now - timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
-        day_end = day_start + timedelta(days=1)
-
-        day_total = await db.execute(
-            select(func.count(AITask.id)).where(
-                and_(AITask.created_at >= day_start, AITask.created_at < day_end)
-            )
-        )
-        day_success = await db.execute(
-            select(func.count(AITask.id)).where(
-                and_(
-                    AITask.created_at >= day_start,
-                    AITask.created_at < day_end,
-                    AITask.status == TaskStatus.COMPLETED
-                )
-            )
-        )
-
+    for i in range(6, -1, -1):
+        day = (now - timedelta(days=i)).strftime("%Y-%m-%d")
+        data = daily_data.get(day, {"total": 0, "success": 0})
         daily_trend.append({
-            "date": day_start.strftime("%Y-%m-%d"),
-            "total": day_total.scalar() or 0,
-            "success": day_success.scalar() or 0
+            "date": day,
+            "total": data["total"],
+            "success": data["success"]
         })
-
-    daily_trend.reverse()
 
     return {
         "period": period,
@@ -641,7 +698,8 @@ async def get_api_logs(
     if method:
         conditions.append(APILog.method == method.upper())
     if path:
-        conditions.append(APILog.path.ilike(f"%{path}%"))
+        escaped_path = escape_like(path)
+        conditions.append(APILog.path.ilike(f"%{escaped_path}%", escape="\\"))
     if status_code:
         conditions.append(APILog.status_code == status_code)
     if user_id:
@@ -651,13 +709,19 @@ async def get_api_logs(
             from_date = datetime.strptime(date_from, "%Y-%m-%d")
             conditions.append(APILog.created_at >= from_date)
         except ValueError:
-            pass
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="开始日期格式错误，应为 YYYY-MM-DD"
+            )
     if date_to:
         try:
             to_date = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
             conditions.append(APILog.created_at < to_date)
         except ValueError:
-            pass
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="结束日期格式错误，应为 YYYY-MM-DD"
+            )
 
     if conditions:
         query = query.where(and_(*conditions))
@@ -682,13 +746,13 @@ async def get_api_logs(
             "method": log.method,
             "path": log.path,
             "query_params": log.query_params,
-            "request_body": log.request_body,
+            "request_body": sanitize_log_data(getattr(log, 'request_body', None)),
             "user_id": str(log.user_id) if log.user_id else None,
             "username": user.username if user else None,
             "user_ip": log.user_ip,
             "user_agent": log.user_agent,
             "status_code": log.status_code,
-            "response_body": log.response_body,
+            "response_body": sanitize_log_data(getattr(log, 'response_body', None)),
             "response_time": log.response_time,
             "error_message": log.error_message,
             "created_at": log.created_at.isoformat() if log.created_at else None
@@ -709,7 +773,7 @@ async def get_api_logs_stats(
     db: AsyncSession = Depends(get_db)
 ):
     """管理员：获取 API 请求统计"""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # 根据周期确定时间范围
     if period == "week":
@@ -719,44 +783,31 @@ async def get_api_logs_stats(
     else:  # day
         start_date = now - timedelta(days=1)
 
-    # 总请求数
-    total_query = select(func.count(APILog.id)).where(APILog.created_at >= start_date)
-    total_result = await db.execute(total_query)
-    total_requests = total_result.scalar() or 0
+    # 使用单次查询获取所有统计数据
+    stats_query = select(
+        func.count(APILog.id).label("total"),
+        func.count(case((and_(APILog.status_code >= 200, APILog.status_code < 300), 1))).label("success"),
+        func.count(case((APILog.status_code >= 400, 1))).label("error"),
+        func.avg(APILog.response_time).label("avg_time")
+    ).where(APILog.created_at >= start_date)
+    stats_result = await db.execute(stats_query)
+    stats_row = stats_result.first()
+    total_requests = stats_row[0] or 0
+    success_requests = stats_row[1] or 0
+    error_requests = stats_row[2] or 0
+    avg_response_time = round(stats_row[3] or 0, 1)
 
-    # 成功请求数 (2xx)
-    success_query = select(func.count(APILog.id)).where(
-        and_(
-            APILog.created_at >= start_date,
-            APILog.status_code >= 200,
-            APILog.status_code < 300
-        )
+    # 按方法统计（使用单次 GROUP BY 查询）
+    method_query = (
+        select(APILog.method, func.count(APILog.id))
+        .where(APILog.created_at >= start_date)
+        .group_by(APILog.method)
     )
-    success_result = await db.execute(success_query)
-    success_requests = success_result.scalar() or 0
-
-    # 错误请求数 (4xx, 5xx)
-    error_query = select(func.count(APILog.id)).where(
-        and_(APILog.created_at >= start_date, APILog.status_code >= 400)
-    )
-    error_result = await db.execute(error_query)
-    error_requests = error_result.scalar() or 0
-
-    # 平均响应时间
-    avg_time_query = select(func.avg(APILog.response_time)).where(
-        APILog.created_at >= start_date
-    )
-    avg_time_result = await db.execute(avg_time_query)
-    avg_response_time = round(avg_time_result.scalar() or 0, 1)
-
-    # 按方法统计
-    method_stats = {}
-    for m in ["GET", "POST", "PUT", "DELETE"]:
-        method_query = select(func.count(APILog.id)).where(
-            and_(APILog.created_at >= start_date, APILog.method == m)
-        )
-        method_result = await db.execute(method_query)
-        method_stats[m] = method_result.scalar() or 0
+    method_result = await db.execute(method_query)
+    method_stats = {"GET": 0, "POST": 0, "PUT": 0, "DELETE": 0}
+    for row in method_result.all():
+        if row[0] in method_stats:
+            method_stats[row[0]] = row[1]
 
     # 热门路径 Top 10
     top_paths_query = (
@@ -804,9 +855,11 @@ async def get_llm_logs(
     if provider:
         conditions.append(LLMCallLog.provider == provider)
     if model_name:
-        conditions.append(LLMCallLog.model_name.ilike(f"%{model_name}%"))
+        escaped_model = escape_like(model_name)
+        conditions.append(LLMCallLog.model_name.ilike(f"%{escaped_model}%", escape="\\"))
     if skill_name:
-        conditions.append(LLMCallLog.skill_name.ilike(f"%{skill_name}%"))
+        escaped_skill = escape_like(skill_name)
+        conditions.append(LLMCallLog.skill_name.ilike(f"%{escaped_skill}%", escape="\\"))
     if task_id:
         conditions.append(LLMCallLog.task_id == task_id)
     if status:
@@ -816,13 +869,19 @@ async def get_llm_logs(
             from_date = datetime.strptime(date_from, "%Y-%m-%d")
             conditions.append(LLMCallLog.created_at >= from_date)
         except ValueError:
-            pass
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="开始日期格式错误，应为 YYYY-MM-DD"
+            )
     if date_to:
         try:
             to_date = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
             conditions.append(LLMCallLog.created_at < to_date)
         except ValueError:
-            pass
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="结束日期格式错误，应为 YYYY-MM-DD"
+            )
 
     if conditions:
         query = query.where(and_(*conditions))
@@ -842,6 +901,16 @@ async def get_llm_logs(
 
     logs = []
     for log, user in rows:
+        # 从 extra_metadata.request 中提取 prompt_preview
+        request_data = log.extra_metadata.get("request") if log.extra_metadata else None
+        if request_data:
+            # 提取最后一条 user 消息作为 preview
+            messages = request_data.get("messages", [])
+            user_messages = [m.get("content", "") for m in messages if m.get("role") == "user"]
+            prompt_preview = user_messages[-1] if user_messages else ""
+        else:
+            prompt_preview = ""
+
         logs.append({
             "id": str(log.id),
             "task_id": str(log.task_id) if log.task_id else None,
@@ -851,7 +920,7 @@ async def get_llm_logs(
             "model_name": log.model_name,
             "skill_name": log.skill_name,
             "stage": log.stage,
-            "prompt_preview": log.prompt[:200] + "..." if log.prompt and len(log.prompt) > 200 else log.prompt,
+            "prompt_preview": prompt_preview[:200] + "..." if len(prompt_preview) > 200 else prompt_preview,
             "response_preview": log.response[:200] + "..." if log.response and len(log.response) > 200 else log.response,
             "prompt_tokens": log.prompt_tokens,
             "response_tokens": log.response_tokens,
@@ -892,6 +961,9 @@ async def get_llm_log_detail(
 
     log, user = row
 
+    # LLM 日志的 metadata 包含 request/response，不需要脱敏
+    # 因为这是管理员查看的日志，记录的是发送给 LLM 的内容，不是系统敏感信息
+
     return {
         "id": str(log.id),
         "task_id": str(log.task_id) if log.task_id else None,
@@ -902,7 +974,7 @@ async def get_llm_log_detail(
         "model_name": log.model_name,
         "skill_name": log.skill_name,
         "stage": log.stage,
-        "prompt": log.prompt,
+        # prompt 字段已废弃，数据存储在 metadata.request 中
         "response": log.response,
         "prompt_tokens": log.prompt_tokens,
         "response_tokens": log.response_tokens,
@@ -912,7 +984,7 @@ async def get_llm_log_detail(
         "latency_ms": log.latency_ms,
         "status": log.status,
         "error_message": log.error_message,
-        "metadata": log.extra_metadata,
+        "metadata": log.extra_metadata,  # 返回原始 metadata，包含完整 request
         "created_at": log.created_at.isoformat() if log.created_at else None
     }
 
@@ -924,7 +996,7 @@ async def get_llm_logs_stats(
     db: AsyncSession = Depends(get_db)
 ):
     """管理员：获取 LLM 调用统计"""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # 根据周期确定时间范围
     if period == "week":
@@ -934,40 +1006,31 @@ async def get_llm_logs_stats(
     else:  # day
         start_date = now - timedelta(days=1)
 
-    # 总调用数
-    total_query = select(func.count(LLMCallLog.id)).where(LLMCallLog.created_at >= start_date)
-    total_result = await db.execute(total_query)
-    total_calls = total_result.scalar() or 0
+    # 使用单次查询获取所有统计数据
+    stats_query = select(
+        func.count(LLMCallLog.id).label("total"),
+        func.count(case((LLMCallLog.status == "success", 1))).label("success"),
+        func.sum(LLMCallLog.total_tokens).label("tokens"),
+        func.avg(LLMCallLog.latency_ms).label("avg_latency")
+    ).where(LLMCallLog.created_at >= start_date)
+    stats_result = await db.execute(stats_query)
+    stats_row = stats_result.first()
+    total_calls = stats_row[0] or 0
+    success_calls = stats_row[1] or 0
+    total_tokens = stats_row[2] or 0
+    avg_latency = round(stats_row[3] or 0, 1)
 
-    # 成功调用数
-    success_query = select(func.count(LLMCallLog.id)).where(
-        and_(LLMCallLog.created_at >= start_date, LLMCallLog.status == "success")
+    # 按提供商统计（使用单次 GROUP BY 查询）
+    provider_query = (
+        select(LLMCallLog.provider, func.count(LLMCallLog.id))
+        .where(LLMCallLog.created_at >= start_date)
+        .group_by(LLMCallLog.provider)
     )
-    success_result = await db.execute(success_query)
-    success_calls = success_result.scalar() or 0
-
-    # 总 token 消耗
-    token_query = select(func.sum(LLMCallLog.total_tokens)).where(
-        LLMCallLog.created_at >= start_date
-    )
-    token_result = await db.execute(token_query)
-    total_tokens = token_result.scalar() or 0
-
-    # 平均延迟
-    avg_latency_query = select(func.avg(LLMCallLog.latency_ms)).where(
-        LLMCallLog.created_at >= start_date
-    )
-    avg_latency_result = await db.execute(avg_latency_query)
-    avg_latency = round(avg_latency_result.scalar() or 0, 1)
-
-    # 按提供商统计
-    provider_stats = {}
-    for p in ["openai", "anthropic", "gemini"]:
-        p_query = select(func.count(LLMCallLog.id)).where(
-            and_(LLMCallLog.created_at >= start_date, LLMCallLog.provider == p)
-        )
-        p_result = await db.execute(p_query)
-        provider_stats[p] = p_result.scalar() or 0
+    provider_result = await db.execute(provider_query)
+    provider_stats = {"openai": 0, "anthropic": 0, "gemini": 0}
+    for row in provider_result.all():
+        if row[0] in provider_stats:
+            provider_stats[row[0]] = row[1]
 
     # 按模型统计 Top 5
     model_stats_query = (

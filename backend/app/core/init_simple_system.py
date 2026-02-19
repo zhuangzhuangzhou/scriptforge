@@ -21,8 +21,73 @@ BUILTIN_SKILLS = [
         "description": "基于网文改编方法论，一次性完成剧情拆解、分集标注、情绪钩子识别",
         "category": "breakdown",
         "is_template_based": True,
-        "system_prompt": "你是资深的网文改编漫剧编辑，输出必须严格符合要求的 JSON 格式，不要解释，不要包含多余文字。",
-        "prompt_template": """你是一名资深的网文改编漫剧编辑。请严格按照以下方法论和格式要求，对小说原文进行剧情拆解。
+        "system_prompt": """你是资深网文改编漫剧编辑，精通冲突识别、情绪钩子提取、分集节奏规划。
+
+【核心判断标准】
+- 核心冲突：只有"改变主角命运或关系"的才是核心冲突
+- 高分钩子：能让观众"卧槽！"=10分，"爽/虐/急"=8-9分，"还行"=6-7分
+- 分集原则：每集必须有钩子结尾，高强度钩子(9-10分)建议单独成集
+
+输出格式由代码处理，你只需专注内容质量。""",
+        "prompt_template": """### 任务
+将小说第{start_chapter}-{end_chapter}章拆解为漫剧剧情点，集数从第 {start_episode} 集开始编号。
+
+---
+
+### 小说原文
+{chapters_text}
+
+---
+
+### 上轮拆解结果
+{previous_plot_points}
+
+### 质检反馈（如有，必须针对性修正）
+{qa_feedback}
+
+**注意**：如果有质检反馈，请基于上轮结果进行针对性修正，不要从头重新拆解。
+
+---
+
+### 钩子类型定义
+{hook_types}
+
+---
+
+### 钩子边界规则（易混淆类型区分）
+{hook_boundary_rules}
+
+---
+
+### 类型特性指南
+{genre_guidelines}
+
+---
+
+### 拆解思考步骤
+
+**第一步：识别核心冲突**
+快速浏览原文，标记改变主角处境或关系的冲突点。
+
+**第二步：提取情绪钩子**
+对每个冲突判断观众情绪反应，选择最准确的钩子类型。
+
+**第三步：分集规划**
+每集1-3个剧情点，结尾必须是钩子，确保"卡黑"效果。
+
+**第四步：压缩检查**
+删掉后故事仍完整的内容 → 删除；无情绪价值的内容 → 删除。
+
+---
+
+### 剧情点质量标准
+1. 独立性：每个剧情点是一个相对完整的小场景
+2. 推动力：推动主线发展、揭示关键信息、或改变人物关系
+3. 情绪价值：有明确的情绪钩子，不能平淡过渡
+4. 可视化：场景描述能转化为画面，避免纯心理活动
+5. 字数控制：单个剧情点描述 30-50 字
+
+---
 
 ### 改编方法论
 {adapt_method}
@@ -36,62 +101,47 @@ BUILTIN_SKILLS = [
 ### 示例
 {example}
 
-### 小说原文（第{start_chapter}-{end_chapter}章）
-{chapters_text}
+---
 
-### 集数编号规则
-**重要**：本批次的集数编号必须从第 {start_episode} 集开始，依次递增。
-- 如果 start_episode=1，则本批次拆分的集数为 1, 2, 3...
-- 如果 start_episode=4，则本批次拆分的集数为 4, 5, 6...（因为前面的批次已经拆到第3集）
+### 输出格式
+**【关键要求】每行一个剧情点，使用管道符 | 分隔，禁止使用逗号分隔！**
 
-### 上一轮拆解结果（如有）
-{previous_plot_points}
+格式：
+剧情点序号|场景|角色|剧情|钩子|第X集
 
-### 上一轮质检反馈（如有，请务必针对性修正）
-**质检得分**: {qa_score}
+**【禁止事项】**
+- ❌ 禁止使用逗号分隔，如"真相线索，第13集"
+- ❌ 禁止添加任何额外符号
 
-**发现的问题**:
-{qa_issues}
 
-**修复指引**:
-{qa_fix_instructions}
+字段说明：
+- 剧情点序号：从1开始连续编号
+- 场景：具体场景名称
+- 角色：用 / 分隔多个角色
+- 剧情：简洁描述（30-50字）
+- 钩子：只能从标准钩子类型中选择一个
+- 集数：第X集（从 {start_episode} 开始）
 
-### 任务
-如果上方有"上一轮拆解结果"和"质检反馈"，说明这是修正轮次：
-- 请基于上一轮结果进行**针对性修正**，不要从头重新拆解
-- 重点修复质检反馈中指出的问题
-- 保留没有问题的剧情点，只修改有问题的部分
-- 确保修正后的内容符合改编方法论
+### 输出示例
+1|豪华酒店大堂|林浩/陈总|林浩当众揭穿陈总的商业欺诈，陈总脸色铁青|打脸爽点|第1集
+2|公司会议室|林浩/秘书小王|林浩展示隐藏实力震惊全场，众人目瞪口呆|碾压爽点|第1集
+3|地下停车场|林浩/神秘女子|神秘女子暗示林浩的真实身份后消失|悬念设置|第2集
 
-如果没有上一轮结果，说明这是首次拆解：
-- 请按照上述方法论和格式模板，对原文进行剧情拆解
-
-每个剧情点使用以下 JSON 格式：
-{{
-  "id": 剧情编号,
-  "scene": "场景地点",
-  "characters": ["角色A", "角色B"],
-  "event": "角色A对角色B做了什么",
-  "hook_type": "情绪钩子类型",
-  "episode": 集数（从 {start_episode} 开始编号）,
-  "status": "unused",
-  "source_chapter": 来源章节号
-}}
-
-请只返回 JSON 数组，不要包含其他文字。""",
+请直接输出剧情点列表，每行一个。""",
         "input_schema": {
             "chapters_text": {"type": "string", "description": "章节文本内容"},
             "adapt_method": {"type": "string", "description": "改编方法论"},
             "output_style": {"type": "string", "description": "输出风格"},
             "template": {"type": "string", "description": "格式模板"},
             "example": {"type": "string", "description": "示例"},
-            "previous_plot_points": {"type": "string", "description": "上一轮拆解结果（JSON，可选）"},
-            "qa_score": {"type": "string", "description": "上一轮质检得分（可选）"},
-            "qa_issues": {"type": "string", "description": "上一轮质检发现的问题（JSON，可选）"},
-            "qa_fix_instructions": {"type": "string", "description": "上一轮质检修复指引（JSON，可选）"},
+            "previous_plot_points": {"type": "string", "description": "上一轮拆解结果（按集分组文本，可选）"},
+            "qa_feedback": {"type": "string", "description": "上一轮质检反馈（文本，可选）"},
             "start_chapter": {"type": "integer", "description": "起始章节号"},
             "end_chapter": {"type": "integer", "description": "结束章节号"},
-            "start_episode": {"type": "integer", "description": "起始集数（本批次从第几集开始编号）"}
+            "start_episode": {"type": "integer", "description": "起始集数（本批次从第几集开始编号）"},
+            "hook_types": {"type": "string", "description": "钩子类型定义文档内容", "default": ""},
+            "hook_boundary_rules": {"type": "string", "description": "钩子边界规则文档内容", "default": ""},
+            "genre_guidelines": {"type": "string", "description": "类型特性指南文档内容", "default": ""}
         },
         "output_schema": {
             "type": "array",
@@ -114,98 +164,134 @@ BUILTIN_SKILLS = [
     {
         "name": "breakdown_aligner",
         "display_name": "剧情拆解质量校验",
-        "description": "基于改编方法论对剧情拆解进行8维度质量检查，确保拆解符合方法论标准",
+        "description": "基于改编方法论对剧情拆解进行质量检查，确保拆解符合方法论标准",
         "category": "breakdown",
         "is_template_based": True,
-        "system_prompt": "你是严格的剧情拆解质量校验员，输出必须是 JSON，不要解释，不要添加额外文字。",
-        "prompt_template": """你是"网文改编漫剧剧情拆解质量校验员"，负责检查剧情拆解阶段的质量。你是资深的网文改编专家，精通冲突识别、情绪钩子提取、剧情密度评估、分集策略制定。
+        "system_prompt": """你是严格的剧情拆解质量校验员，聚焦内容质量，不纠结格式问题。
 
-### 改编方法论（核心基准）
-{adapt_method}
+【核心检查项】
+1. 钩子类型是否准确
+2. 是否遗漏高强度冲突
+3. 分集节奏是否合理
+4. 描述是否可视化
 
-### 小说原文
-{chapters_text}
+【修改意见规范】
+✅ 正确："第3集第1点：'打脸蓄力' → '人物结交'，因为对方态度友好"
+❌ 错误："钩子类型需要调整"（没说改成什么）""",
+        "prompt_template": """### 质检任务
+检查以下剧情拆解结果是否符合改编方法论标准。
 
-### 待检查的剧情拆解结果（JSON）
+---
+
+### 待检查内容
 {plot_points}
 
-### 检查任务
-请对上述剧情拆解结果进行全面的8维度质量检查，以改编方法论为核心基准，结合小说原文进行对比验证。
+格式：序号|场景|角色|剧情|钩子|集数
 
-#### 8个检查维度
+---
 
-**维度1：冲突强度评估**
-- 标记为高强度的冲突是否真的"改变主角命运、大幅改变格局"
-- 冲突类型标注是否准确（人物对立/力量对比/身份矛盾/情感纠葛/生存危机/真相悬念）
+### 原文对照
+{chapters_text}
 
-**维度2：情绪钩子识别准确性**
-- 情绪钩子类型是否准确（打脸蓄力/碾压爽点/金手指觉醒/虐心痛点/真相揭露等）
-- 强度评分是否合理（10分=让观众"卧槽"，8-9分=爽/虐/急，6-7分=有感觉）
-- 是否遗漏了原文中的高强度钩子
+---
 
-**维度3：冲突密度达标性**
-- 核心冲突数量：高密度(5+)、中密度(2-4)、低密度(0-1需说明原因)
-- 高强度钩子(8-10分)数量：高密度(6-8)、中密度(3-5)、低密度(1-2需说明原因)
+### 钩子类型定义
+{hook_types}
 
-**维度4：分集标注合理性**
-- 每集剧情点数量是否合理(1-3个)
-- 高强度钩子(10-9分)是否单独成集
-- 每集字数估算是否在500-800字范围内
+---
 
-**维度5：压缩策略正确性**
-- 必删内容是否删除：环境描写、心理独白、过渡情节、支线剧情、重复内容
-- 必留内容是否保留：冲突对话、动作场景、情绪爆点、悬念设置、关系展示
+### 钩子边界规则（易混淆类型区分）
+{hook_boundary_rules}
 
-**维度6：剧情点描述规范性**
-- 格式是否完整：场景、角色、事件、情绪钩子类型、集数、状态
-- 剧情编号是否连续
+---
 
-**维度7：原文还原准确性**
-- 剧情点是否准确反映原文内容，有无曲解或遗漏
-- 角色关系、事件因果是否与原文一致
+### 类型特性指南
+{genre_guidelines}
 
-**维度8：类型特性符合度**
-- 是否符合该小说类型的特殊要求（玄幻/都市/言情/悬疑/科幻/重生复仇等）
-- 是否保留了该类型的"必保留"内容，删除了"必删除"内容
+---
+
+### 质检维度定义
+{qa_dimensions}
+
+---
+
+### 改编方法论
+{adapt_method}
+
+---
+
+### 质检步骤
+
+**第一步：原文对照**
+逐条核实每个剧情点是否能在原文中找到对应内容，有无曲解、遗漏、虚构。
+
+**第二步：钩子验证**
+检查每个钩子类型是否与剧情内容匹配，使用【钩子边界规则】逐一核对。
+
+**第三步：密度评估**
+统计核心冲突数量和高强度钩子(8-10分)数量，判断是否达标。
+
+**第四步：分集审查**
+检查每集是否有钩子结尾，高强度钩子是否合理分布。
+
+**第五步：内容完整性**
+检查场景是否具体、角色是否明确、事件描述是否清晰(30-50字)。
+
+---
 
 ### 输出格式
-请以 JSON 格式返回质检报告：
-{{
-  "status": "PASS 或 FAIL",
-  "score": 总分(0-100),
-  "dimensions": [
-    {{
-      "name": "维度名称",
-      "passed": true/false,
-      "score": 维度得分(0-100),
-      "details": "检查详情"
-    }}
-  ],
-  "issues": [
-    {{
-      "dimension": "所属维度",
-      "severity": "critical/major/minor",
-      "location": "问题位置（剧情编号或章节）",
-      "description": "问题描述",
-      "rule_violated": "违反的方法论条款",
-      "current": "当前内容",
-      "expected": "应该如何"
-    }}
-  ],
-  "fix_instructions": [
-    {{
-      "priority": "high/medium/low",
-      "target": "修改目标（剧情编号）",
-      "action": "具体修改建议"
-    }}
-  ]
-}}
 
-请只返回 JSON 对象，不要包含其他文字。""",
+**【关键要求】必须严格按照以下格式输出，禁止使用 Markdown 格式！**
+
+请参考【质检维度定义】中的格式要求输出质检报告。
+
+格式要点：
+1. 【质检报告】总分 + 状态
+2. 【维度1-8】评分 + 结果 + 说明
+3. 【修改清单】具体可执行的修改建议
+
+**标准格式模板**：
+```
+【质检报告】
+总分：75
+状态：通过
+
+【维度1】冲突强度评估 评分 10 通过
+说明：核心冲突识别准确
+
+【维度2】情绪钩子识别 评分 6 未通过
+说明：第3个剧情点钩子类型有误
+
+【维度3】冲突密度达标性 评分 8 通过
+说明：密度达标
+
+...（维度4-8同理）
+
+【修改清单】
+1. 【剧情3】钩子类型错误：'打脸蓄力' → '人物结交'，因为对方态度友好
+```
+
+**格式约束**：
+- 维度格式：`【维度N】名称 评分 XX 通过/未通过`（N为阿拉伯数字1-8）
+- 状态词：只能使用"通过"或"未通过"
+- 评分：只写数字，不要写"/12.5分"
+- 禁止使用 Markdown 格式（###、**、- 等）
+- 禁止添加额外符号（⭐、✓、✗等）
+
+**禁止事项**：
+❌ ### 维度1：冲突强度评估 ⭐⭐⭐
+❌ **评估结果**：8/10分
+❌ 【维度1】冲突强度评估 10/12.5分 ✓ 良好
+
+请直接输出质检报告，不要输出 JSON。""",
         "input_schema": {
-            "plot_points": {"type": "string", "description": "JSON格式的剧情点列表"},
+            "plot_points": {"type": "string", "description": "管道符分隔的剧情点列表（序号|场景|角色|剧情|钩子|集数）"},
             "chapters_text": {"type": "string", "description": "小说原文"},
-            "adapt_method": {"type": "string", "description": "改编方法论"}
+            "adapt_method": {"type": "string", "description": "改编方法论"},
+            "hook_types": {"type": "string", "description": "钩子类型定义文档内容", "default": ""},
+            "hook_boundary_rules": {"type": "string", "description": "钩子边界规则文档内容", "default": ""},
+            "genre_guidelines": {"type": "string", "description": "类型特性指南文档内容", "default": ""},
+            "qa_dimensions": {"type": "string", "description": "质检维度定义文档内容", "default": ""}
         },
         "output_schema": {
             "type": "object",
@@ -220,89 +306,28 @@ BUILTIN_SKILLS = [
         "model_config": {"temperature": 0.3, "max_tokens": 100000}
     },
     {
-        "name": "webtoon_breakdown_repair",
-        "display_name": "剧情拆解修复",
-        "description": "基于质量检查反馈对剧情拆解进行局部修复，保持未问题部分不变",
-        "category": "breakdown",
-        "is_template_based": True,
-        "system_prompt": "你是资深的网文改编漫剧编辑，专门做剧情拆解修复。必须严格根据反馈逐条修复，保持未问题内容不变。输出必须为 JSON 数组，不要解释。",
-        "prompt_template": """你是一名资深的网文改编漫剧编辑。请基于反馈意见对已有剧情拆解进行修复，仅修改有问题的部分，保持其他内容不变。
-
-### 改编方法论
-{adapt_method}
-
-### 当前剧情拆解结果（JSON）
-{plot_points}
-
-### 质量检查反馈（必须逐条修复）
-{qa_feedback}
-
-### 小说原文参考
-{chapters_text}
-
-### 修复要求
-- **识别修改范围**：
-  • 如果是 breakdown-aligner 的 FAIL 反馈：精准定位到具体剧情点和问题维度  
-  • 如果是 webtoon-aligner 的 FAIL 反馈：精准定位到具体集数和问题维度  
-  • 如果是用户提出的修改意见：理解用户意图，判断影响范围  
-- **执行修改策略**：
-  • 局部修改：只修改有问题的部分，保持其他内容不变  
-  • 关联修改：如修改涉及设定变更，需联动修改相关集数  
-  • 格式修正：确保修改后仍严格遵循模板格式  
-  • 风格统一：确保修改后的内容与原有风格一致  
-- **修改验证**：
-  • 修改完成后，自检是否解决了反馈中的所有问题  
-  • 确保修改没有引入新的矛盾或错误  
-  • 验证修改后的内容仍符合改编方法论  
-
-### 输出格式（必须严格遵循）
-每个剧情点使用以下 JSON 格式：
-{{
-  "id": 剧情编号,
-  "scene": "场景地点",
-  "characters": ["角色A", "角色B"],
-  "event": "角色A对角色B做了什么",
-  "hook_type": "情绪钩子类型",
-  "episode": 集数,
-  "status": "unused",
-  "source_chapter": 来源章节号
-}}
-
-请只返回 JSON 数组，不要包含其他文字。""",
-        "input_schema": {
-            "plot_points": {"type": "string", "description": "当前剧情点列表（JSON）"},
-            "qa_feedback": {"type": "string", "description": "质量检查反馈（必须逐条修复）"},
-            "chapters_text": {"type": "string", "description": "小说原文"},
-            "adapt_method": {"type": "string", "description": "改编方法论"}
-        },
-        "output_schema": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "id": {"type": "integer"},
-                    "scene": {"type": "string"},
-                    "characters": {"type": "array"},
-                    "event": {"type": "string"},
-                    "hook_type": {"type": "string"},
-                    "episode": {"type": "integer"},
-                    "status": {"type": "string"},
-                    "source_chapter": {"type": "integer"}
-                }
-            }
-        },
-        "model_config": {"temperature": 0.6, "max_tokens": 100000}
-    },
-    {
         "name": "webtoon_script",
         "display_name": "单集剧本创作",
         "description": "基于剧情点生成单集漫剧剧本，包含场景、动作、对话、特效标注",
         "category": "script",
         "is_template_based": True,
-        "prompt_template": """你是一名资深的网文改编漫剧编剧。请根据以下剧情点和方法论，创作单集剧本。
+        "system_prompt": """你是资深网文改编漫剧编剧，精通"起承转钩"四段式剧本结构。
 
-### 改编方法论
-{adapt_method}
+【核心原则】
+- 开场3秒进冲突，结尾强制卡黑
+- 对话单句不超过15字，禁止解释性对话
+- 所有描述必须可视化，禁止心理独白
+
+【剧本格式】
+- 场景：※ 场景名称（时间）
+- 动作：△ 动作描述
+- 对话：角色名："对话内容"
+- 特效：【特效类型】描述
+- 结尾：【卡黑】""",
+        "prompt_template": """### 任务
+为第 {episode_number} 集创作漫剧剧本。
+
+---
 
 ### 本集剧情点
 {plot_points}
@@ -310,59 +335,81 @@ BUILTIN_SKILLS = [
 ### 原文参考
 {chapters_text}
 
-### 集数信息
-第 {episode_number} 集
+### 改编方法论
+{adapt_method}
 
-### 剧本格式要求
-1. 场景标注：※ 场景名称（时间）
-2. 动作描写：△ 动作描述
-3. 对话格式：角色名："对话内容"
-4. 特效标注：【特效类型】描述
-5. 内心独白：【独白】内容
-6. 结尾必须：【卡黑】
+---
 
-### 单集结构（起承转钩四段式）
-- 【起】开场冲突（100-150字）：3秒抓眼球，瞬间进入冲突
-- 【承】推进发展（150-200字）：展示过程，为爽点铺垫
-- 【转】反转高潮（200-250字）：核心爽点爆发，情绪达到峰值
-- 【钩】悬念结尾（100-150字）：强制卡黑，吸引观众看下一集
+### 类型特性指南
+{genre_guidelines}
 
-### 输出要求
-请以 JSON 格式返回剧本：
-{{
-  "episode_number": {episode_number},
-  "title": "本集标题",
-  "word_count": 字数统计,
-  "structure": {{
-    "opening": {{
-      "content": "【起】部分内容",
-      "word_count": 字数
-    }},
-    "development": {{
-      "content": "【承】部分内容",
-      "word_count": 字数
-    }},
-    "climax": {{
-      "content": "【转】部分内容",
-      "word_count": 字数
-    }},
-    "hook": {{
-      "content": "【钩】部分内容",
-      "word_count": 字数
-    }}
-  }},
-  "full_script": "完整剧本文本",
-  "scenes": ["场景1", "场景2"],
-  "characters": ["角色1", "角色2"],
-  "hook_type": "结尾悬念类型"
-}}
+---
 
-请只返回 JSON 对象，不要包含其他文字。""",
+### 创作步骤
+
+**第一步：理解剧情点**
+本集核心钩子是什么？要传达什么情绪？结尾卡在哪里？
+
+**第二步：设计四段结构**
+- 【起】开场冲突（100-150字）：3秒抓眼球
+- 【承】推进发展（150-200字）：为爽点铺垫
+- 【转】反转高潮（200-250字）：情绪峰值
+- 【钩】悬念结尾（100-150字）：强制卡黑
+
+**第三步：视觉化检查**
+逐句检查能否转化为画面，删除所有心理描写和抽象描述。
+
+---
+
+### 对话规范
+- 单句不超过15字
+- 同一角色连续不超过3句
+- 禁止："让我告诉你..."、"我知道了"、"原来如此"
+
+### 禁止事项
+- 大段内心独白（>20字）
+- 抽象描述："感觉很悲伤" → 改为"眼泪在眼眶打转"
+- 过渡场景：不需要展示从A地到B地的过程
+
+---
+
+### 输出格式
+
+【剧本信息】
+集数：第 {episode_number} 集
+标题：本集标题
+总字数：XXX字
+
+【起】开场冲突（目标100-150字）
+※ 场景名称（时间）
+△ 动作描述
+角色名："对话内容"
+...
+
+【承】推进发展（目标150-200字）
+※ 场景名称（时间）
+...
+
+【转】反转高潮（目标200-250字）
+※ 场景名称（时间）
+...
+
+【钩】悬念结尾（目标100-150字）
+※ 场景名称（时间）
+...
+【卡黑】
+
+【场景列表】场景1、场景2、...
+【角色列表】角色1、角色2、...
+【结尾钩子类型】悬念类型
+
+请直接输出剧本，不要输出 JSON。""",
         "input_schema": {
-            "plot_points": {"type": "string", "description": "JSON格式的本集剧情点"},
+            "plot_points": {"type": "string", "description": "管道符分隔的本集剧情点（序号|场景|角色|剧情|钩子|集数）"},
             "chapters_text": {"type": "string", "description": "原文参考"},
             "adapt_method": {"type": "string", "description": "改编方法论"},
-            "episode_number": {"type": "integer", "description": "集数"}
+            "episode_number": {"type": "integer", "description": "集数"},
+            "genre_guidelines": {"type": "string", "description": "类型特性指南文档内容", "default": ""}
         },
         "output_schema": {
             "type": "object",
@@ -385,52 +432,87 @@ BUILTIN_SKILLS = [
         "description": "检查单集剧本是否符合漫剧改编标准，包括字数、结构、节奏、视觉化等",
         "category": "qa",
         "is_template_based": True,
-        "prompt_template": """你是一名资深的网文改编漫剧质检专家。请对以下单集剧本进行质量检查。
+        "system_prompt": """你是资深漫剧剧本质检专家，聚焦以下核心检查项：
 
-### 改编方法论
-{adapt_method}
+【必检项目】
+1. 字数范围：500-800字
+2. 结构完整：起承转钩四段式
+3. 开场冲突：3秒进冲突
+4. 悬念结尾：必须有【卡黑】
+5. 视觉化：无大段心理描写
+6. 对话质量：单句≤15字
 
-### 待检查的剧本
+【修改意见规范】
+必须具体可执行，说明"哪里"→"改成什么"。""",
+        "prompt_template": """### 质检任务
+检查以下剧本是否符合漫剧改编标准。
+
+---
+
+### 待检查剧本
 {script}
 
 ### 原文参考
 {chapters_text}
 
-### 质检维度
-1. 字数范围（20%）：总字数是否在500-800字范围内
-2. 结构完整（25%）：起承转钩四段式是否完整
-3. 开场冲突（15%）：是否3秒进冲突，无铺垫
-4. 悬念结尾（20%）：是否有【卡黑】，悬念是否足够
-5. 视觉化（10%）：是否无大段心理描写，可转化为画面
-6. 对话质量（10%）：对话是否简短有力
+### 改编方法论
+{adapt_method}
+
+---
+
+### 质检维度（总分100分）
+
+**1. 字数范围（20分）**
+- 总字数是否在500-800字范围内
+- 过短则内容不足，过长则节奏拖沓
+
+**2. 结构完整（25分）**
+- 起承转钩四段式是否完整
+- 各部分字数是否合理：起(100-150)、承(150-200)、转(200-250)、钩(100-150)
+
+**3. 开场冲突（15分）**
+- 是否3秒进冲突，无铺垫
+- 开场是否从冲突最激烈的瞬间开始
+
+**4. 悬念结尾（20分）**
+- 是否有【卡黑】标记
+- 悬念是否足够吸引观众看下一集
+
+**5. 视觉化（10分）**
+- 是否无大段心理描写（>20字）
+- 所有描述是否可转化为画面
+
+**6. 对话质量（10分）**
+- 对话是否简短有力（单句≤15字）
+- 是否无解释性对话和废话
+
+---
 
 ### 输出格式
-请以 JSON 格式返回质检报告：
-{{
-  "status": "PASS 或 FAIL",
-  "score": 总分(0-100),
-  "dimensions": {{
-    "word_count": {{"score": 0-10, "issues": [], "actual": 实际字数}},
-    "structure": {{"score": 0-10, "issues": []}},
-    "opening": {{"score": 0-10, "issues": []}},
-    "hook_ending": {{"score": 0-10, "issues": []}},
-    "visualization": {{"score": 0-10, "issues": []}},
-    "dialogue": {{"score": 0-10, "issues": []}}
-  }},
-  "fix_instructions": [
-    {{
-      "target": "修改目标",
-      "type": "问题类型",
-      "issue": "问题描述",
-      "suggestion": "修正建议"
-    }}
-  ],
-  "summary": "整体评价"
-}}
 
-请只返回 JSON 对象，不要包含其他文字。""",
+【质检报告】
+总分：XX/100
+状态：通过/不通过（80分以上通过）
+实际字数：XXX字
+
+【各维度评分】
+1. 字数范围：XX/20 - 说明
+2. 结构完整：XX/25 - 说明
+3. 开场冲突：XX/15 - 说明
+4. 悬念结尾：XX/20 - 说明
+5. 视觉化：XX/10 - 说明
+6. 对话质量：XX/10 - 说明
+
+【问题清单】（必须具体可执行）
+1. [问题类型] 位置：原内容 → 修改为 → 具体新内容
+2. ...
+
+【整体评价】
+简要总结剧本质量和主要改进方向
+
+请直接输出质检报告，不要输出 JSON。""",
         "input_schema": {
-            "script": {"type": "string", "description": "JSON格式的剧本"},
+            "script": {"type": "string", "description": "结构化文本格式的剧本"},
             "chapters_text": {"type": "string", "description": "原文参考"},
             "adapt_method": {"type": "string", "description": "改编方法论"}
         },
@@ -450,6 +532,13 @@ BUILTIN_SKILLS = [
 
 
 # ==================== 内置 Agents 定义 ====================
+#
+# 变量引用语法说明：
+# - ${context.xxx} : 从上下文获取输入参数
+# - ${variable} : 引用上一步的输出，变量不存在时会报错
+# - ${variable:} : 引用上一步的输出，变量不存在时返回空字符串（用于循环首轮）
+# - ${variable:默认值} : 引用上一步的输出，变量不存在时返回默认值
+#
 
 BUILTIN_AGENTS = [
     {
@@ -460,7 +549,7 @@ BUILTIN_AGENTS = [
         "workflow": {
             "type": "loop",
             "max_iterations": 3,
-            "exit_condition": "qa_result.status == 'PASS' or qa_result.score >= 70",
+            "exit_condition": "qa_result.status == 'PASS' and qa_result.score >= 70",
             "steps": [
                 {
                     "id": "breakdown",
@@ -471,13 +560,16 @@ BUILTIN_AGENTS = [
                         "output_style": "${context.output_style}",
                         "template": "${context.template}",
                         "example": "${context.example}",
-                        "previous_plot_points": "${plot_points}",
-                        "qa_issues": "${qa_result.issues}",
-                        "qa_fix_instructions": "${qa_result.fix_instructions}",
-                        "qa_score": "${qa_result.score}",
+                        # 循环首轮这两个变量不存在，使用 : 语法返回空字符串
+                        "previous_plot_points": "${plot_points:}",
+                        "qa_feedback": "${qa_result:}",
                         "start_chapter": "${context.start_chapter}",
                         "end_chapter": "${context.end_chapter}",
-                        "start_episode": "${context.start_episode}"
+                        "start_episode": "${context.start_episode}",
+                        # 新增资源参数
+                        "hook_types": "${context.hook_types}",
+                        "hook_boundary_rules": "${context.hook_boundary_rules}",
+                        "genre_guidelines": "${context.genre_guidelines}"
                     },
                     "output_key": "plot_points",
                     "on_fail": "stop",
@@ -489,7 +581,12 @@ BUILTIN_AGENTS = [
                     "inputs": {
                         "plot_points": "${plot_points}",
                         "chapters_text": "${context.chapters_text}",
-                        "adapt_method": "${context.adapt_method}"
+                        "adapt_method": "${context.adapt_method}",
+                        # 新增资源参数
+                        "hook_types": "${context.hook_types}",
+                        "hook_boundary_rules": "${context.hook_boundary_rules}",
+                        "genre_guidelines": "${context.genre_guidelines}",
+                        "qa_dimensions": "${context.qa_dimensions}"
                     },
                     "output_key": "qa_result",
                     "on_fail": "skip",
@@ -506,7 +603,7 @@ BUILTIN_AGENTS = [
         "workflow": {
             "type": "loop",
             "max_iterations": 2,
-            "exit_condition": "qa_result.status == 'PASS' or qa_result.score >= 80",
+            "exit_condition": "qa_result.status == 'PASS' and qa_result.score >= 80",
             "steps": [
                 {
                     "id": "script",
