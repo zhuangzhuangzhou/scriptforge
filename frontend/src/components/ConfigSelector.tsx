@@ -27,6 +27,11 @@ const categoryConfig: Record<string, { label: string; color: string; description
     color: 'blue',
     description: '改编方法论，决定如何提取冲突、识别情绪钩子、应用压缩策略',
   },
+  type_guide: {
+    label: '类型指南',
+    color: 'green',
+    description: '不同小说类型的改编指南，针对悬疑、言情、玄幻等类型的专属策略',
+  },
   output_style: {
     label: '输出风格',
     color: 'purple',
@@ -41,6 +46,21 @@ const categoryConfig: Record<string, { label: string; color: string; description
     label: '模板案例',
     color: 'cyan',
     description: '输出格式模板和参考示例',
+  },
+  hook_types: {
+    label: '钩子类型',
+    color: 'rose',
+    description: '情绪钩子类型定义（爽感、震撼、虐心、悬念、成长、情感、冲突等）',
+  },
+  hook_rules: {
+    label: '钩子规则',
+    color: 'amber',
+    description: '易混淆钩子的区分规则和边界定义',
+  },
+  qa_dimensions: {
+    label: '质检维度',
+    color: 'indigo',
+    description: '质检评估维度定义（8个维度的评分标准）',
   },
 };
 

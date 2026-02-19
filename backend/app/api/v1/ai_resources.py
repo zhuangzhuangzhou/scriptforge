@@ -49,10 +49,10 @@ RESOURCE_CATEGORIES = {
         "default_select_all": False,
     },
     "qa_rules": {
-        "label": "质检标准",
+        "label": "质检规则",
         "icon": "Shield",
         "color": "orange",
-        "description": "质量检查标准，决定拆解结果的通过阈值",
+        "description": "质量检查标准和维度，决定拆解结果的通过阈值",
         "order": 4,
         "default_select_all": False,
     },
@@ -63,6 +63,14 @@ RESOURCE_CATEGORIES = {
         "description": "输出格式模板和参考示例",
         "order": 5,
         "default_select_all": False,
+    },
+    "hook_types": {
+        "label": "钩子规则",
+        "icon": "Anchor",
+        "color": "rose",
+        "description": "情绪钩子类型和规则定义（爽感、震撼、虐心、悬念、成长、情感、冲突等）",
+        "order": 6,
+        "default_select_all": True,
     },
 }
 
@@ -181,9 +189,26 @@ async def list_ai_resources(
             )
         )
 
-    # 分类筛选
+    # 分类筛选（qa_rules 包含 qa_dimensions，hook_types 包含 hook_rules）
     if category:
-        conditions.append(AIResource.category == category)
+        if category == "qa_rules":
+            # 质检规则包含 qa_rules 和 qa_dimensions
+            conditions.append(
+                or_(
+                    AIResource.category == "qa_rules",
+                    AIResource.category == "qa_dimensions"
+                )
+            )
+        elif category == "hook_types":
+            # 钩子规则包含 hook_types 和 hook_rules
+            conditions.append(
+                or_(
+                    AIResource.category == "hook_types",
+                    AIResource.category == "hook_rules"
+                )
+            )
+        else:
+            conditions.append(AIResource.category == category)
 
     # 范围筛选
     if scope == "builtin":

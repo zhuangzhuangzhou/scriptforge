@@ -93,13 +93,29 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
     }
   }, [logs, isMinimized, visible, userScrolled]);
 
-  // 根据视图模式过滤日志（仅显示流式内容）
+  // 根据视图模式过滤日志
   const filteredLogs = logs.filter(log => {
     if (viewMode === 'raw') {
-      return log.type === 'stream';
+      // RAW 模式显示所有非 formatted 类型的日志
+      return log.type !== 'formatted';
     }
     return log.type === 'formatted';
   });
+
+  // 获取日志类型的中文标签和颜色
+  const getLogTypeInfo = (type: string): { label: string; colorClass: string } => {
+    const typeMap: Record<string, { label: string; colorClass: string }> = {
+      info: { label: 'INFO', colorClass: 'text-blue-400' },
+      success: { label: 'SUCCESS', colorClass: 'text-green-400' },
+      warning: { label: 'WARN', colorClass: 'text-amber-400' },
+      error: { label: 'ERROR', colorClass: 'text-red-400' },
+      thinking: { label: 'THINK', colorClass: 'text-cyan-400' },
+      llm_call: { label: 'LLM', colorClass: 'text-purple-400' },
+      stream: { label: 'STREAM', colorClass: 'text-pink-400' },
+      formatted: { label: 'FMT', colorClass: 'text-slate-400' },
+    };
+    return typeMap[type] || { label: type.toUpperCase(), colorClass: 'text-slate-400' };
+  };
 
   if (!visible) return null;
 
@@ -277,7 +293,9 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
 
     const renderedLines = lines.map((line, index) => renderFormattedLine(line, index, lines));
     return renderedLines.flatMap((node, index) =>
-      index === 0 ? [node] : [<br key={`br-${index}`} />, node]
+      index === 0
+        ? [<React.Fragment key={index}>{node}</React.Fragment>]
+        : [<br key={`br-${index}`} />, <React.Fragment key={index}>{node}</React.Fragment>]
     );
   };
 
@@ -352,6 +370,12 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <Terminal size={14} className="text-cyan-400 flex-shrink-0" />
           <span className="text-xs font-medium text-slate-300 flex-shrink-0">System Console</span>
+          {isProcessing && (
+            <span className="flex items-center gap-1.5">
+              <span className="h-2 w-2 bg-green-400 rounded-full animate-pulse" />
+              <span className="text-[10px] text-green-400">运行中</span>
+            </span>
+          )}
 
           {/* 进度和状态显示移至上区 */}
         </div>
@@ -456,11 +480,17 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
                 {/* LLM 调用日志 */}
                 {log.type === 'llm_call' ? (
                   <div className="flex-1 min-w-0">
+                    {/* RAW 模式：显示日志类型标签 */}
+                    {viewMode === 'raw' && (
+                      <span className={`inline-block text-[9px] font-mono font-bold mr-2 px-1 rounded ${getLogTypeInfo(log.type).colorClass} bg-slate-800/80`}>
+                        {getLogTypeInfo(log.type).label}
+                      </span>
+                    )}
                     <div
                       className="flex items-start gap-2 group cursor-pointer"
                       onClick={() => log.detail && toggleLogDetail(log.id)}
                     >
-                      <Zap size={12} className="text-cyan-400 mt-0.5 flex-shrink-0" />
+                      {viewMode !== 'raw' && <Zap size={12} className="text-cyan-400 mt-0.5 flex-shrink-0" />}
                       <div className="flex-1 min-w-0">
                         <div className="text-cyan-300 text-xs break-words">{log.message}</div>
                         {log.detail && (
@@ -473,12 +503,21 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
                             {log.detail.score !== undefined && (
                               <span className="ml-2 text-cyan-400">Score: {log.detail.score}</span>
                             )}
-                            {expandedLogs.has(log.id) && (
+                            {/* RAW 模式默认展开 detail */}
+                            {viewMode === 'raw' ? (
                               <div className="mt-1 p-2 bg-slate-900/50 rounded border border-slate-700/50 text-slate-400">
                                 <pre className="whitespace-pre-wrap break-words">
                                   {JSON.stringify(log.detail, null, 2)}
                                 </pre>
                               </div>
+                            ) : (
+                              expandedLogs.has(log.id) && (
+                                <div className="mt-1 p-2 bg-slate-900/50 rounded border border-slate-700/50 text-slate-400">
+                                  <pre className="whitespace-pre-wrap break-words">
+                                    {JSON.stringify(log.detail, null, 2)}
+                                  </pre>
+                                </div>
+                              )
                             )}
                           </div>
                         )}
@@ -487,22 +526,46 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
                   </div>
                 ) : (
                   /* 普通日志 */
-                  <span className={`break-words flex-1 ${
-                    log.type === 'error' ? 'text-red-400' :
-                    log.type === 'success' ? 'text-green-400' :
-                    log.type === 'warning' ? 'text-amber-400' :
-                    log.type === 'thinking' ? 'text-cyan-300 italic' :
-                    log.type === 'stream' ? 'text-purple-300 font-normal whitespace-pre-wrap leading-relaxed' :
-                    log.type === 'formatted' ? 'text-slate-200 font-normal whitespace-pre-wrap leading-relaxed' :
-                    'text-slate-300'
-                  }`}>
-                    {log.type === 'thinking' && <span className="mr-1">◈</span>}
-                    {log.type === 'stream' && <span className="mr-2 text-purple-400">▸</span>}
-                    {log.type === 'formatted'
-                      ? renderFormattedContent(log.message)
-                      : normalizeTaskName(log.message)
-                    }
-                  </span>
+                  <div className="flex-1 min-w-0">
+                    {/* RAW 模式：显示日志类型标签 */}
+                    {viewMode === 'raw' && (
+                      <span className={`inline-block text-[9px] font-mono font-bold mr-2 px-1 rounded ${getLogTypeInfo(log.type).colorClass} bg-slate-800/80`}>
+                        {getLogTypeInfo(log.type).label}
+                      </span>
+                    )}
+                    <span className={`break-words ${
+                      log.type === 'error' ? 'text-red-400' :
+                      log.type === 'success' ? 'text-green-400' :
+                      log.type === 'warning' ? 'text-amber-400' :
+                      log.type === 'thinking' ? 'text-cyan-300 italic' :
+                      log.type === 'stream' ? 'text-purple-300 font-normal whitespace-pre-wrap leading-relaxed' :
+                      log.type === 'formatted' ? 'text-slate-200 font-normal whitespace-pre-wrap leading-relaxed' :
+                      'text-slate-300'
+                    }`}>
+                      {log.type === 'thinking' && <span className="mr-1">◈</span>}
+                      {log.type === 'stream' && viewMode === 'raw' && <br />}
+                      {log.type === 'stream' && <span className="mr-2 text-purple-400">▸</span>}
+                      {log.type === 'formatted'
+                        ? renderFormattedContent(log.message)
+                        : normalizeTaskName(log.message)
+                      }
+                    </span>
+                    {/* RAW 模式：显示 detail 内容 */}
+                    {viewMode === 'raw' && log.detail && (
+                      <div
+                        className="mt-1 ml-4 p-2 bg-slate-900/50 rounded border border-slate-700/50 text-slate-400 text-[10px] cursor-pointer hover:bg-slate-800/50"
+                        onClick={() => toggleLogDetail(log.id)}
+                      >
+                        {expandedLogs.has(log.id) ? (
+                          <pre className="whitespace-pre-wrap break-words text-slate-300">
+                            {JSON.stringify(log.detail, null, 2)}
+                          </pre>
+                        ) : (
+                          <span className="text-slate-500">[点击展开 detail: {JSON.stringify(log.detail)}]</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             ))}

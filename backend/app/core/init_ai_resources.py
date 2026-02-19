@@ -126,6 +126,29 @@ BUILTIN_RESOURCES = [
         "category": "template",
         "file_path": "examples/plot-breakdown-example.md",
     },
+    # ========== 钩子规则（hook_types）==========
+    {
+        "name": "hook_types_default",
+        "display_name": "情绪钩子类型定义",
+        "description": "网文改编漫剧的情绪钩子类型完整定义，包含7大类30+种钩子类型的详细说明",
+        "category": "hook_types",
+        "file_path": "hook-types.md",
+    },
+    {
+        "name": "hook_boundary_rules_default",
+        "display_name": "钩子边界规则",
+        "description": "易混淆钩子类型的区分规则和边界定义，帮助准确识别钩子类型",
+        "category": "hook_types",
+        "file_path": "hook-boundary-rules.md",
+    },
+    # ========== 质检规则（qa_rules）==========
+    {
+        "name": "qa_dimensions_default",
+        "display_name": "质检评估维度",
+        "description": "剧情拆解质量检查的8个评估维度定义和评分标准",
+        "category": "qa_rules",
+        "file_path": "qa-dimensions.md",
+    },
 ]
 
 # 小说类型映射表（用于动态加载类型专属文档）
