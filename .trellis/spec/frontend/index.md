@@ -437,8 +437,148 @@ return (
 - 批次状态：`BATCH_STATUS`
 
 **约束**:
-- UI “拆解中” 只依赖 `Batch.breakdown_status === BATCH_STATUS.PROCESSING`
+- UI "拆解中" 只依赖 `Batch.breakdown_status === BATCH_STATUS.PROCESSING`
 - 任务停止/轮询只判断 `TASK_STATUS`
+
+### 9.0.1 异步数据加载的状态管理
+
+> **2026-02-22 新增**：修复"拆解结果加载异常"误报问题
+
+**问题**: 当批次状态为 `COMPLETED` 但数据还在加载时，UI 误判为"加载失败"
+
+**根本原因**: React 状态更新的异步性 + useEffect 依赖设计缺陷
+
+#### 错误模式
+
+```tsx
+// ❌ 错误：只检查数据是否存在，忽略加载状态
+if (batch.status === 'COMPLETED' && !data) {
+  return <ErrorMessage>数据加载异常</ErrorMessage>;
+}
+
+// ❌ 错误：切换批次时清空数据，但没有立即重新加载
+useEffect(() => {
+  setData(null);  // 清空了数据
+  // 但没有触发 fetchData()
+}, [selectedBatch?.id]);
+```
+
+#### 正确模式
+
+```tsx
+// ✅ 正确：同时检查加载状态和数据状态
+if (batch.status === 'COMPLETED' && !loading && !data) {
+  return <ErrorMessage>数据加载异常</ErrorMessage>;
+}
+
+// ✅ 正确：切换批次时立即加载数据
+useEffect(() => {
+  if (!selectedBatch) return;
+
+  setData(null);  // 清空旧数据
+
+  // 如果批次已完成，立即加载数据
+  if (selectedBatch.status === 'COMPLETED') {
+    setLoading(true);
+    fetchData(selectedBatch.id);
+  }
+}, [selectedBatch?.id]);
+```
+
+#### 状态判断优先级
+
+在显示 UI 时，按以下优先级判断：
+
+1. **加载中** (`loading === true`) → 显示骨架屏
+2. **有数据** (`data !== null`) → 显示数据
+3. **加载完成且无数据** (`!loading && !data`) → 显示错误提示
+
+```tsx
+// ✅ 完整的状态判断流程
+if (loading) {
+  return <Skeleton />;
+}
+
+if (data) {
+  return <DataView data={data} />;
+}
+
+if (batch.status === 'COMPLETED' && !loading && !data) {
+  return <ErrorMessage>数据加载异常</ErrorMessage>;
+}
+
+return <EmptyState />;
+```
+
+#### useEffect 依赖设计
+
+**问题**: 同时监听 `id` 和 `status` 会导致重复触发
+
+```tsx
+// ❌ 错误：依赖过多，导致重复加载
+useEffect(() => {
+  if (batch?.status === 'COMPLETED') {
+    fetchData(batch.id);
+  }
+}, [batch?.id, batch?.status]);  // 状态变化时会重复触发
+```
+
+**解决方案**: 分离关注点
+
+```tsx
+// ✅ 正确：选中批次时加载（监听 id）
+useEffect(() => {
+  if (!batch) return;
+
+  setData(null);
+
+  if (batch.status === 'COMPLETED') {
+    setLoading(true);
+    fetchData(batch.id);
+  }
+}, [batch?.id]);  // 只监听 id
+
+// ✅ 正确：状态变化时加载（监听 status）
+const prevStatusRef = useRef<string | null>(null);
+
+useEffect(() => {
+  if (!batch) return;
+
+  const currentStatus = batch.status;
+  const prevStatus = prevStatusRef.current;
+
+  // 只在状态变为 COMPLETED 时加载
+  if (currentStatus === 'COMPLETED' && prevStatus !== 'COMPLETED') {
+    setLoading(true);
+    fetchData(batch.id);
+  }
+
+  prevStatusRef.current = currentStatus;
+}, [batch?.status]);  // 只监听 status
+```
+
+#### 常见错误时序
+
+```
+用户操作：刷新页面 → 点击已完成的批次
+
+错误执行流程：
+1. useEffect (id 变化) → setData(null) → 没有加载数据 ❌
+2. 组件渲染 → loading=false, data=null
+3. 条件判断 → status=COMPLET!data → 显示错误 ❌
+4. API 返回（1-2秒后）→ 但用户已经看到错误提示了
+
+正确执行流程：
+1. useEffect (id 变化) → setData(null) → setLoading(true) → fetchData() ✅
+2. 组件渲染 → loading=true → 显示骨架屏 ✅
+3. API 返回 → setData(result) → setLoading(false)
+4. 组件渲染 → 显示数据 ✅
+```
+
+#### 参考实现
+
+- `frontend/src/pages/user/Workspace/index.tsx` (第 403-437 行)
+- `frontend/src/pages/user/Workspace/PlotTab/BreakdownDetail.tsx` (第 447-475 行)
 
 ### 9.1 乐观更新模式 (Optimistic Update)
 

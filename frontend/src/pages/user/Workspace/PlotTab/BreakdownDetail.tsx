@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import {
   Layers, Play, Loader2, X, Activity, Swords, Lightbulb, Clock,
-  Film, ChevronDown, Users, MapPin, Heart, Table as TableIcon, Grid,
-  CheckCircle, AlertTriangle, XCircle, BarChart3, List, History
+  Film, Users, CheckCircle, XCircle, BarChart3, List, History
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Batch, PlotBreakdown, Episode, PlotPoint, QAReport } from '../../../../types';
+import { Batch, PlotBreakdown, PlotPoint, QAReport } from '../../../../types';
 import { BATCH_STATUS, TASK_STATUS } from '../../../../constants/status';
 import { breakdownApi } from '../../../../services/api';
 import BreakdownDetailModal from './BreakdownDetailModal';
@@ -21,21 +20,7 @@ interface BreakdownDetailProps {
   onViewMethod?: (methodId: string) => void;
 }
 
-interface EpisodeCardProps {
-  episode: Episode;
-  isExpanded: boolean;
-  onToggle: () => void;
-}
-
-// 剧集表格行组件
-interface EpisodeTableRowProps {
-  episode: Episode;
-  status: 'used' | 'unused';
-  scriptLink?: string;
-  onStatusChange?: (episodeId: number, status: 'used' | 'unused') => void;
-}
-
-// 剧情点表格行组件（v2 格式）
+// 剧情点表格行组件
 interface PlotPointTableRowProps {
   point: PlotPoint;
   onStatusChange?: (pointId: number, status: 'used' | 'unused') => void;
@@ -238,63 +223,7 @@ const QAReportModal: React.FC<QAReportModalProps> = ({ report, onClose }) => {
   );
 };
 
-const EpisodeTableRow: React.FC<EpisodeTableRowProps> = ({
-  episode,
-  status,
-  scriptLink,
-  onStatusChange
-}) => {
-  return (
-    <tr className="border-b border-slate-700/50 hover:bg-slate-800/30 transition-colors">
-      <td className="px-4 py-3 text-center">
-        <span className="text-cyan-400 font-semibold">{episode.episode_number}</span>
-      </td>
-      <td className="px-4 py-3">
-        <span className="text-slate-300 text-sm">
-          第 {episode.chapter_range[0]}-{episode.chapter_range[1]} 章
-        </span>
-      </td>
-      <td className="px-4 py-3">
-        <div className="text-sm text-slate-300 line-clamp-2">
-          {episode.main_conflict}
-        </div>
-      </td>
-      <td className="px-4 py-3">
-        <div className="text-sm text-slate-300 line-clamp-2">
-          {episode.plot_hooks && episode.plot_hooks.length > 0
-            ? episode.plot_hooks[0].hook
-            : '-'}
-        </div>
-      </td>
-      <td className="px-4 py-3 text-center">
-        <button
-          onClick={() => onStatusChange?.(episode.episode_number, status === 'used' ? 'unused' : 'used')}
-          className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-            status === 'used'
-              ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-              : 'bg-slate-600/20 text-slate-400 border border-slate-600/30'
-          }`}
-        >
-          {status === 'used' ? '已用' : '未用'}
-        </button>
-      </td>
-      <td className="px-4 py-3 text-center">
-        {scriptLink ? (
-          <a
-            href={scriptLink}
-            className="text-cyan-400 hover:text-cyan-300 text-sm underline"
-          >
-            Episode-{String(episode.episode_number).padStart(3, '0')}
-          </a>
-        ) : (
-          <span className="text-slate-500 text-sm">未生成</span>
-        )}
-      </td>
-    </tr>
-  );
-};
-
-// 剧情点表格行组件（v2 格式）
+// 剧情点表格行组件
 const PlotPointTableRow: React.FC<PlotPointTableRowProps> = ({
   point
 }) => {
@@ -350,183 +279,6 @@ const PlotPointTableRow: React.FC<PlotPointTableRowProps> = ({
   );
 };
 
-const EpisodeCard: React.FC<EpisodeCardProps> = ({ episode, isExpanded, onToggle }) => {
-  return (
-    <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
-      {/* 标题栏 - 可点击折叠/展开 */}
-      <div
-        className="flex items-center justify-between cursor-pointer"
-        onClick={onToggle}
-      >
-        <div className="flex-1">
-          <h3 className="text-lg font-semibold text-cyan-400">
-            第{episode.episode_number}集 - {episode.title}
-          </h3>
-          <p className="text-sm text-slate-400 mt-1">
-            主要冲突：{episode.main_conflict}
-          </p>
-          <p className="text-xs text-slate-500 mt-1">
-            章节范围：第{episode.chapter_range[0]}-{episode.chapter_range[1]}章
-          </p>
-        </div>
-        <ChevronDown
-          className={`w-5 h-5 text-slate-400 transition-transform ${
-            isExpanded ? 'rotate-180' : ''
-          }`}
-        />
-      </div>
-
-      {/* 详情区域 - 可折叠 */}
-      <AnimatePresence>
-        {isExpanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="mt-4 space-y-4 overflow-hidden"
-          >
-            {/* 关键场景 */}
-            {episode.key_scenes && episode.key_scenes.length > 0 && (
-              <div>
-                <h4 className="text-sm font-semibold text-purple-400 flex items-center gap-2 mb-2">
-                  <Film className="w-4 h-4" />
-                  关键场景
-                </h4>
-                <div className="flex flex-wrap gap-2">
-                  {episode.key_scenes.map((scene, idx) => (
-                    <span key={idx} className="text-xs px-2 py-1 bg-purple-500/20 text-purple-300 rounded border border-purple-500/30">
-                      {scene}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 冲突点 */}
-            {episode.conflicts && episode.conflicts.length > 0 && (
-              <div>
-                <h4 className="text-sm font-semibold text-red-400 flex items-center gap-2 mb-2">
-                  <Swords className="w-4 h-4" />
-                  冲突点 ({episode.conflicts.length})
-                </h4>
-                <div className="space-y-2">
-                  {episode.conflicts.map((conflict, idx) => (
-                    <div key={idx} className="bg-slate-900/50 rounded-lg p-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-semibold text-slate-200">{conflict.title}</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-slate-500">紧张度</span>
-                          <div className="w-16 bg-slate-700 rounded-full h-1.5">
-                            <div
-                              className="bg-gradient-to-r from-yellow-500 to-red-500 h-1.5 rounded-full"
-                              style={{ width: `${conflict.tension}%` }}
-                            />
-                          </div>
-                          <span className="text-[10px] text-red-400 font-mono">{conflict.tension}</span>
-                        </div>
-                      </div>
-                      {conflict.description && (
-                        <p className="text-xs text-slate-400">{conflict.description}</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 剧情钩子 */}
-            {episode.plot_hooks && episode.plot_hooks.length > 0 && (
-              <div>
-                <h4 className="text-sm font-semibold text-amber-400 flex items-center gap-2 mb-2">
-                  <Lightbulb className="w-4 h-4" />
-                  剧情钩子 ({episode.plot_hooks.length})
-                </h4>
-                <div className="flex flex-wrap gap-2">
-                  {episode.plot_hooks.map((hook, idx) => (
-                    <div key={idx} className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
-                      <span className="text-xs text-amber-400">{hook.hook}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 角色 */}
-            {episode.characters && episode.characters.length > 0 && (
-              <div>
-                <h4 className="text-sm font-semibold text-cyan-400 flex items-center gap-2 mb-2">
-                  <Users className="w-4 h-4" />
-                  角色 ({episode.characters.length})
-                </h4>
-                <div className="flex flex-wrap gap-2">
-                  {episode.characters.map((char, idx) => (
-                    <div key={idx} className="bg-cyan-500/10 border border-cyan-500/20 rounded-lg px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-cyan-300">{char.name}</span>
-                        {char.role && (
-                          <span className="text-xs text-cyan-500">{char.role}</span>
-                        )}
-                      </div>
-                      {char.description && (
-                        <p className="text-xs text-slate-400 mt-1">{char.description}</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 场景 */}
-            {episode.scenes && episode.scenes.length > 0 && (
-              <div>
-                <h4 className="text-sm font-semibold text-purple-400 flex items-center gap-2 mb-2">
-                  <MapPin className="w-4 h-4" />
-                  场景 ({episode.scenes.length})
-                </h4>
-                <div className="space-y-2">
-                  {episode.scenes.map((scene, idx) => (
-                    <div key={idx} className="bg-slate-900/50 rounded-lg p-3">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-sm font-semibold text-slate-200">{scene.title}</span>
-                        {scene.location && (
-                          <span className="text-xs text-slate-500">{scene.location}</span>
-                        )}
-                      </div>
-                      {scene.description && (
-                        <p className="text-xs text-slate-400">{scene.description}</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 情感 */}
-            {episode.emotions && episode.emotions.length > 0 && (
-              <div>
-                <h4 className="text-sm font-semibold text-pink-400 flex items-center gap-2 mb-2">
-                  <Heart className="w-4 h-4" />
-                  情感 ({episode.emotions.length})
-                </h4>
-                <div className="flex flex-wrap gap-2">
-                  {episode.emotions.map((emotion, idx) => (
-                    <div key={idx} className="bg-pink-500/10 border border-pink-500/20 rounded-lg px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-pink-300">{emotion.emotion}</span>
-                        <span className="text-xs text-pink-500">强度: {emotion.intensity}/10</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-};
-
 const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   selectedBatch,
   breakdownResult,
@@ -537,30 +289,21 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   onStopBreakdown,
   onViewMethod
 }) => {
-  const [expandedEpisodes, setExpandedEpisodes] = useState<Set<number>>(new Set([1])); // 默认展开第一集
-  const [viewMode, setViewMode] = useState<'card' | 'table'>('card'); // 视图模式
-  const [episodeStatus, setEpisodeStatus] = useState<Record<number, 'used' | 'unused'>>({}); // 剧集状态
   const [plotPointStatus, setPlotPointStatus] = useState<Record<number, 'used' | 'unused'>>({}); // 剧情点状态
   const [qaReportModalOpen, setQaReportModalOpen] = useState(false); // 质检报告弹窗
   const [detailModalOpen, setDetailModalOpen] = useState(false); // 拆解详情弹窗
   const [currentTaskStatus, setCurrentTaskStatus] = useState<string | null>(null); // 当前任务状态
 
-  // 获取当前批次任务状态
+  // 获取当前批次任务状态（仅在页面加载时调用一次，用于连接WebSocket）
   useEffect(() => {
-    let interval: NodeJS.Timeout | null = null;
-
     const fetchCurrentTask = async () => {
       if (!selectedBatch) {
         setCurrentTaskStatus(null);
         return;
       }
 
-      // 艹！任务已完成就別再轮询了，浪费老子服务器资源！
+      // 任务已完成，不需要获取
       if (selectedBatch.breakdown_status === BATCH_STATUS.COMPLETED) {
-        if (interval) {
-          clearInterval(interval);
-          interval = null;
-        }
         setCurrentTaskStatus(null);
         return;
       }
@@ -568,56 +311,26 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
       try {
         const response = await breakdownApi.getBatchCurrentTask(selectedBatch.id);
         const taskStatus = response.data?.status;
-        setCurrentTaskStatus(taskStatus || null);
+        const taskId = response.data?.task_id;
 
-        // 艹！后端返回任务完成了就得停止轮询啊！
-        if (taskStatus === TASK_STATUS.COMPLETED || taskStatus === TASK_STATUS.FAILED || taskStatus === TASK_STATUS.CANCELLED) {
-          if (interval) {
-            clearInterval(interval);
-            interval = null;
-          }
+        // 如果没有正在运行的任务，不需要连接WebSocket
+        if (!taskId) {
+          setCurrentTaskStatus(null);
+          return;
         }
+
+        setCurrentTaskStatus(taskStatus || null);
       } catch (error) {
         console.error('获取任务状态失败:', error);
         setCurrentTaskStatus(null);
       }
     };
 
-    // 立即执行一次
+    // 页面加载时只调用一次
     fetchCurrentTask();
+  }, [selectedBatch?.id]); // 只在batch变化时触发
 
-    // 只有在非完成状态下才启动轮询
-    if (selectedBatch && selectedBatch.breakdown_status !== BATCH_STATUS.COMPLETED) {
-      interval = setInterval(fetchCurrentTask, 5000);
-    }
-
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [selectedBatch?.id, selectedBatch?.breakdown_status]);
-
-  const toggleEpisode = (episodeNumber: number) => {
-    setExpandedEpisodes(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(episodeNumber)) {
-        newSet.delete(episodeNumber);
-      } else {
-        newSet.add(episodeNumber);
-      }
-      return newSet;
-    });
-  };
-
-  // 更新剧集状态
-  const handleEpisodeStatusChange = (episodeId: number, status: 'used' | 'unused') => {
-    setEpisodeStatus(prev => ({
-      ...prev,
-      [episodeId]: status
-    }));
-    // TODO: 调用 API 更新状态
-  };
-
-  // 更新剧情点状态（v2 格式）
+  // 更新剧情点状态
   const handlePlotPointStatusChange = async (pointId: number, status: 'used' | 'unused') => {
     // 先乐观更新本地状态
     setPlotPointStatus(prev => ({
@@ -637,8 +350,8 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
     }
   };
 
-  // 判断是否为 v2 格式
-  const isV2Format = breakdownResult?.format_version === 2;
+  // 判断是否有拆解结果（plot_points）
+  const hasBreakdownResult = !!breakdownResult?.plot_points;
 
   // 未选择批次
   if (!selectedBatch) {
@@ -731,8 +444,8 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
     );
   }
 
-  // 拆解完成但无结果（数据异常）
-  if (selectedBatch.breakdown_status === BATCH_STATUS.COMPLETED && !breakdownResult) {
+  // 拆解完成但无结果（数据异常）- 只有在不是加载中且没有结果时才显示异常
+  if (selectedBatch.breakdown_status === BATCH_STATUS.COMPLETED && !breakdownLoading && !breakdownResult) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
         <div className="w-20 h-20 rounded-2xl bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
@@ -761,8 +474,8 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
     );
   }
 
-  // V2 格式（剧情点表格视图）
-  if (isV2Format && breakdownResult?.plot_points) {
+  // 剧情点表格视图
+  if (hasBreakdownResult && breakdownResult?.plot_points) {
     return (
       <>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -943,207 +656,6 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
           )}
         </AnimatePresence>
       </>
-    );
-  }
-
-  // V1 格式（原有逻辑）
-  if (selectedBatch.breakdown_status === BATCH_STATUS.COMPLETED && breakdownResult) {
-    return (
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        {/* 视图切换按钮 */}
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold text-slate-200">拆解结果</h2>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setViewMode('card')}
-              className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-2 transition-colors ${
-                viewMode === 'card'
-                  ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
-                  : 'bg-slate-800/50 text-slate-400 border border-slate-700/50 hover:bg-slate-700/50'
-              }`}
-            >
-              <Grid className="w-4 h-4" />
-              卡片视图
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('table')}
-              className={`px-3 py-1.5 rounded-lg text-sm flex items-center gap-2 transition-colors ${
-                viewMode === 'table'
-                  ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
-                  : 'bg-slate-800/50 text-slate-400 border border-slate-700/50 hover:bg-slate-700/50'
-              }`}
-            >
-              <TableIcon className="w-4 h-4" />
-              表格视图
-            </button>
-          </div>
-        </div>
-
-        {/* 一致性评分卡片 */}
-        {breakdownResult.consistency_score !== undefined && breakdownResult.consistency_score !== null && (
-          <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-emerald-400 flex items-center gap-2">
-                <Activity className="w-5 h-5" />
-                一致性评分
-              </h3>
-              <div className="text-2xl font-black text-emerald-400">
-                {breakdownResult.consistency_score}
-                <span className="text-sm text-slate-500 ml-1">/ 100</span>
-              </div>
-            </div>
-            <div className="w-full bg-slate-700 h-2 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-emerald-500 to-cyan-500"
-                style={{ width: `${breakdownResult.consistency_score}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* 剧集规划概览卡片 */}
-        {breakdownResult.episodes && breakdownResult.episodes.length > 0 && (
-          <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
-            <h3 className="text-lg font-semibold text-purple-400 flex items-center gap-2 mb-3">
-              <Film className="w-5 h-5" />
-              剧集规划
-            </h3>
-            <p className="text-slate-300">
-              共 <span className="text-cyan-400 font-semibold">{breakdownResult.episodes.length}</span> 集
-            </p>
-            {breakdownResult.episodes.length > 0 && (
-              <p className="text-sm text-slate-400 mt-1">
-                涵盖第{breakdownResult.episodes[0]?.chapter_range[0]}-
-                {breakdownResult.episodes[breakdownResult.episodes.length - 1]?.chapter_range[1]}章
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* 剧集详情 - 根据视图模式切换 */}
-        {breakdownResult.episodes && breakdownResult.episodes.length > 0 ? (
-          viewMode === 'card' ? (
-            // 卡片视图
-            breakdownResult.episodes.map((episode) => (
-              <EpisodeCard
-                key={episode.episode_number}
-                episode={episode}
-                isExpanded={expandedEpisodes.has(episode.episode_number)}
-                onToggle={() => toggleEpisode(episode.episode_number)}
-              />
-            ))
-          ) : (
-            // 表格视图
-            <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl overflow-hidden">
-              <table className="w-full">
-                <thead className="bg-slate-900/50">
-                  <tr className="border-b border-slate-700/50">
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                      ID
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                      原文章节
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                      核心冲突
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                      情绪钩子
-                    </th>
-                    <th className="px-4 py-3 text-center text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                      状态
-                    </th>
-                    <th className="px-4 py-3 text-center text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                      对应剧本
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {breakdownResult.episodes.map((episode) => (
-                    <EpisodeTableRow
-                      key={episode.episode_number}
-                      episode={episode}
-                      status={episodeStatus[episode.episode_number] || 'unused'}
-                      scriptLink={undefined}
-                      onStatusChange={handleEpisodeStatusChange}
-                    />
-                  ))}
-                </tbody>
-              </table>
-
-              {/* 表格视图提示 */}
-              <div className="px-4 py-3 bg-slate-900/30 border-t border-slate-700/50">
-                <p className="text-xs text-slate-500">
-                  提示：点击状态可以切换"已用/未用"标记。生成剧本后会自动显示链接。
-                </p>
-              </div>
-            </div>
-          )
-        ) : (
-          /* 无剧集规划时显示传统视图 */
-          <>
-            {/* 核心冲突 */}
-            {breakdownResult.conflicts && breakdownResult.conflicts.length > 0 && (
-              <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
-                <h3 className="text-lg font-semibold text-red-400 flex items-center gap-2 mb-4">
-                  <Swords className="w-5 h-5" />
-                  核心冲突
-                  <span className="bg-red-500/10 text-red-400 text-xs px-2 py-0.5 rounded-full border border-red-500/20">
-                    {breakdownResult.conflicts.length}
-                  </span>
-                </h3>
-                <div className="space-y-3">
-                  {breakdownResult.conflicts.map((conflict, idx) => (
-                    <div key={idx} className="bg-slate-900/50 border border-slate-800 rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-bold text-white">{conflict.title}</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-slate-500">紧张度</span>
-                          <div className="w-16 bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-gradient-to-r from-yellow-500 to-red-500"
-                              style={{ width: `${conflict.tension}%` }}
-                            />
-                          </div>
-                          <span className="text-[10px] text-red-400 font-mono">{conflict.tension}</span>
-                        </div>
-                      </div>
-                      {conflict.description && (
-                        <p className="text-xs text-slate-400">{conflict.description}</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 剧情钩子 */}
-            {breakdownResult.plot_hooks && breakdownResult.plot_hooks.length > 0 && (
-              <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6">
-                <h3 className="text-lg font-semibold text-amber-400 flex items-center gap-2 mb-4">
-                  <Lightbulb className="w-5 h-5" />
-                  剧情钩子
-                  <span className="bg-amber-500/10 text-amber-400 text-xs px-2 py-0.5 rounded-full border border-amber-500/20">
-                    {breakdownResult.plot_hooks.length}
-                  </span>
-                </h3>
-                <div className="flex flex-wrap gap-2">
-                  {breakdownResult.plot_hooks.map((hook, idx) => (
-                    <div key={idx} className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
-                      <span className="text-xs text-amber-400">{hook.hook}</span>
-                      {hook.episode && (
-                        <span className="text-[10px] text-amber-600 ml-2">EP.{hook.episode}</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </div>
     );
   }
 

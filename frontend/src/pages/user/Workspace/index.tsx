@@ -413,7 +413,14 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             setBreakdownTaskId(null);
             setExecutingBatchId(null);  // 清空当前执行批次
         }
-    }, [selectedBatch?.id, selectedBatch?.breakdown_status]);
+
+        // 如果批次已完成，立即加载拆解结果
+        if (status === BATCH_STATUS.COMPLETED) {
+            console.log('[Workspace] 选中已完成的批次，加载拆解结果:', selectedBatch.id);
+            setBreakdownLoading(true);
+            fetchBreakdownResults(selectedBatch.id);
+        }
+    }, [selectedBatch?.id]);
 
     // 追踪上一个状态，用 ref 避免 useEffect 循环触发
     const prevBatchStatusRef = React.useRef<string | null>(null);
@@ -425,7 +432,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         const currentStatus = selectedBatch.breakdown_status;
         const prevStatus = prevBatchStatusRef.current;
 
-        // 只有当状态从非 COMPLETED 变成 COMPLETED 时才加载结果
+        // 当状态变成 COMPLETED 时加载结果（包括首次加载和状态变化）
         if (currentStatus === BATCH_STATUS.COMPLETED && prevStatus !== BATCH_STATUS.COMPLETED) {
             console.log('[Workspace] 批次状态变为完成，加载拆解结果:', selectedBatch.id);
             setBreakdownLoading(true);
@@ -434,7 +441,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
         // 更新上一个状态
         prevBatchStatusRef.current = currentStatus;
-    }, [selectedBatch?.breakdown_status, selectedBatch?.id]);
+    }, [selectedBatch?.breakdown_status]);
 
     // 批次列表更新时，同步选中批次状态（避免完成后仍显示停止按钮）
     useEffect(() => {
