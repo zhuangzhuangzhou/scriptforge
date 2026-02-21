@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, ForeignKey, TIMESTAMP, Integer
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from app.core.database import Base
@@ -27,9 +27,9 @@ class PlotBreakdown(Base):
     emotions = Column(JSONB)
     episodes = Column(JSONB)  # 剧集规划结果
 
-    # 统一剧情点格式
+    # 统一剧情点格式（结构化文本格式）
     plot_points = Column(JSONB)  # 统一格式的剧情点列表
-    format_version = Column(Integer, default=1)  # 1=旧6字段格式, 2=新统一格式
+    format_version = Column(Integer, default=3)  # 3=结构化文本格式
     qa_score = Column(Integer)  # 质检分数
     qa_retry_count = Column(Integer, default=0)  # 质检重试次数
 
@@ -43,5 +43,5 @@ class PlotBreakdown(Base):
     qa_report = Column(JSONB)
     used_adapt_method_id = Column(String(100))
 
-    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
-    updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

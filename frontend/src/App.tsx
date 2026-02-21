@@ -24,6 +24,7 @@ import SplitRulesPage from './pages/admin/SplitRules';
 import SystemSettings from './pages/admin/SystemSettings';
 import SystemConfiguration from './pages/admin/ModelManagement/SystemConfiguration';
 import AnalyticsPage from './pages/admin/Analytics';
+import TaskManagement from './pages/admin/TaskManagement';
 import { UserTier } from './types';
 
 // 加载状态组件
@@ -84,6 +85,7 @@ const AppContent: React.FC = () => {
             <Route path="/admin/models" element={<ModelManagement />} />
             <Route path="/admin/skills" element={<SkillsPage />} />
             <Route path="/admin/agents" element={<AgentsPage />} />
+            <Route path="/admin/tasks" element={<TaskManagement />} />
             <Route path="/admin/logs" element={<LogsPage />} />
             <Route path="/admin/resources" element={<ResourcesPage />} />
             <Route path="/admin/split-rules" element={<SplitRulesPage />} />

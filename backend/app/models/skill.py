@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, Boolean, JSON, DateTime, Text, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 from app.core.database import Base
 
@@ -45,5 +45,5 @@ class Skill(Base):
     version = Column(String(20), default="1.0.0")
     author = Column(String(100))
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

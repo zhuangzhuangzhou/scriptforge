@@ -40,7 +40,6 @@ router.include_router(
 )
 
 # 模型管理路由放在最后，因为它有 /{model_id} 这样的通配路由
-# 使用空字符串 prefix 会导致 FastAPI 报错，改用 "/" 作为根路径
 router.include_router(
     models_router,
     prefix="",

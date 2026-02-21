@@ -15,7 +15,7 @@ from typing import Optional
 import asyncio
 import json
 import redis.asyncio as redis
-from datetime import datetime
+from datetime import datetime, timezone
 
 router = APIRouter()
 
@@ -46,7 +46,7 @@ def serialize_task(task: AITask) -> dict:
         "error_message": task.error_message,
         "retry_count": task.retry_count or 0,
         "depends_on": task.depends_on or [],
-        "updated_at": datetime.utcnow().isoformat()
+        "updated_at": datetime.now(timezone.utc).isoformat()
     }
 
 
@@ -271,7 +271,7 @@ async def websocket_batch_progress(websocket: WebSocket, project_id: str):
                                 "type": "progress_update",
                                 **data
                             })
-                            last_update = datetime.utcnow()
+                            last_update = datetime.now(timezone.utc)
                         except:
                             pass
                     continue
@@ -378,7 +378,7 @@ async def websocket_batch_simple(websocket: WebSocket, project_id: str):
                     "total_tasks": total,
                     "status_counts": status_counts,
                     "overall_progress": overall_progress,
-                    "updated_at": datetime.utcnow().isoformat()
+                    "updated_at": datetime.now(timezone.utc).isoformat()
                 }
 
                 # 如果有任务更新，也发送更新列表

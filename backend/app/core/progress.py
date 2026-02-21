@@ -1,5 +1,5 @@
 """任务进度更新服务"""
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import update, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -85,9 +85,9 @@ async def update_task_progress(
         update_data["status"] = status
         # 状态变更时更新时间戳
         if status == TaskStatus.RUNNING:
-            update_data["started_at"] = datetime.utcnow()
+            update_data["started_at"] = datetime.now(timezone.utc)
         elif status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED):
-            update_data["completed_at"] = datetime.utcnow()
+            update_data["completed_at"] = datetime.now(timezone.utc)
 
     if error_message is not None:
         update_data["error_message"] = error_message
@@ -136,9 +136,9 @@ async def update_pipeline_execution(
         update_data["status"] = status
         # 状态变更时更新时间戳
         if status == "running":
-            update_data["started_at"] = datetime.utcnow()
+            update_data["started_at"] = datetime.now(timezone.utc)
         elif status in ("completed", "failed"):
-            update_data["completed_at"] = datetime.utcnow()
+            update_data["completed_at"] = datetime.now(timezone.utc)
 
     if error_message is not None:
         update_data["error_message"] = error_message
@@ -183,7 +183,7 @@ def _publish_progress_to_redis(task_id: str, task: AITask) -> None:
             "error_message": task.error_message,
             "retry_count": task.retry_count or 0,
             "depends_on": task.depends_on or [],
-            "updated_at": datetime.utcnow().isoformat()
+            "updated_at": datetime.now(timezone.utc).isoformat()
         }
 
         # 发布到 Redis 频道
@@ -268,9 +268,9 @@ def update_task_progress_sync(
         task.status = status
         # 状态变更时更新时间戳
         if status == TaskStatus.RUNNING and not task.started_at:
-            task.started_at = datetime.utcnow()
+            task.started_at = datetime.now(timezone.utc)
         elif status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED):
-            task.completed_at = datetime.utcnow()
+            task.completed_at = datetime.now(timezone.utc)
 
     if error_message is not None:
         task.error_message = error_message

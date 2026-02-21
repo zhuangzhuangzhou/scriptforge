@@ -1,11 +1,16 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Layers, RefreshCw, CheckCircle2, Loader2,
   ThumbsUp, Download, FileEdit, Save, FileCheck, Search, AlertCircle,
-  Play, ChevronRight
+  Play, ChevronRight, Eye, Edit3, Terminal
 } from 'lucide-react';
+import { message } from 'antd';
+import ConfirmModal from '../../../../components/modals/ConfirmModal';
+import ConsoleLogger, { LogEntry } from '../../../../components/ConsoleLogger';
+import { useBreakdownLogs } from '../../../../hooks/useBreakdownLogs';
 import { scriptApi, breakdownApi, exportApi } from '../../../../services/api';
-import type { EpisodeScript, PlotPoint } from '../../../../types';
+import type { EpisodeScript, PlotPoint, ScriptStructure } from '../../../../types';
+import { TASK_STATUS } from '../../../../constants/status';
 
 interface ScriptTabProps {
   projectId: string;
@@ -37,6 +42,102 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
   const [exporting, setExporting] = useState(false);
   const [approving, setApproving] = useState(false);
 
+  // 编辑模式状态
+  const [editMode, setEditMode] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+
+  // 编辑内容状态
+  const [editedStructure, setEditedStructure] = useState<ScriptStructure | null>(null);
+  const [editedFullScript, setEditedFullScript] = useState<string>('');
+
+  // 原始状态快照（用于回滚）
+  const [originalState, setOriginalState] = useState<{ structure: ScriptStructure; full_script: string } | null>(null);
+
+  // 取消确认弹窗状态
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
+
+  // 日志类型
+  type LogType = 'info' | 'success' | 'warning' | 'error' | 'thinking' | 'llm_call' | 'stream' | 'formatted';
+
+  // 创建日志条目的辅助函数
+  const createLog = (type: LogType, message: string): LogEntry => ({
+    id: `log-${Date.now()}-${Math.random()}`,
+    timestamp: new Date().toLocaleTimeString(),
+    type,
+    message
+  });
+
+  // 日志相关状态
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [currentStep, setCurrentStep] = useState('');
+  const [progress, setProgress] = useState(0);
+  const logsRef = useRef<LogEntry[]>([]);
+  // 使用 useState 而不是 useRef，以便在 taskId 变化时触发 WebSocket 重连
+  const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
+
+  // 使用 BreakdownLogs Hook 接收 WebSocket 日志
+  const { isConnected } = useBreakdownLogs(
+    currentTaskId,
+    {
+      onStepStart: (stepName) => {
+        setCurrentStep(stepName);
+        logsRef.current = [...logsRef.current, createLog('thinking', `🚀 ${stepName}`)];
+        setLogs([...logsRef.current]);
+      },
+      onStreamChunk: (_stepName, chunk) => {
+        // 查找最后一个 stream 类型的日志
+        const lastStreamIndex = logsRef.current.findIndex((log, idx) => log.type === 'stream' && idx === logsRef.current.length - 1);
+        if (lastStreamIndex >= 0) {
+          const updated = [...logsRef.current];
+          updated[lastStreamIndex] = { ...updated[lastStreamIndex], message: updated[lastStreamIndex].message + chunk };
+          logsRef.current = updated;
+          setLogs([...logsRef.current]);
+        } else {
+          logsRef.current = [...logsRef.current, createLog('stream', chunk)];
+          setLogs([...logsRef.current]);
+        }
+      },
+      onFormattedChunk: (_stepName, chunk) => {
+        logsRef.current = [...logsRef.current, createLog('formatted', chunk)];
+        setLogs([...logsRef.current]);
+      },
+      onStepEnd: (_stepName, result) => {
+        logsRef.current = [...logsRef.current, createLog('success', '✅ 步骤完成')];
+        setLogs([...logsRef.current]);
+      },
+      onProgress: (p) => {
+        setProgress(p);
+      },
+      onInfo: (info) => {
+        logsRef.current = [...logsRef.current, createLog('info', info)];
+        setLogs([...logsRef.current]);
+      },
+      onSuccess: (msg) => {
+        logsRef.current = [...logsRef.current, createLog('success', msg)];
+        setLogs([...logsRef.current]);
+      },
+      onWarning: (msg) => {
+        logsRef.current = [...logsRef.current, createLog('warning', msg)];
+        setLogs([...logsRef.current]);
+      },
+      onError: (errMsg) => {
+        logsRef.current = [...logsRef.current, createLog('error', errMsg)];
+        setLogs([...logsRef.current]);
+      },
+      onComplete: () => {
+        logsRef.current = [...logsRef.current, createLog('success', '🎉 剧本生成完成！')];
+        setLogs([...logsRef.current]);
+        setCurrentStep('');
+        setProgress(100);
+        // 加载生成的剧本
+        if (selectedEpisode) {
+          loadEpisodeScript(selectedEpisode);
+        }
+      }
+    }
+  );
+
   // 加载剧集列表（从拆解结果的 plot_points 中提取）
   const loadEpisodes = useCallback(async () => {
     if (!batchId) return;
@@ -46,7 +147,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
       const response = await breakdownApi.getBreakdownResults(batchId);
       const data = response.data;
 
-      if (data.format_version === 2 && data.plot_points) {
+      if (data.plot_points) {
         // 从 plot_points 中提取集数
         const episodeSet = new Set<number>();
         (data.plot_points as PlotPoint[]).forEach(pp => {
@@ -59,7 +160,10 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         }));
 
         setEpisodes(episodeList);
-        if (episodeList.length > 0 && !selectedEpisode) {
+        // 只有在没有选中任何集数时才设置默认选中第一集
+        // 使用 ref 来追踪是否需要设置默认值，避免循环触发
+        if (!selectedEpisodeRef.current && episodeList.length > 0) {
+          selectedEpisodeRef.current = true; // 标记已设置
           setSelectedEpisode(episodeList[0].episode);
         }
       }
@@ -69,11 +173,22 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [batchId, selectedEpisode]);
+  }, [batchId]);
+
+  // 使用 ref 来追踪是否需要设置默认集数
+  const selectedEpisodeRef = React.useRef(false);
+
+  // 监听 batchId 变化，重置 ref
+  React.useEffect(() => {
+    selectedEpisodeRef.current = false;
+  }, [batchId]);
 
   useEffect(() => {
-    loadEpisodes();
-  }, [loadEpisodes]);
+    // 只在 batchId 变化时加载，不需要依赖 loadEpisodes
+    if (batchId) {
+      loadEpisodes();
+    }
+  }, [batchId, loadEpisodes]);
 
   // 加载单集剧本
   const loadEpisodeScript = useCallback(async (episodeNumber: number) => {
@@ -100,44 +215,174 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     }
   }, [selectedEpisode, breakdownId, loadEpisodeScript]);
 
+  // 防误触退出
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges]);
+
+  // 批量生成状态
+  const [batchGenerating, setBatchGenerating] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ completed: 0, total: 0 });
+
+  // 批量生成剧本
+  const handleBatchGenerate = async () => {
+    if (!breakdownId || episodes.length === 0) {
+      message.error('没有可生成的剧集');
+      setError('没有可生成的剧集');
+      return;
+    }
+
+    // 筛选待生成的剧集
+    const pendingEpisodes = episodes.filter(ep => ep.status === 'pending').map(ep => ep.episode);
+    if (pendingEpisodes.length === 0) {
+      message.info('所有剧集已生成');
+      return;
+    }
+
+    try {
+      setError(null);
+      setBatchGenerating(true);
+      setBatchProgress({ completed: 0, total: pendingEpisodes.length });
+
+      const response = await scriptApi.startBatchScripts(breakdownId, pendingEpisodes, {
+        novelType
+      });
+
+      message.success(`已启动 ${response.data.total} 个剧本生成任务`);
+
+      // 更新列表状态
+      setEpisodes(prev => prev.map(ep =>
+        pendingEpisodes.includes(ep.episode) ? { ...ep, status: 'generating' } : ep
+      ));
+
+      // 开始轮询所有任务状态
+      const taskIds = response.data.task_ids;
+      const completedTasks = new Set<string>();
+
+      const batchPollInterval = setInterval(async () => {
+        let completedCount = 0;
+
+        for (const taskId of taskIds) {
+          if (completedTasks.has(taskId)) {
+            completedCount++;
+            continue;
+          }
+
+          try {
+            const statusResponse = await scriptApi.getTaskStatus(taskId);
+            const status = statusResponse.data;
+
+            if (status.status === TASK_STATUS.COMPLETED) {
+              completedTasks.add(taskId);
+              completedCount++;
+            } else if (status.status === TASK_STATUS.FAILED) {
+              completedTasks.add(taskId);
+              completedCount++;
+              console.error(`任务 ${taskId} 失败:`, status.error_message);
+            }
+          } catch (err) {
+            console.error(`轮询任务 ${taskId} 状态失败:`, err);
+          }
+        }
+
+        // 更新进度
+        setBatchProgress({ completed: completedCount, total: taskIds.length });
+
+        // 所有任务完成
+        if (completedCount === taskIds.length) {
+          clearInterval(batchPollInterval);
+          setBatchGenerating(false);
+          message.success(`批量生成完成！共生成 ${taskIds.length} 集剧本`);
+          // 刷新剧集列表
+          loadEpisodes();
+        }
+      }, 3000);
+
+    } catch (err: any) {
+      setBatchGenerating(false);
+      const errorMsg = err.response?.data?.detail || '启动批量生成失败';
+      setError(errorMsg);
+      message.error(errorMsg);
+    }
+  };
+
   // 生成单集剧本
   const handleGenerateScript = async (episodeNumber: number) => {
     if (!breakdownId) {
+      message.error('请先完成剧情拆解');
       setError('请先完成剧情拆解');
       return;
     }
 
     try {
-      setGenerating(episodeNumber);
+      // 清空之前的日志
+      logsRef.current = [];
+      setLogs([]);
+      setCurrentStep('');
+      setProgress(0);
       setError(null);
+      setGenerating(episodeNumber);
 
       const response = await scriptApi.startEpisodeScript(breakdownId, episodeNumber, {
         novelType
       });
 
       const taskId = response.data.task_id;
+      // 设置 taskId 以触发 WebSocket 连接
+      setCurrentTaskId(taskId);
 
-      // 轮询任务状态
+      // 添加初始日志
+      logsRef.current = [createLog('info', `🎬 开始生成第 ${episodeNumber} 集剧本...`)];
+      setLogs([createLog('info', `🎬 开始生成第 ${episodeNumber} 集剧本...`)]);
+
+      message.success(`已启动第 ${episodeNumber} 集剧本生成任务`);
+
+      // 轮询任务状态（仅在 WebSocket 未连接时作为降级方案）
       const pollInterval = setInterval(async () => {
+        // 如果 WebSocket 已连接，停止轮询
+        if (isConnected) {
+          clearInterval(pollInterval);
+          return;
+        }
+
         try {
           const statusResponse = await scriptApi.getTaskStatus(taskId);
           const status = statusResponse.data;
 
-          if (status.status === 'completed') {
+          if (status.status === TASK_STATUS.COMPLETED) {
             clearInterval(pollInterval);
+            logsRef.current = [...logsRef.current, createLog('success', '🎉 剧本生成完成！')];
+            setLogs([...logsRef.current]);
             setGenerating(null);
+            message.success(`第 ${episodeNumber} 集剧本生成完成`);
             await loadEpisodeScript(episodeNumber);
-          } else if (status.status === 'failed') {
+          } else if (status.status === TASK_STATUS.FAILED) {
             clearInterval(pollInterval);
+            const errorMsg = status.error_message || '剧本生成失败';
+            logsRef.current = [...logsRef.current, createLog('error', errorMsg)];
+            setLogs([...logsRef.current]);
             setGenerating(null);
-            setError(status.error_message || '剧本生成失败');
+            setError(errorMsg);
+            message.error(errorMsg);
+          } else if (status.current_step) {
+            // 更新进度（仅在 WebSocket 未连接时）
+            setCurrentStep(status.current_step);
+            if (status.progress) {
+              setProgress(status.progress);
+            }
           }
         } catch {
-          clearInterval(pollInterval);
-          setGenerating(null);
-          setError('获取任务状态失败');
+          // 忽略轮询错误
         }
-      }, 2000);
+      }, 3000); // 降级方案使用较长的轮询间隔
 
       // 更新列表状态
       setEpisodes(prev => prev.map(ep =>
@@ -146,7 +391,9 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
 
     } catch (err: any) {
       setGenerating(null);
-      setError(err.response?.data?.detail || '启动剧本生成失败');
+      const errorMsg = err.response?.data?.detail || '启动剧本生成失败';
+      setError(errorMsg);
+      message.error(errorMsg);
     }
   };
 
@@ -189,6 +436,96 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     }
   };
 
+  // 保存剧本
+  const handleSave = async () => {
+    if (!currentScript?.id || !editedStructure) return;
+
+    try {
+      setIsSaving(true);
+
+      const newContent = {
+        structure: editedStructure,
+        full_script: editedFullScript,
+        scenes: currentScript.scenes || [],
+        characters: currentScript.characters || [],
+        hook_type: currentScript.hook_type || ''
+      };
+
+      await scriptApi.updateScript(currentScript.id, {
+        content: newContent
+      });
+
+      // 计算总字数（根据内容结构选择计数方式）
+      const structureWordCount = Object.values(editedStructure).reduce(
+        (sum, s) => sum + (s?.word_count || 0), 0
+      );
+      const fullScriptWordCount = editedFullScript.length;
+
+      // 如果有完整剧本，使用完整剧本字数；否则使用结构化字数
+      const totalWordCount = fullScriptWordCount > 0 ? fullScriptWordCount : structureWordCount;
+
+      // 更新本地状态
+      setCurrentScript({
+        ...currentScript,
+        structure: editedStructure,
+        full_script: editedFullScript,
+        word_count: totalWordCount
+      });
+
+      setHasUnsavedChanges(false);
+      setEditMode(false);
+      message.success('保存成功');
+    } catch (err: any) {
+      // 回滚到原始状态
+      if (originalState) {
+        setEditedStructure(originalState.structure);
+        setEditedFullScript(originalState.full_script);
+      }
+      message.error(err.response?.data?.detail || '保存失败');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // 取消编辑
+  const handleCancelEdit = () => {
+    if (hasUnsavedChanges) {
+      setCancelConfirmOpen(true);
+      return;
+    }
+    doCancelEdit();
+  };
+
+  // 执行取消编辑
+  const doCancelEdit = () => {
+    setCancelConfirmOpen(false);
+    setEditMode(false);
+    setEditedStructure(null);
+    setEditedFullScript('');
+    setHasUnsavedChanges(false);
+    setOriginalState(null);
+  };
+
+  // 进入编辑模式
+  const handleEnterEditMode = () => {
+    if (!currentScript) return;
+
+    const structureCopy: ScriptStructure = {
+      opening: { ...currentScript.structure.opening },
+      development: { ...currentScript.structure.development },
+      climax: { ...currentScript.structure.climax },
+      hook: { ...currentScript.structure.hook }
+    };
+
+    setEditedStructure(structureCopy);
+    setEditedFullScript(currentScript.full_script || '');
+    setOriginalState({
+      structure: structureCopy,
+      full_script: currentScript.full_script || ''
+    });
+    setEditMode(true);
+  };
+
   // 渲染四段式结构
   const renderStructure = () => {
     if (!currentScript?.structure) return null;
@@ -198,7 +535,8 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         {(Object.keys(STRUCTURE_LABELS) as Array<keyof typeof STRUCTURE_LABELS>).map((key) => {
           const label = STRUCTURE_LABELS[key];
           const section = currentScript.structure[key];
-          const wordCount = section?.word_count || 0;
+          const editedSection = editedStructure?.[key];
+          const wordCount = editMode ? (editedSection?.word_count || 0) : (section?.word_count || 0);
 
           return (
             <div key={key} className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
@@ -225,12 +563,33 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
 
               {/* 段落内容 */}
               <div className="p-4">
-                {section?.content ? (
-                  <div className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap font-mono">
-                    {section.content}
-                  </div>
+                {editMode ? (
+                  // 编辑模式 - Textarea
+                  <textarea
+                    className="w-full h-32 bg-slate-900/50 border border-slate-700 rounded-lg p-3
+                               text-slate-300 text-sm leading-relaxed resize-none
+                               focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none font-mono"
+                    value={editedSection?.content || ''}
+                    onChange={(e) => {
+                      const newContent = e.target.value;
+                      const newWordCount = newContent.trim().length;
+                      setEditedStructure(prev => prev ? {
+                        ...prev,
+                        [key]: { content: newContent, word_count: newWordCount }
+                      } : null);
+                      setHasUnsavedChanges(true);
+                    }}
+                    placeholder={`请输入${label.desc}...`}
+                  />
                 ) : (
-                  <div className="text-sm text-slate-600 italic">暂无内容</div>
+                  // 预览模式 - 只读展示
+                  section?.content ? (
+                    <div className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap font-mono">
+                      {section.content}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-slate-600 italic">暂无内容</div>
+                  )
                 )}
               </div>
             </div>
@@ -252,6 +611,54 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
       </div>
     );
   }
+
+  {/* 取消编辑确认弹窗 */}
+  <ConfirmModal
+    open={cancelConfirmOpen}
+    onCancel={() => setCancelConfirmOpen(false)}
+    onConfirm={doCancelEdit}
+    title="确认取消编辑"
+    content="有未保存的更改，确定要取消吗？取消后所有更改将丢失。"
+    confirmText="确定取消"
+    confirmType="danger"
+    iconType="warning"
+  />
+
+  {/* Console Logger - 在生成剧本时显示 */}
+  {(generating || batchGenerating) && (
+    <div className="fixed bottom-4 right-4 z-50">
+      {batchGenerating ? (
+        // 批量生成进度显示
+        <div className="bg-slate-900 border border-slate-700 rounded-lg p-4 shadow-xl w-80">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-white">批量生成进度</span>
+            <span className="text-xs text-slate-400">{batchProgress.completed}/{batchProgress.total}</span>
+          </div>
+          <div className="w-full bg-slate-800 rounded-full h-2">
+            <div
+              className="bg-gradient-to-r from-cyan-500 to-blue-500 h-2 rounded-full transition-all"
+              style={{ width: `${(batchProgress.completed / batchProgress.total) * 100}%` }}
+            />
+          </div>
+          <button
+            onClick={() => setBatchGenerating(false)}
+            className="mt-3 w-full py-1.5 text-xs text-slate-400 hover:text-white bg-slate-800 rounded"
+          >
+            关闭
+          </button>
+        </div>
+      ) : (
+        <ConsoleLogger
+          logs={logs}
+          visible={generating !== null}
+          isProcessing={generating !== null}
+          progress={progress}
+          currentStep={currentStep}
+          onClose={() => {}}
+        />
+      )}
+    </div>
+  )}
 
   return (
     <div className="h-full flex gap-0 overflow-hidden bg-slate-950">
@@ -278,10 +685,19 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
           </button>
 
           <button
-            disabled={!breakdownId || generating !== null}
+            onClick={handleBatchGenerate}
+            disabled={!breakdownId || generating !== null || batchGenerating}
             className="w-full py-2 bg-slate-800 hover:bg-slate-700 disabled:bg-slate-800/50 text-slate-300 disabled:text-slate-600 border border-slate-700 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
           >
-            <Layers size={14} /> 批量生成全部
+            {batchGenerating ? (
+              <>
+                <Loader2 size={14} className="animate-spin" /> 生成中 {batchProgress.completed}/{batchProgress.total}
+              </>
+            ) : (
+              <>
+                <Layers size={14} /> 批量生成全部
+              </>
+            )}
           </button>
 
           {error && (
@@ -394,6 +810,23 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
                 完整剧本
               </button>
             </div>
+            {/* 编辑/预览切换 */}
+            <div className="flex bg-slate-800 rounded-lg p-0.5 mr-2">
+              <button
+                onClick={() => setEditMode(false)}
+                disabled={!currentScript}
+                className={`px-3 py-1 text-xs rounded-md ${!editMode ? 'bg-green-500/20 text-green-400' : 'text-slate-400 hover:text-white'} disabled:opacity-50`}
+              >
+                <Eye size={14} className="inline mr-1"/> 预览
+              </button>
+              <button
+                onClick={handleEnterEditMode}
+                disabled={!currentScript}
+                className={`px-3 py-1 text-xs rounded-md ${editMode ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-400 hover:text-white'} disabled:opacity-50`}
+              >
+                <Edit3 size={14} className="inline mr-1"/> 编辑
+              </button>
+            </div>
             <button className="p-2 text-slate-500 hover:text-green-400 hover:bg-green-500/10 rounded-lg transition-all" title="Like"><ThumbsUp size={16} /></button>
             <div className="w-px h-4 bg-slate-800 mx-1"></div>
             <button
@@ -453,11 +886,27 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
             ) : (
               /* 完整剧本视图 */
               <div className="max-w-3xl mx-auto bg-slate-900 border border-slate-800 shadow-2xl min-h-full p-8 md:p-12 rounded-xl md:rounded-2xl">
-                <textarea
-                  className="w-full h-full min-h-[800px] bg-transparent resize-none outline-none border-none focus:ring-0 text-slate-300 whitespace-pre-wrap selection:bg-cyan-500/30 scrollbar-hide font-mono text-sm leading-relaxed"
-                  value={currentScript.full_script}
-                  readOnly
-                />
+                {editMode ? (
+                  // 编辑模式 - 可编辑的 Textarea
+                  <textarea
+                    className="w-full h-full min-h-[800px] bg-slate-900/50 border border-slate-700 rounded-lg p-4
+                               text-slate-300 font-mono text-sm leading-relaxed resize-none
+                               focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none whitespace-pre-wrap"
+                    value={editedFullScript}
+                    onChange={(e) => {
+                      setEditedFullScript(e.target.value);
+                      setHasUnsavedChanges(true);
+                    }}
+                    placeholder="请输入完整剧本内容..."
+                  />
+                ) : (
+                  // 预览模式 - 只读展示
+                  <textarea
+                    className="w-full h-full min-h-[800px] bg-transparent resize-none outline-none border-none focus:ring-0 text-slate-300 whitespace-pre-wrap selection:bg-cyan-500/30 scrollbar-hide font-mono text-sm leading-relaxed"
+                    value={currentScript.full_script}
+                    readOnly
+                  />
+                )}
               </div>
             )
           ) : selectedEpisode ? (
@@ -498,6 +947,33 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
               <span>ENCODING: UTF-8</span>
             </div>
             <span className="flex items-center gap-1.5 text-green-500"><Save size={10} /> SAVED</span>
+          </div>
+        )}
+
+        {/* 编辑模式底部操作栏 */}
+        {editMode && (
+          <div className="h-14 bg-slate-900 border-t border-slate-800 flex items-center justify-between px-6 shrink-0">
+            <div className="flex items-center gap-2 text-amber-400 text-sm">
+              <AlertCircle size={14} />
+              <span>编辑模式 - {hasUnsavedChanges ? '有未保存的更改' : '无未保存的更改'}</span>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleCancelEdit}
+                className="px-4 py-2 text-sm text-slate-400 hover:text-white bg-slate-800 border border-slate-700 rounded-lg hover:bg-slate-700 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={isSaving}
+                className="px-4 py-2 text-sm font-bold text-white bg-gradient-to-r from-cyan-600 to-blue-600 rounded-lg flex items-center gap-2 disabled:opacity-50 hover:from-cyan-500 hover:to-blue-500 transition-all"
+              >
+                {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                保存更改
+              </button>
+            </div>
           </div>
         )}
       </div>

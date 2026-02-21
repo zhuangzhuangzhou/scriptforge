@@ -9,7 +9,7 @@
 """
 from typing import Optional, Tuple
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 
@@ -54,7 +54,7 @@ class CreditsServiceExtension:
             return (Decimal('1.0'), Decimal('1.0'))
 
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
             # 查询当前生效的计费规则
             result = await self.db.execute(

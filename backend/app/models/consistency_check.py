@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, TIMESTAMP, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import UUID, JSON
 from app.core.database import Base
@@ -23,5 +23,5 @@ class ConsistencyCheck(Base):
     # 检查结果 (JSON格式)
     results = Column(JSON)
 
-    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
-    updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

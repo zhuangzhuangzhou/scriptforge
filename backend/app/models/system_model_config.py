@@ -1,6 +1,6 @@
 """系统模型配置数据模型"""
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Boolean, Text, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from app.core.database import Base
@@ -19,8 +19,8 @@ class SystemModelConfig(Base):
     value_type = Column(String(50), nullable=False)
     description = Column(Text)
     is_editable = Column(Boolean, default=True)
-    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
-    updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     def __repr__(self):
         return f"<SystemModelConfig(id={self.id}, config_key={self.config_key}, value_type={self.value_type})>"

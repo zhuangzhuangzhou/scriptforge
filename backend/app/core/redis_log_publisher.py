@@ -12,7 +12,7 @@
 import json
 import redis
 from app.core.status import TaskStatus
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from app.core.config import settings
 
@@ -82,7 +82,7 @@ class RedisLogPublisher:
         message = {
             "type": message_type,
             "task_id": task_id,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
         if step_name is not None:

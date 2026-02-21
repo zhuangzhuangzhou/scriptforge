@@ -1,11 +1,12 @@
 from celery import Celery
+from celery.schedules import crontab
 from app.core.config import settings
 
 celery_app = Celery(
     "novel_script",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=['app.tasks.breakdown_tasks']
+    include=['app.tasks.breakdown_tasks', 'app.tasks.task_monitor']
 )
 
 celery_app.conf.update(
@@ -26,4 +27,12 @@ celery_app.conf.update(
     worker_disable_rate_limits=True,
     task_acks_late=True,
     task_reject_on_worker_lost=True,
+
+    # 定时任务配置
+    beat_schedule={
+        'monitor-stuck-tasks': {
+            'task': 'monitor_and_terminate_stuck_tasks',
+            'schedule': 300.0,  # 每 5 分钟执行一次
+        },
+    },
 )

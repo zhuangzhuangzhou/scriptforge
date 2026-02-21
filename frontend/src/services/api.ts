@@ -383,15 +383,18 @@ export const breakdownApi = {
       return {
         data: {
           batch_id: batchId,
-          conflicts: [
-            { title: '档案缺失', tension: 75 },
-            { title: '上级施压', tension: 60 }
+          format_version: 3,
+          plot_points: [
+            { id: 1, episode: 1, scene: '档案室', characters: ['主角'], event: '发现神秘档案', hook_type: '悬念', status: 'unused' },
+            { id: 2, episode: 1, scene: '办公室', characters: ['主角', '上级'], event: '接受任务', hook_type: '挑战', status: 'used' },
+            { id: 3, episode: 2, scene: '现场', characters: ['主角'], event: '调查取证', hook_type: '悬疑', status: 'unused' }
           ],
-          plot_hooks: [{ hook: '发现神秘纸条' }],
-          characters: [],
-          scenes: [],
-          emotions: [],
-          consistency_score: 85
+          qa_status: 'PASS',
+          qa_score: 85,
+          qa_report: null,
+          qa_retry_count: 0,
+          used_adapt_method_id: null,
+          created_at: new Date().toISOString()
         }
       };
     }
@@ -537,7 +540,7 @@ export const breakdownApi = {
           breakdown_id: 'mock-breakdown-1',
           batch_id: batchId,
           created_at: new Date().toISOString(),
-          format_version: 2,
+          format_version: 3,
           model_info: {
             provider: 'openai',
             model_name: 'gpt-4-turbo',
@@ -579,7 +582,7 @@ export const breakdownApi = {
               breakdown_id: 'mock-breakdown-2',
               batch_id: batchId,
               created_at: new Date().toISOString(),
-              format_version: 2,
+              format_version: 3,
               model_info: { provider: 'openai', model_name: 'gpt-4-turbo', display_name: 'GPT-4 Turbo' },
               resource_info: { adapt_method: { id: 'r1', name: 'default', display_name: '默认方法论' } },
               qa_status: 'PASS',
@@ -593,7 +596,7 @@ export const breakdownApi = {
               breakdown_id: 'mock-breakdown-1',
               batch_id: batchId,
               created_at: new Date(Date.now() - 3600000).toISOString(),
-              format_version: 2,
+              format_version: 3,
               model_info: { provider: 'openai', model_name: 'gpt-4', display_name: 'GPT-4' },
               resource_info: {},
               qa_status: 'FAIL',
@@ -801,6 +804,55 @@ export const adminApi = {
       return { data: { success: true } };
     }
     return api.put(`/admin/users/${userId}`, data);
+  },
+
+  // 获取正在运行的任务
+  getRunningTasks: async () => {
+    if (USE_MOCK) {
+      await new Promise(r => setTimeout(r, 500));
+      return {
+        data: {
+          tasks: [
+            {
+              id: 'task-001',
+              task_type: 'breakdown',
+              status: 'running',
+              progress: 45,
+              current_step: '正在执行剧情拆解...',
+              user_id: 'user-001',
+              username: '张三',
+              project_id: 'proj-001',
+              project_name: '测试项目',
+              batch_id: 'batch-001',
+              batch_number: 1,
+              created_at: '2026-02-21T10:00:00Z',
+              updated_at: '2026-02-21T10:05:00Z',
+              running_time: 300,
+              idle_time: 10
+            }
+          ]
+        }
+      };
+    }
+    return api.get('/admin/tasks/running');
+  },
+
+  // 停止任务
+  stopTask: async (taskId: string) => {
+    if (USE_MOCK) {
+      await new Promise(r => setTimeout(r, 500));
+      return { data: { message: '任务已停止' } };
+    }
+    return api.post(`/admin/tasks/${taskId}/stop`);
+  },
+
+  // 检查卡住的任务
+  checkStuckTasks: async () => {
+    if (USE_MOCK) {
+      await new Promise(r => setTimeout(r, 500));
+      return { data: { message: '检查完成，未发现卡住的任务' } };
+    }
+    return api.post('/admin/tasks/check-stuck');
   }
 };
 

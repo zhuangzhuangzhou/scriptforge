@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, Boolean, JSON, DateTime, Text, Integer
 from sqlalchemy.dialects.postgresql import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 from app.core.database import Base
 
@@ -37,8 +37,8 @@ class SkillVersion(Base):
     # 来源
     source_version_id = Column(UUID(as_uuid=True))  # 来源版本（复制时）
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class SkillExecutionLog(Base):
@@ -58,4 +58,4 @@ class SkillExecutionLog(Base):
     status = Column(String(50), default="pending")  # pending, running, completed, failed
     error_message = Column(Text)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Integer, Text, ForeignKey, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from app.core.database import Base
@@ -29,4 +29,5 @@ class AITask(Base):
 
     started_at = Column(TIMESTAMP(timezone=True))
     completed_at = Column(TIMESTAMP(timezone=True))
-    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
+    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

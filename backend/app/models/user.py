@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Boolean, DECIMAL, TIMESTAMP, Integer, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from app.core.database import Base
@@ -37,6 +37,6 @@ class User(Base):
     api_keys = Column(JSON)  # {"openai": "sk-xxx", "claude": "sk-xxx"}
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
-    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
-    updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     last_login_at = Column(TIMESTAMP(timezone=True))

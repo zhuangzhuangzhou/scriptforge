@@ -39,7 +39,7 @@ class PricingInfo(BaseModel):
 
 class CreditsInfoResponse(BaseModel):
     """积分详情响应（纯积分制 + Token 计费）"""
-    balance: int
+    credits: int  # 积分余额（前端期望字段名）
     monthly_granted: int
     monthly_credits: int
     monthly_consumed: int = 0  # 本月消耗总额

@@ -101,9 +101,9 @@ export interface QAReport {
 
 export interface PlotBreakdown {
   batch_id: string;
-  format_version: 1 | 2;  // 1=旧6字段格式, 2=新统一格式
+  format_version: 3;  // 3=结构化文本格式
 
-  // v2 新格式
+  // 剧情点数据
   plot_points?: PlotPoint[];
   qa_status?: 'pending' | 'PASS' | 'FAIL';
   qa_score?: number;

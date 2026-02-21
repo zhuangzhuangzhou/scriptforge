@@ -1250,3 +1250,49 @@ const GlassAlert: React.FC<{
 
 ---
 
+
+## [20260222-002310] 修复PlotTab页面接口重复调用问题
+
+**时间**: 2026-02-22 00:23:10
+
+**提交**:
+- `c5c31cf` - fix: 修复PlotTab页面接口重复调用问题
+
+
+**摘要**: 删除重复的useEffect，解决进入剧集拆解页面时接口被调用两次的问题
+
+## 问题描述
+
+用户反馈进入剧集拆解页面时，接口会被调用2次，导致不必要的网络请求和性能损耗。
+
+## 问题分析
+
+通过代码审查发现，`frontend/src/pages/user/Workspace/index.tsx` 中存在两个完全相同的 useEffect：
+
+1. 第806行：`// 监听 Tab 切换加载数据（合并后的唯一版本）`
+2. 第917行：`// 监听 Tab 切换加载数据`
+
+两个 useEffect 都监听 `[activeTab, projectId]` 变化，当用户切换到 PLOT 标签页时：
+- `createBatchesAndFetch()` 被调用两次
+- `fetchBatches()` 被调用两次
+- `setSelectedBatch()` 被设置两次
+- 最终触发 `fetchBreakdownResults()` 两次
+
+## 解决方案
+
+删除重复的 useEffect（第917-925行），只保留第806行的版本。
+
+## 修改文件
+
+- `frontend/src/pages/user/Workspace/index.tsx`
+  - 删除重复的 useEffect 代码块
+  - 保留 prevBatchStatusRef 作为状态变化防护
+
+## 技术要点
+
+- React useEffect 依赖数组相同时会同时执行
+- 重复代码通常是"复制粘贴"的遗留问题
+- 使用 grep 搜索重复代码模式可快速发现此类问题
+
+---
+

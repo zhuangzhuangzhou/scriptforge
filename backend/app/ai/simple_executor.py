@@ -67,68 +67,24 @@ COMMA_EPISODE_PATTERN = re.compile(
 #   【第1集】
 #   场景：酒店大堂 角色：林浩/陈总 剧情：林浩揭穿欺诈 钩子：打脸爽点
 EPISODE_HEADER_PATTERN = re.compile(r'【第(\d+)集】')
-PLOT_POINT_OLD_PATTERN = re.compile(
-    r'场景[：:]\s*(.+?)\s+角色[：:]\s*(.+?)\s+剧情[：:]\s*(.+?)\s+钩子[：:]\s*(\S+)'
-)
-
-# 更旧格式兼容：【剧情N】管道符分隔
-# 示例：【剧情1】酒店大堂|林浩/陈总|揭穿欺诈|打脸爽点|第1集|第3章
-PLOT_POINT_LEGACY_PATTERN = re.compile(
-    r'【剧情(\d+)】([^|]+)\|([^|]+)\|([^|]+)\|([^|]+)\|第(\d+)集(?:\|第(\d+)章)?'
-)
-
 # -------------------- QA 报告格式正则 --------------------
-# QA 报告采用结构化文本格式，包含总分、状态、各维度评分和修改清单
-#
-# 示例：
-#   【质检报告】
-#   总分：75
-#   状态：不通过
-#
-#   【维度1】冲突强度评估
-#   评分：80
-#   结果：通过
-#   说明：冲突标注准确
-#
-#   【修改清单】
-#   1. 第1集第3个剧情点：钩子类型修改为打脸爽点
-
-# QA 评分解析
-# 支持格式：总分：82/100 或 总分：82
+# QA 评分解析 - 格式：总分：82 或 总分：82/100
 QA_SCORE_PATTERN = re.compile(r'总分[：:]\s*(\d+)(?:/(\d+))?')
 
-# QA 状态解析
-# 支持格式：状态：✅ PASS / 状态：通过 / 状态：❌ FAIL / 状态：不通过
-QA_STATUS_PATTERN = re.compile(r'状态[：:]\s*(✅|❌)?\s*(PASS|通过|FAIL|不通过)')
+# QA 状态解析 - 格式：状态：通过 / 状态：不通过
+QA_STATUS_PATTERN = re.compile(r'状态[：:]\s*(✅|❌)?\s*(PASS|通过|FAIL|不通过|未通过)')
 
-# QA 维度正则（支持新旧两种格式）
-# 新格式：【维度1】冲突强度评估 10/12.5分 通过
-#         说明：核心冲突识别准确
-# 旧格式：【维度1】冲突强度评估
-#         评分：80
-#         结果：通过
-#         说明：冲突标注准确
-# 兼容策略：分别尝试两种模式
-QA_DIMENSION_PATTERN_NEW = re.compile(
-    r'【维度(\d+)】([^】\n]+?)(?:\s*(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)[分])?\s*(?:✓|✗)?\s*'
-    r'((?:通过|不通过|良好|需调整|基本达标|优秀))'
-    r'(?:\s*，(.+?))?(?:\n[^\n]*?说明[：:]\s*(.+?))?(?:\n[^\n]*)?(?=\s*\n【维度|\s*\n【修改清单】|\s*\n【问题清单】|\s*$)',
+# QA 维度正则 - 格式：【维度N】名称 评分 XX 通过/未通过
+# 优化：更宽松的说明匹配，支持多种格式变体
+QA_DIMENSION_PATTERN = re.compile(
+    r'【维度(\d+)】\s*(.+?)\s+评分\s*[：:]?\s*(\d+)\s*(通过|未通过|不通过|良好|需调整|基本达标|优秀)'
+    r'(?:[\s\n]*说明[：:]\s*(.+?))?(?=\s*\n\s*【维度|\s*\n\s*【修改清单】|\s*\n\s*【问题清单】|\s*$)',
     re.DOTALL
 )
 
-QA_DIMENSION_PATTERN_OLD = re.compile(
-    r'【维度(\d+)】([^】\n]+?)(?:\n[^\n]*?评分[：:]\s*(\d+))?'
-    r'(?:\n[^\n]*?结果[：:]\s*)?((?:通过|不通过|良好|需调整|基本达标|优秀))'
-    r'(?:\n[^\n]*?说明[：:]\s*(.+?))?(?=\s*\n【维度|\s*\n【修改清单】|\s*\n【问题清单】|\s*$)',
-    re.DOTALL
-)
-
-# QA 修改项正则（支持多种格式）
-# 格式1：1. 剧情3 钩子类型 悬念设置 → 打脸爽点
-# 格式2：1. 第1集第3个剧情点：钩子类型修改为打脸爽点
-# 格式3：剧情3 钩子类型错误：'打脸蓄力' → '人物结交'
+# QA 修改项正则 - 格式：1. 【剧情N】修改内容
 QA_FIX_ITEM_PATTERN = re.compile(
-    r'(?:^|\n)(\d+)[.、]\s*(?:剧情|第(\d+)集.*?第(\d+)个剧情点)[^\n]*\s*(.+?)(?=\n\d+[.、]|\s*$)',
+    r'(?:^|\n)(\d+)[.、]\s*【剧情(\d+)】\s*(.+?)(?=\n\d+[.、]|\s*$)',
     re.DOTALL
 )
 
@@ -136,16 +92,14 @@ QA_FIX_ITEM_PATTERN = re.compile(
 def parse_text_plot_points(response: str) -> List[Dict[str, Any]]:
     """解析结构化文本格式的剧情点
 
-    支持三种格式（按优先级）：
-    1. 新格式（管道符分隔，每行一个）：
-       1|酒店大堂|林浩/陈总|林浩揭穿欺诈|打脸爽点|第1集
+    格式（管道符分隔，每行一个）：
+    1|酒店大堂|林浩/陈总|林浩揭穿欺诈|打脸爽点|第1集
 
-    2. 旧格式（按集分组）：
-       【第1集】
-       场景：xxx 角色：xxx 剧情：xxx 钩子：xxx
-
-    3. 更旧格式（【剧情N】管道符）：
-       【剧情N】场景|角色A/角色B|事件|钩子类型|第X集|第Y章
+    支持多种格式变体：
+    - 标准格式：1|场景|角色|剧情|钩子|第1集
+    - 带分数格式：1|场景|角色|剧情|钩子（7分）|第1集
+    - 逗号分隔：1|场景|角色|剧情|钩子，第1集
+    - 宽松格式：1|场景|角色|剧情|钩子|第1集。（带标点）
 
     Args:
         response: LLM 输出的结构化文本
@@ -158,10 +112,15 @@ def parse_text_plot_points(response: str) -> List[Dict[str, Any]]:
 
     plot_points: List[Dict[str, Any]] = []
 
-    # 1. 多策略尝试解析剧情点
-    # 策略1：标准管道符格式
-    # 策略2：带分数的管道符格式
-    # 策略3：逗号分隔集数格式
+    # 预编译宽松格式正则（允许结尾有标点符号）
+    LOOSE_PIPE_PATTERN = re.compile(
+        r'^(\d+)\|([^|]+)\|([^|]+)\|([^|]+)\|([^|]+)\|第(\d+)集[。.、，,]?$'
+    )
+    # 更宽松的格式：集数可能用其他方式表示
+    VERY_LOOSE_PATTERN = re.compile(
+        r'^(\d+)\|([^|]+)\|([^|]+)\|([^|]+)\|([^|]+)\|[第]?(\d+)[集]?[。.、，,]?$'
+    )
+
     lines = response.split('\n')
     for line in lines:
         line = line.strip()
@@ -180,18 +139,29 @@ def parse_text_plot_points(response: str) -> List[Dict[str, Any]]:
             hook_type = pipe_match.group(5).strip()
             episode = int(pipe_match.group(6))
 
-        # 策略2：带分数的管道符格式
+        # 策略2：宽松格式（允许结尾标点）
         if point_id is None:
-            pipe_with_score_match = PIPE_WITH_SCORE_PATTERN.match(line)
-            if pipe_with_score_match:
-                point_id = int(pipe_with_score_match.group(1))
-                scene = pipe_with_score_match.group(2).strip()
-                characters_str = pipe_with_score_match.group(3).strip()
-                event = pipe_with_score_match.group(4).strip()
-                hook_type = pipe_with_score_match.group(5).strip()
-                episode = int(pipe_with_score_match.group(6))
+            loose_match = LOOSE_PIPE_PATTERN.match(line)
+            if loose_match:
+                point_id = int(loose_match.group(1))
+                scene = loose_match.group(2).strip()
+                characters_str = loose_match.group(3).strip()
+                event = loose_match.group(4).strip()
+                hook_type = loose_match.group(5).strip()
+                episode = int(loose_match.group(6))
 
-        # 策略3：逗号分隔集数格式
+        # 策略3：更宽松格式
+        if point_id is None:
+            very_loose_match = VERY_LOOSE_PATTERN.match(line)
+            if very_loose_match:
+                point_id = int(very_loose_match.group(1))
+                scene = very_loose_match.group(2).strip()
+                characters_str = very_loose_match.group(3).strip()
+                event = very_loose_match.group(4).strip()
+                hook_type = very_loose_match.group(5).strip()
+                episode = int(very_loose_match.group(6))
+
+        # 策略4：逗号分隔集数格式
         if point_id is None:
             comma_match = COMMA_EPISODE_PATTERN.match(line)
             if comma_match:
@@ -202,11 +172,24 @@ def parse_text_plot_points(response: str) -> List[Dict[str, Any]]:
                 hook_type = comma_match.group(5).strip()
                 episode = int(comma_match.group(6))
 
+        # 策略5：带分数的管道符格式
+        if point_id is None:
+            score_match = PIPE_WITH_SCORE_PATTERN.match(line)
+            if score_match:
+                point_id = int(score_match.group(1))
+                scene = score_match.group(2).strip()
+                characters_str = score_match.group(3).strip()
+                event = score_match.group(4).strip()
+                hook_type = score_match.group(5).strip()
+                episode = int(score_match.group(6))
+
         # 如果成功匹配，构建剧情点对象
         if point_id is not None:
             try:
                 # 清理钩子类型中的分数，如 "危机求助（7分）" -> "危机求助"
                 hook_type = re.sub(r'[（(]\d+分[）)]', '', hook_type).strip()
+                # 清理钩子类型中的结尾标点
+                hook_type = re.sub(r'[。.、，,]+$', '', hook_type).strip()
 
                 characters = [c.strip() for c in characters_str.split('/') if c.strip()]
 
@@ -225,90 +208,11 @@ def parse_text_plot_points(response: str) -> List[Dict[str, Any]]:
                 continue
 
     if plot_points:
-        logger.info(f"使用新格式（管道符分隔）解析成功，共 {len(plot_points)} 个剧情点")
-        return plot_points
-
-    # 2. 尝试旧格式：按集分组
-    if '【第' in response and '集】' in response:
-        current_episode = 1
-        point_id = 1
-
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-
-            # 检查是否是集数标题
-            episode_match = EPISODE_HEADER_PATTERN.match(line)
-            if episode_match:
-                current_episode = int(episode_match.group(1))
-                continue
-
-            # 尝试匹配剧情点
-            point_match = PLOT_POINT_OLD_PATTERN.match(line)
-            if point_match:
-                scene = point_match.group(1).strip()
-                characters_str = point_match.group(2).strip()
-                event = point_match.group(3).strip()
-                hook_type = point_match.group(4).strip()
-
-                characters = [c.strip() for c in characters_str.split('/') if c.strip()]
-
-                plot_point = {
-                    "id": point_id,
-                    "scene": scene,
-                    "characters": characters,
-                    "event": event,
-                    "hook_type": hook_type,
-                    "episode": current_episode,
-                    "status": "unused",
-                }
-                plot_points.append(plot_point)
-                point_id += 1
-
-        if plot_points:
-            logger.info(f"使用旧格式（按集分组）解析成功，共 {len(plot_points)} 个剧情点")
-            return plot_points
-
-    # 3. 回退到更旧格式：【剧情N】管道符分隔
-    matches = list(PLOT_POINT_LEGACY_PATTERN.finditer(response))
-
-    for match in matches:
-        try:
-            point_id = int(match.group(1))
-            scene = match.group(2).strip()
-            characters_str = match.group(3).strip()
-            event = match.group(4).strip()
-            hook_type = match.group(5).strip()
-            episode = int(match.group(6))
-            source_chapter = int(match.group(7)) if match.group(7) else None
-
-            characters = [c.strip() for c in characters_str.split('/') if c.strip()]
-
-            if not scene or not event or not hook_type:
-                logger.warning(f"剧情点 {point_id} 缺少必填字段，跳过")
-                continue
-
-            plot_point = {
-                "id": point_id,
-                "scene": scene,
-                "characters": characters,
-                "event": event,
-                "hook_type": hook_type,
-                "episode": episode,
-                "status": "unused",
-            }
-            if source_chapter is not None:
-                plot_point["source_chapter"] = source_chapter
-
-            plot_points.append(plot_point)
-
-        except (ValueError, IndexError) as e:
-            logger.warning(f"解析剧情点失败: {e}, 原文: {match.group(0)[:100]}")
-            continue
-
-    if not plot_points and ('【剧情' in response or '【第' in response or '|' in response):
-        logger.warning(f"检测到剧情标记但解析失败，响应片段: {response[:200]}...")
+        logger.info(f"管道符格式解析成功，共 {len(plot_points)} 个剧情点")
+    elif '|' in response:
+        # 记录更详细的调试信息
+        sample_lines = [l.strip() for l in response.split('\n') if '|' in l][:3]
+        logger.warning(f"检测到管道符但解析失败，示例行: {sample_lines}")
 
     return plot_points
 
@@ -399,44 +303,33 @@ def parse_text_qa_result(response: str) -> Dict[str, Any]:
     if score_match:
         result["qa_score"] = int(score_match.group(1))
 
-    # 解析状态（支持多种格式）
-    # 格式1：状态：✅ PASS / 状态：❌ FAIL
-    # 格式2：状态：通过 / 状态：不通过
+    # 解析状态
     status_match = QA_STATUS_PATTERN.search(response)
     if status_match:
-        # group(1) 是 emoji (✅ 或 ❌)，group(2) 是文字状态
         emoji = status_match.group(1)
         text_status = status_match.group(2)
         if emoji == "✅" or text_status in ("PASS", "通过"):
             result["qa_status"] = "PASS"
-        elif emoji == "❌" or text_status in ("FAIL", "不通过"):
+        elif emoji == "❌" or text_status in ("FAIL", "不通过", "未通过"):
             result["qa_status"] = "FAIL"
     elif result["qa_score"] is not None:
         # 根据分数推断状态
         result["qa_status"] = "PASS" if result["qa_score"] >= 70 else "FAIL"
 
-    # 解析各维度 - 先尝试新格式，再尝试旧格式
-    dimensions_found = set()
-    for dim_match in QA_DIMENSION_PATTERN_NEW.finditer(response):
+    # 解析各维度 - 格式：【维度N】名称 评分 XX 通过/未通过
+    for dim_match in QA_DIMENSION_PATTERN.finditer(response):
         dim_id = int(dim_match.group(1))
-        if dim_id in dimensions_found:
-            continue
-        dimensions_found.add(dim_id)
-
-        # 新格式分组：group(1)=ID, group(2)=名称, group(3)=得分, group(4)=满分, group(5)=结果, group(6)=附加说明, group(7)=说明
         dim_name = dim_match.group(2).strip()
         score = float(dim_match.group(3)) if dim_match.group(3) else None
-        max_score = float(dim_match.group(4)) if dim_match.group(4) else 12.5
-        result_str = dim_match.group(5).strip()
+        result_str = dim_match.group(4).strip()
         passed = result_str in ("通过", "良好", "基本达标", "优秀")
-        extra_note = dim_match.group(6).strip() if dim_match.group(6) else ""
-        details = dim_match.group(7).strip() if dim_match.group(7) else extra_note
+        details = dim_match.group(5).strip() if dim_match.group(5) else ""
 
         dimension = {
             "id": dim_id,
             "name": dim_name,
-            "score": score if score is not None else max_score,
-            "max_score": max_score,
+            "score": score if score is not None else 0,  # 默认0分，更保守
+            "max_score": 12.5,
             "passed": passed,
             "result": result_str,
             "details": details,
@@ -448,52 +341,21 @@ def parse_text_qa_result(response: str) -> Dict[str, Any]:
             })
         result["dimensions"].append(dimension)
 
-    # 如果新格式没有匹配到，尝试旧格式
-    if not result["dimensions"]:
-        for dim_match in QA_DIMENSION_PATTERN_OLD.finditer(response):
-            dim_id = int(dim_match.group(1))
-            dim_name = dim_match.group(2).strip()
-            score = float(dim_match.group(3)) if dim_match.group(3) else None
-            result_str = dim_match.group(4).strip()
-            passed = result_str in ("通过", "良好", "基本达标", "优秀")
-            details = dim_match.group(5).strip() if dim_match.group(5) else ""
-
-            dimension = {
-                "id": dim_id,
-                "name": dim_name,
-                "score": score if score is not None else 12.5,
-                "max_score": 12.5,
-                "passed": passed,
-                "result": result_str,
-                "details": details,
-            }
-            if not passed:
-                result["issues"].append({
-                    "dimension": dimension["name"],
-                    "description": details
-                })
-            result["dimensions"].append(dimension)
-
-    # 解析修改清单
+    # 解析修改清单 - 格式：1. 【剧情N】修改内容
     fix_section_match = re.search(r'【修改清单】\s*\n(.+?)(?=\n【|$)', response, re.DOTALL)
     if fix_section_match:
         fix_text = fix_section_match.group(1)
         for fix_match in QA_FIX_ITEM_PATTERN.finditer(fix_text):
-            # 新格式：group(1)=序号, group(2-4)=可能为None, group(4)=修改内容
-            # 旧格式：group(1)=序号, group(2)=集数, group(3)=剧情点, group(4)=修改内容
-            action = fix_match.group(4).strip() if fix_match.group(4) else ""
-            if fix_match.group(2) and fix_match.group(3):
-                target = f"第{fix_match.group(2)}集第{fix_match.group(3)}个剧情点"
-            else:
-                # 尝试从修改内容中提取剧情信息
-                target = action.split('：')[0] if action and '：' in action else action[:20]
+            plot_id = fix_match.group(2)
+            action = fix_match.group(3).strip()
             result["fix_instructions"].append({
                 "priority": "high",
-                "target": target,
+                "target": f"剧情{plot_id}",
+                "plot_id": int(plot_id),
                 "action": action
             })
 
-    # 添加别名映射，兼容 output_schema 定义的 status/score 字段
+    # 添加别名映射
     result["status"] = result["qa_status"]
     result["score"] = result["qa_score"]
 
@@ -907,6 +769,27 @@ class SimpleSkillExecutor:
                 f"已提供的参数: {available_keys}"
             )
 
+        # 3.5 清理空参数段落
+        # ----------------------------------------------------------------
+        # 问题：当 previous_plot_points、qa_feedback 等可选参数为空时，
+        # 提示词中会出现空白段落，可能让 LLM 困惑。
+        # 解决：移除标题后紧跟空内容的段落及其相关说明。
+        # ----------------------------------------------------------------
+        # 清理上轮拆解结果空段落
+        prompt = re.sub(r'###\s*上轮拆解结果\s*\n\s*\n', '', prompt)
+        # 清理质检反馈空段落及其相关注意事项
+        prompt = re.sub(
+            r'###\s*质检反馈[^\n]*\n\s*\n\s*\*\*注意\*\*[^\n]*\n',
+            '',
+            prompt
+        )
+        # 回退：如果上面没匹配到，单独清理质检反馈标题
+        prompt = re.sub(r'###\s*质检反馈[^\n]*\n\s*\n', '', prompt)
+        # 清理连续的分隔符（--- 后紧跟 ---）
+        prompt = re.sub(r'---\s*\n\s*---', '---', prompt)
+        # 清理连续的空行（超过2个换行符合并为2个）
+        prompt = re.sub(r'\n{3,}', '\n\n', prompt)
+
         system_prompt = skill.system_prompt or ""
 
         # 4. 发布步骤开始（统一显示名称）
@@ -1156,11 +1039,11 @@ class SimpleSkillExecutor:
             }
 
     def _parse_json(self, response: str) -> Any:
-        """解析响应（支持 JSON 和结构化文本格式）
+        """解析响应（支持结构化文本和 JSON 格式）
 
         解析策略：
         1. 优先检测 QA 报告格式（【质检报告】标记）
-        2. 检测剧情点格式（管道符/旧格式）
+        2. 检测剧情点格式（管道符）
         3. 尝试 JSON 解析
         4. 解析失败直接报错
 
@@ -1176,39 +1059,25 @@ class SimpleSkillExecutor:
         if not response or not response.strip():
             raise ValueError("LLM 返回空响应")
 
-        # 1. 优先检测 QA 报告格式（避免被误判为剧情点）
+        # 1. 优先检测 QA 报告格式
         if '【质检报告】' in response:
             qa_result = parse_text_qa_result(response)
             if qa_result.get("qa_status") or qa_result.get("qa_score") is not None:
-                logger.info(f"使用 QA 报告格式解析成功，状态: {qa_result.get('qa_status')}, 分数: {qa_result.get('qa_score')}")
+                logger.info(f"QA 报告解析成功，状态: {qa_result.get('qa_status')}, 分数: {qa_result.get('qa_score')}")
                 return qa_result
             else:
-                error_msg = "QA 报告格式检测到但解析失败"
-                logger.error(f"{error_msg}，响应片段: {response[:300]}...")
-                raise ValueError(error_msg)
+                raise ValueError("QA 报告格式检测到但解析失败")
 
-        # 2. 检测剧情点格式
-        # 管道符格式特征：行首是数字，后跟管道符，末尾是"第X集"
-        import re
-        pipe_line_pattern = re.compile(r'^\d+\|[^|]+\|[^|]+\|[^|]+\|[^|]+\|第\d+集$', re.MULTILINE)
-        has_pipe_format = bool(pipe_line_pattern.search(response))
-
-        # 旧格式特征
-        has_episode_format = '【第' in response and '集】' in response
-        has_legacy_format = '【剧情' in response
-
-        if has_pipe_format or has_episode_format or has_legacy_format:
+        # 2. 检测剧情点格式（管道符）
+        if '|' in response and '第' in response and '集' in response:
             text_result = parse_text_plot_points(response)
             if text_result:
-                logger.info(f"使用结构化文本格式解析成功，共 {len(text_result)} 个剧情点")
+                logger.info(f"剧情点解析成功，共 {len(text_result)} 个")
                 return text_result
             else:
-                # 检测到格式标记但解析失败，直接报错
-                error_msg = "LLM 输出格式不符合要求：检测到剧情点格式标记但解析失败"
-                logger.error(f"{error_msg}，响应片段: {response[:300]}...")
-                raise ValueError(error_msg)
+                raise ValueError("检测到剧情点格式但解析失败")
 
-        # 3. 尝试 JSON 解析（用于其他输出格式）
+        # 3. 尝试 JSON 解析
         _PARSE_FAILED = object()
         result = parse_llm_response(
             response=response,
@@ -1217,16 +1086,10 @@ class SimpleSkillExecutor:
             raise_on_empty=False
         )
 
-        if result is not _PARSE_FAILED:
-            if isinstance(result, (dict, list)):
-                if isinstance(result, list) and len(result) == 0:
-                    logger.info("JSON 解析成功，结果为空列表（可能是合法的空结果）")
-                return result
+        if result is not _PARSE_FAILED and isinstance(result, (dict, list)):
+            return result
 
-        # 解析失败，直接报错
-        error_msg = "无法解析 LLM 响应（JSON 格式解析失败）"
-        logger.error(f"{error_msg}，响应长度: {len(response)}，响应片段: {response[:300]}...")
-        raise ValueError(error_msg)
+        raise ValueError("无法解析 LLM 响应")
 
 
 class SimpleAgentExecutor:

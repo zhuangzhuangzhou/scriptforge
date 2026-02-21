@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Integer, Text, ForeignKey, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from app.core.database import Base
@@ -23,4 +23,4 @@ class Chapter(Base):
     txt_file_size = Column(Integer)       # 文件大小
     skill_processed = Column(JSONB)       # Skill 处理后的结构化数据快照
     
-    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
+    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc))

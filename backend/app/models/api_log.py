@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Integer, Text, ForeignKey, TIMESTAMP, Index
 from sqlalchemy.dialects.postgresql import UUID
 from app.core.database import Base
@@ -27,7 +27,7 @@ class APILog(Base):
     response_time = Column(Integer)              # 响应时间（毫秒）
     error_message = Column(Text)                 # 错误信息（如果有）
 
-    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, index=True)
+    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
     __table_args__ = (
         Index('ix_api_logs_path', 'path'),

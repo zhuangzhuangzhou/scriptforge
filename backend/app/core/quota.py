@@ -276,7 +276,7 @@ class QuotaService:
         }
 
 
-def refund_episode_quota_sync(db: Session, user_id: str, amount: int = 1) -> None:
+def refund_episode_quota_sync(db: Session, user_id: str, amount: int = 1, auto_commit: bool = True) -> None:
     """同步版本：返还积分（纯积分制）
 
     用于 Celery worker 中的积分回滚操作。当任务失败时，需要将预扣的积分返还给用户。
@@ -285,6 +285,7 @@ def refund_episode_quota_sync(db: Session, user_id: str, amount: int = 1) -> Non
         db: 同步数据库会话
         user_id: 用户ID（UUID字符串）
         amount: 返还任务数量，默认为1
+        auto_commit: 是否自动提交事务，默认为 True。设为 False 时由调用方统一管理事务。
 
     Raises:
         无异常抛出。积分回滚失败不应阻止错误信息的记录。
@@ -322,8 +323,9 @@ def refund_episode_quota_sync(db: Session, user_id: str, amount: int = 1) -> Non
         )
         db.add(record)
 
-        # 提交事务
-        db.commit()
+        # 根据参数决定是否提交事务
+        if auto_commit:
+            db.commit()
 
         logger.info(
             f"积分回滚成功: user_id={user_id}, amount={amount}, "
@@ -333,7 +335,8 @@ def refund_episode_quota_sync(db: Session, user_id: str, amount: int = 1) -> Non
     except Exception as e:
         # 积分回滚失败不应阻止错误传播
         logger.error(f"积分回滚失败: user_id={user_id}, amount={amount}, error={str(e)}")
-        try:
-            db.rollback()
-        except Exception as rollback_error:
-            logger.error(f"积分回滚事务回滚失败: {str(rollback_error)}")
+        if auto_commit:
+            try:
+                db.rollback()
+            except Exception as rollback_error:
+                logger.error(f"积分回滚事务回滚失败: {str(rollback_error)}")

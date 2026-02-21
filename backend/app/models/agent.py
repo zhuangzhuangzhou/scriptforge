@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, Boolean, JSON, Text, DateTime, ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 from app.core.database import Base
 
@@ -138,8 +138,8 @@ class AgentDefinition(Base):
     template_source = Column(String(100))                 # 模板来源（built-in, user）
     version = Column(Integer, default=1)                  # 版本号
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class AgentExecution(Base):
@@ -170,8 +170,8 @@ class AgentExecution(Base):
     tokens_used = Column(Integer, default=0)            # 消耗的 tokens
     model_used = Column(String(100))                   # 使用的模型
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class PipelineNodeAgent(Base):
@@ -194,7 +194,7 @@ class PipelineNodeAgent(Base):
     trigger_condition = Column(JSON)                      # 触发条件
     is_optional = Column(Boolean, default=True)         # 是否可选
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class AgentWorkflowExecution(Base):
@@ -220,8 +220,8 @@ class AgentWorkflowExecution(Base):
     # 质检结果
     quality_checks = Column(JSON)                        # 质检结果队列
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class SimpleAgent(Base):
@@ -279,8 +279,8 @@ class SimpleAgent(Base):
 
     # 元数据
     version = Column(String(20), default="1.0.0")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     def __repr__(self):
         return f"<SimpleAgent {self.name}>"

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Button, Tag, message, Descriptions, Tooltip } from 'antd';
-import { ReloadOutlined, SearchOutlined, EyeOutlined } from '@ant-design/icons';
+import { ReloadOutlined, SearchOutlined, EyeOutlined, CopyOutlined, CheckOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../../../services/api';
 import { GlassCard } from '../../../components/ui/GlassCard';
@@ -84,6 +84,19 @@ const LLMLogsTab: React.FC = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedLog, setSelectedLog] = useState<LLMLogDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  // 复制到剪贴板
+  const handleCopy = async (text: string, field: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedField(field);
+      message.success('复制成功');
+      setTimeout(() => setCopiedField(null), 2000);
+    } catch {
+      message.error('复制失败');
+    }
+  };
 
   // 加载日志列表
   const loadLogs = useCallback(async () => {
@@ -447,17 +460,41 @@ const LLMLogsTab: React.FC = () => {
 
             {/* Prompt */}
             <div>
-              <div className="text-sm text-slate-400 mb-2">Prompt</div>
+              <div className="flex justify-between items-center mb-2">
+                <div className="text-sm text-slate-400">Prompt</div>
+                {selectedLog.prompt && (
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={copiedField === 'prompt' ? <CheckOutlined /> : <CopyOutlined />}
+                    onClick={() => handleCopy(selectedLog.prompt, 'prompt')}
+                  >
+                    {copiedField === 'prompt' ? '已复制' : '复制'}
+                  </Button>
+                )}
+              </div>
               <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg max-h-60 overflow-y-auto">
                 <pre className="text-slate-300 text-xs whitespace-pre-wrap font-mono">
-                  {selectedLog.prompt}
+                  {selectedLog.prompt || '(无)'}
                 </pre>
               </div>
             </div>
 
             {/* Response */}
             <div>
-              <div className="text-sm text-slate-400 mb-2">Response</div>
+              <div className="flex justify-between items-center mb-2">
+                <div className="text-sm text-slate-400">Response</div>
+                {selectedLog.response && (
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={copiedField === 'response' ? <CheckOutlined /> : <CopyOutlined />}
+                    onClick={() => handleCopy(selectedLog.response || '', 'response')}
+                  >
+                    {copiedField === 'response' ? '已复制' : '复制'}
+                  </Button>
+                )}
+              </div>
               <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg max-h-60 overflow-y-auto">
                 <pre className="text-slate-300 text-xs whitespace-pre-wrap font-mono">
                   {selectedLog.response || '(无响应)'}

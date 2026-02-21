@@ -1,7 +1,7 @@
 """添加拆分规则表
 
 Revision ID: add_split_rules_table
-Revises:
+Revises: 9a64befea4cc
 Create Date: 2026-02-17 11:30:00
 
 """
@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = 'add_split_rules_table'
-down_revision: Union[str, None] = '20260216_plot_points_raw'
+down_revision: Union[str, None] = '9a64befea4cc'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

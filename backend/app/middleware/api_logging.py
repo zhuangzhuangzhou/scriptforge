@@ -88,7 +88,7 @@ class APILoggingMiddleware(BaseHTTPMiddleware):
                 from jose import jwt
                 from app.core.config import settings
                 token = auth_header[7:]
-                payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+                payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
                 return payload.get("sub")
             except Exception:
                 pass

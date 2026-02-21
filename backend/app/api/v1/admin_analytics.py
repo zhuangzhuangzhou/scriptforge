@@ -18,7 +18,7 @@ router = APIRouter()
 
 def get_period_start(period: str) -> datetime:
     """根据周期获取起始时间"""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     if period == "day":
         return now - timedelta(days=1)
     elif period == "week":

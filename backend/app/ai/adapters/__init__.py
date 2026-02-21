@@ -92,7 +92,7 @@ async def get_adapter(
 
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
-from datetime import datetime
+from datetime import datetime, timezone
 from app.models.ai_model import AIModel
 from app.models.ai_model_provider import AIModelProvider
 from app.models.ai_model_credential import AIModelCredential
@@ -144,7 +144,7 @@ def get_adapter_sync(
     # 优先选择：
     # 1. is_system_default=True 的凭证
     # 2. 未过期的凭证
-    # 3. 按最后使用时间排序（用过一次的优先）
+    # 3. 按最后使用时间排序（最近使用的优先，实现负载均衡）
     from sqlalchemy import or_
     credential = db.query(AIModelCredential).filter(
         AIModelCredential.provider_id == provider.id,
@@ -152,11 +152,11 @@ def get_adapter_sync(
         # 排除过期凭证
         or_(
             AIModelCredential.expires_at == None,
-            AIModelCredential.expires_at > datetime.utcnow()
+            AIModelCredential.expires_at > datetime.now(timezone.utc)
         )
     ).order_by(
         AIModelCredential.is_system_default.desc(),  # 优先系统默认
-        AIModelCredential.last_used_at.asc()  # 其次按最后使用时间（用过的优先）
+        AIModelCredential.last_used_at.desc().nullsfirst()  # 最近使用的优先（NULL 值排最前，表示从未使用）
     ).first()
 
     if not credential:

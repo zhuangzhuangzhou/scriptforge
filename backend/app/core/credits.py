@@ -525,7 +525,7 @@ class CreditsService:
         user = await self._get_user(user_id)
         if not user:
             return {
-                "balance": 0,
+                "credits": 0,
                 "monthly_granted": 0,
                 "next_grant_at": None,
                 "tier": "free",
@@ -556,7 +556,7 @@ class CreditsService:
         monthly_consumed = int(consumed_result.scalar() or 0)
 
         return {
-            "balance": user.credits,
+            "credits": user.credits,
             "monthly_granted": user.monthly_credits_granted or 0,
             "monthly_credits": config.monthly_credits,
             "monthly_consumed": monthly_consumed,
@@ -638,7 +638,7 @@ class CreditsService:
             return (Decimal(str(TOKEN_CREDITS_INPUT)), Decimal(str(TOKEN_CREDITS_OUTPUT)))
 
         # 查询当前生效的计费规则
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         result = await self.db.execute(
             select(AIModelPricing)
             .where(AIModelPricing.model_id == UUID(model_id) if isinstance(model_id, str) else model_id)
@@ -835,11 +835,11 @@ def _get_pricing_from_model(
             pricing = db.query(AIModelPricing).filter(
                 AIModelPricing.model_id == model_uuid,
                 AIModelPricing.is_active == True,
-                AIModelPricing.effective_from <= datetime.utcnow()
+                AIModelPricing.effective_from <= datetime.now(timezone.utc)
             ).filter(
                 or_(
                     AIModelPricing.effective_until.is_(None),
-                    AIModelPricing.effective_until > datetime.utcnow()
+                    AIModelPricing.effective_until > datetime.now(timezone.utc)
                 )
             ).first()
             if pricing:
@@ -874,11 +874,11 @@ def _get_pricing_from_model(
                     pricing = db.query(AIModelPricing).filter(
                         AIModelPricing.model_id == ai_model.id,
                         AIModelPricing.is_active == True,
-                        AIModelPricing.effective_from <= datetime.utcnow()
+                        AIModelPricing.effective_from <= datetime.now(timezone.utc)
                     ).filter(
                         or_(
                             AIModelPricing.effective_until.is_(None),
-                            AIModelPricing.effective_until > datetime.utcnow()
+                            AIModelPricing.effective_until > datetime.now(timezone.utc)
                         )
                     ).order_by(AIModelPricing.effective_from.desc()).first()
 
@@ -953,10 +953,17 @@ def consume_token_credits_sync(
     if input_tokens == 0 and output_tokens == 0:
         logs = db.query(LLMCallLog).filter(LLMCallLog.task_id == task_uuid).all()
         for log in logs:
-            if log.prompt:
-                input_tokens += len(log.prompt) // 2
+            # prompt字段已废弃，从metadata中获取原始请求数据
+            metadata = log.extra_metadata or {}
+            request_data = metadata.get("request", {})
+            prompt_text = request_data.get("prompt", "")
+            if prompt_text:
+                # 估算 token 数量：中文约 1.5 字符/token，英文约 4 字符/token
+                # 使用保守估计：假设混合文本平均 2 字符/token
+                input_tokens += len(prompt_text) // 2
             if log.response:
-                output_tokens += len(log.response) // 2
+                # 输出通常中文较多，使用 1.5 字符/token 估算
+                output_tokens += int(len(log.response) / 1.5)
 
     # 如果没有任何 token 消耗，直接返回
     if input_tokens == 0 and output_tokens == 0:

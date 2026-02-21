@@ -1,6 +1,6 @@
 """AI 模型数据模型"""
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Boolean, Integer, Text, TIMESTAMP, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -32,8 +32,8 @@ class AIModel(Base):
     supports_function_calling = Column(Boolean, default=False)
     description = Column(Text)
     config = Column(JSONB)
-    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
-    updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # 关联关系
     provider = relationship("AIModelProvider", back_populates="models")

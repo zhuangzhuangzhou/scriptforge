@@ -3,7 +3,7 @@
 从数据库获取模型配置、凭证等信息
 """
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -86,7 +86,7 @@ class ModelConfigService:
             .where(
                 and_(
                     AIModelCredential.expires_at.is_(None) |
-                    (AIModelCredential.expires_at > datetime.utcnow())
+                    (AIModelCredential.expires_at > datetime.now(timezone.utc))
                 )
             )
             .order_by(AIModelCredential.is_system_default.desc())

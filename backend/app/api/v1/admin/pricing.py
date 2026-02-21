@@ -3,7 +3,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.core.database import get_db
 from app.models.ai_model_pricing import AIModelPricing
@@ -234,7 +234,7 @@ async def get_model_current_pricing(
         raise HTTPException(status_code=404, detail="模型不存在")
 
     # 查询当前生效的计费规则
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     result = await db.execute(
         select(AIModelPricing)
         .where(

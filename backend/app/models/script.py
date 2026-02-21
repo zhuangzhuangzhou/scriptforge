@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Integer, Boolean, ForeignKey, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from app.core.database import Base
@@ -22,6 +22,13 @@ class Script(Base):
     word_count = Column(Integer, default=0)
     scene_count = Column(Integer, default=0)
 
+    # 状态字段
+    status = Column(String(50), default="draft")  # draft, approved
+    qa_status = Column(String(50))  # pass, fail
+    qa_score = Column(Integer)  # 质检分数 0-100
+    qa_report = Column(JSONB)  # 质检报告详情
+
     is_current = Column(Boolean, default=True)
-    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
-    updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    approved_at = Column(TIMESTAMP(timezone=True))  # 审核通过时间

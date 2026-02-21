@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 from pydantic import BaseModel, Field
 from typing import Optional, List, Any
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 from app.core.database import get_db
 from app.models.user import User
 from app.models.agent import AgentDefinition, AgentExecution, PipelineNodeAgent
@@ -313,7 +313,7 @@ async def update_agent(
         await db.execute(
             update(AgentDefinition)
             .where(AgentDefinition.id == agent_id)
-            .values(**update_data, updated_at=datetime.utcnow())
+            .values(**update_data, updated_at=datetime.now(timezone.utc))
         )
         await db.commit()
 
@@ -349,7 +349,7 @@ async def delete_agent(
     await db.execute(
         update(AgentDefinition)
         .where(AgentDefinition.id == agent_id)
-        .values(is_active=False, updated_at=datetime.utcnow())
+        .values(is_active=False, updated_at=datetime.now(timezone.utc))
     )
     await db.commit()
 

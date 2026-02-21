@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Integer, Text, BigInteger, ForeignKey, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from app.core.database import Base
@@ -44,8 +44,8 @@ class Project(Base):
     # completed: 已完成
     status = Column(String(50), nullable=False, default="draft", index=True)
 
-    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
-    updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class ProjectLog(Base):
@@ -60,4 +60,4 @@ class ProjectLog(Base):
     message = Column(Text, nullable=False)
     detail = Column(JSONB)
 
-    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
+    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc))

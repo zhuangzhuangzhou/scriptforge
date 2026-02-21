@@ -15,7 +15,7 @@ from app.core.status import TaskStatus
 from app.models.batch import Batch
 from app.models.api_log import APILog
 from app.models.llm_call_log import LLMCallLog
-from app.api.v1.admin.helpers import check_admin
+from app.api.v1.admin import check_admin
 
 router = APIRouter()
 
@@ -44,11 +44,8 @@ def sanitize_log_data(data: any) -> any:
             sanitized = sanitize_log_data(parsed)
             return json.dumps(sanitized)
         except (json.JSONDecodeError, TypeError):
-            # 不是 JSON，直接检查是否包含敏感信息
-            lower_data = data.lower()
-            for field in SENSITIVE_FIELDS:
-                if field in lower_data:
-                    return "[REDACTED - contains sensitive data]"
+            # 不是 JSON，直接返回原始内容（不脱敏）
+            # API 响应通常是 JSON 格式，非 JSON 可能是错误信息等，应该保留
             return data
 
     # 如果是字典，递归处理
@@ -472,6 +469,63 @@ async def get_tasks(
         "skip": skip,
         "limit": limit,
         "status_summary": status_stats
+    }
+
+
+@router.get("/tasks/running")
+async def get_running_tasks(
+    admin: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """管理员：获取当前正在运行的任务列表"""
+    from datetime import datetime, timezone
+
+    # 查询正在运行的任务（通过 Project 关联 User）
+    query = (
+        select(AITask, User, Project, Batch)
+        .outerjoin(Project, AITask.project_id == Project.id)
+        .outerjoin(User, Project.user_id == User.id)
+        .outerjoin(Batch, AITask.batch_id == Batch.id)
+        .where(AITask.status.in_([TaskStatus.RUNNING, TaskStatus.IN_PROGRESS, TaskStatus.QUEUED]))
+        .order_by(AITask.created_at.desc())
+    )
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    now = datetime.now(timezone.utc)
+    tasks = []
+    for task, user, project, batch in rows:
+        created_at = task.created_at.replace(tzinfo=timezone.utc) if task.created_at else now
+        updated_at = task.updated_at.replace(tzinfo=timezone.utc) if task.updated_at else now
+
+        running_time = int((now - created_at).total_seconds())
+        idle_time = int((now - updated_at).total_seconds())
+
+        # user_id 从 Project 表获取
+        user_id = str(project.user_id) if project and project.user_id else None
+
+        tasks.append({
+            "id": str(task.id),
+            "task_type": task.task_type or "breakdown",
+            "status": task.status,
+            "progress": task.progress or 0,
+            "current_step": task.current_step or "",
+            "user_id": user_id,
+            "username": user.username if user else "未知用户",
+            "project_id": str(task.project_id) if task.project_id else None,
+            "project_name": project.name if project else "未知项目",
+            "batch_id": str(task.batch_id) if task.batch_id else None,
+            "batch_number": batch.batch_number if batch else 0,
+            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+            "running_time": running_time,
+            "idle_time": idle_time,
+        })
+
+    return {
+        "tasks": tasks,
+        "total": len(tasks)
     }
 
 
@@ -961,8 +1015,19 @@ async def get_llm_log_detail(
 
     log, user = row
 
-    # LLM 日志的 metadata 包含 request/response，不需要脱敏
-    # 因为这是管理员查看的日志，记录的是发送给 LLM 的内容，不是系统敏感信息
+    # 从 metadata.request 中提取 prompt
+    prompt = None
+    if log.extra_metadata and "request" in log.extra_metadata:
+        request_data = log.extra_metadata["request"]
+        # 尝试从 messages 中提取用户 prompt
+        if isinstance(request_data, dict):
+            messages = request_data.get("messages", [])
+            if messages:
+                # 找到最后一条用户消息
+                for msg in reversed(messages):
+                    if msg.get("role") == "user":
+                        prompt = msg.get("content")
+                        break
 
     return {
         "id": str(log.id),
@@ -974,7 +1039,7 @@ async def get_llm_log_detail(
         "model_name": log.model_name,
         "skill_name": log.skill_name,
         "stage": log.stage,
-        # prompt 字段已废弃，数据存储在 metadata.request 中
+        "prompt": prompt,
         "response": log.response,
         "prompt_tokens": log.prompt_tokens,
         "response_tokens": log.response_tokens,
@@ -1065,3 +1130,90 @@ async def get_llm_logs_stats(
         "top_models": top_models,
         "top_skills": top_skills
     }
+
+
+@router.post("/tasks/check-stuck")
+async def check_stuck_tasks(
+    admin: User = Depends(check_admin)
+):
+    """管理员：手动检查并终止卡住的任务
+
+    检查条件：
+    - 状态为 running/processing/queued
+    - 创建时间超过 1 小时
+    - 或更新时间超过 30 分钟（停滞）
+    """
+    from app.tasks.task_monitor import check_and_terminate_stuck_tasks
+
+    try:
+        check_and_terminate_stuck_tasks()
+        return {
+            "success": True,
+            "message": "任务检查完成，已终止卡住的任务"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"检查任务失败: {str(e)}"
+        )
+
+
+@router.post("/tasks/{task_id}/stop")
+async def stop_task(
+    task_id: str,
+    admin: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """管理员：手动停止指定任务"""
+    # 查询任务
+    result = await db.execute(
+        select(AITask).where(AITask.id == task_id)
+    )
+    task = result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="任务不存在"
+        )
+
+    if task.status not in [TaskStatus.RUNNING, TaskStatus.IN_PROGRESS, TaskStatus.QUEUED]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"任务状态为 {task.status}，无法停止"
+        )
+
+    # 更新任务状态
+    task.status = TaskStatus.FAILED
+    task.error_message = f"管理员手动停止任务（操作人: {admin.username}）"
+    task.updated_at = datetime.now(timezone.utc)
+
+    # 更新批次状态
+    if task.batch_id:
+        batch_result = await db.execute(
+            select(Batch).where(Batch.id == task.batch_id)
+        )
+        batch = batch_result.scalar_one_or_none()
+        if batch:
+            from app.core.status import BatchStatus
+            batch.breakdown_status = BatchStatus.FAILED
+            batch.updated_at = datetime.now(timezone.utc)
+
+    # 尝试终止 Celery 任务
+    if task.celery_task_id:
+        try:
+            from app.core.celery_app import celery_app
+            celery_app.control.revoke(task.celery_task_id, terminate=True)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"终止 Celery 任务失败: {e}")
+
+    await db.commit()
+
+    return {
+        "success": True,
+        "message": "任务已停止",
+        "task_id": task_id
+    }
+

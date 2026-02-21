@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, TIMESTAMP, Text, Boolean, ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from app.core.database import Base
@@ -31,5 +31,5 @@ class AIResource(Base):
     version = Column(Integer, default=1)  # 版本号
     parent_id = Column(UUID(as_uuid=True), ForeignKey("ai_resources.id"), nullable=True)  # 复制来源
 
-    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
-    updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

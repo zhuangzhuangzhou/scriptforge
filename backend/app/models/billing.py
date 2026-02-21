@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Integer, ForeignKey, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID
 from app.core.database import Base
@@ -31,7 +31,7 @@ class BillingRecord(Base):
     # 关联ID(订单号等)
     reference_id = Column(String(100), index=True)
 
-    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
+    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class Subscription(Base):
@@ -57,4 +57,4 @@ class Subscription(Base):
     # 订阅过期时间
     expires_at = Column(TIMESTAMP(timezone=True), nullable=False, index=True)
 
-    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
+    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc))

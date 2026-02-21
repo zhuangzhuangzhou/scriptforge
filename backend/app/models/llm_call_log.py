@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Integer, Text, ForeignKey, TIMESTAMP, Float, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from app.core.database import Base
@@ -25,8 +25,7 @@ class LLMCallLog(Base):
     skill_name = Column(String(100))  # 调用的 Skill 名称
     stage = Column(String(100))       # 执行阶段
 
-    # 请求信息
-    prompt = Column(Text, nullable=False)          # 完整 prompt
+    # 请求信息（prompt已废弃，数据存储在metadata中）
     prompt_tokens = Column(Integer)                # prompt token 数
     temperature = Column(Float)
     max_tokens = Column(Integer)
@@ -44,7 +43,7 @@ class LLMCallLog(Base):
     # 额外元数据
     extra_metadata = Column("metadata", JSONB)                 # 其他信息（如 function_call 等）
 
-    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, index=True)
+    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
     __table_args__ = (
         Index('ix_llm_call_logs_provider', 'provider'),

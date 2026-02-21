@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, Boolean, JSON, DateTime, ForeignKey, Text, Integer, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 from app.core.database import Base
 
@@ -28,8 +28,8 @@ class Pipeline(Base):
     version = Column(Integer, default=1)
     parent_pipeline_id = Column(UUID(as_uuid=True))  # 父Pipeline ID（用于分支）
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class PipelineStage(Base):
@@ -56,8 +56,8 @@ class PipelineStage(Base):
     # 执行顺序
     order = Column(Integer, default=0)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class PipelineExecution(Base):
@@ -85,7 +85,7 @@ class PipelineExecution(Base):
 
     started_at = Column(DateTime)
     completed_at = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class PipelineExecutionLog(Base):
@@ -100,4 +100,4 @@ class PipelineExecutionLog(Base):
     message = Column(Text)
     detail = Column(JSONB)
 
-    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
+    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc))

@@ -87,15 +87,15 @@ async def start_breakdown(
     优化：
     - 配额在任务成功启动后才消耗
     - 使用事务保证数据一致性
-    - 防止重复提交
+    - 防止重复提交（使用 FOR UPDATE 锁）
     - 更新批次状态
     """
-    # 验证批次存在且属于当前用户
+    # 验证批次存在且属于当前用户，并锁定批次记录防止并发提交
     result = await db.execute(
         select(Batch).join(Project).where(
             Batch.id == request.batch_id,
             Project.user_id == current_user.id
-        )
+        ).with_for_update()
     )
     batch = result.scalar_one_or_none()
 
@@ -104,19 +104,19 @@ async def start_breakdown(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="批次不存在或无权访问"
         )
-    
+
     # 获取项目配置（包含模型 ID）
     project_result = await db.execute(
         select(Project).where(Project.id == batch.project_id)
     )
     project = project_result.scalar_one_or_none()
-    
+
     if not project:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="项目不存在"
         )
-    
+
     # 检查项目是否配置了拆解模型
     if not project.breakdown_model_id:
         raise HTTPException(
@@ -153,16 +153,35 @@ async def start_breakdown(
     cancelling_task = cancelling_task_result.scalar_one_or_none()
 
     if cancelling_task:
-        # 检查取消任务是否超时（超过30分钟视为僵尸任务）
-        CANCELLING_TIMEOUT = timedelta(minutes=30)
+        # 检查取消任务是否超时（超过 5 分钟视为僵尸任务，缩短等待时间）
+        CANCELLING_TIMEOUT = timedelta(minutes=5)
         now = datetime.now(timezone.utc)
-        task_age = now - cancelling_task.updated_at
+        # 使用 updated_at，如果不存在则回退到 created_at
+        task_timestamp = getattr(cancelling_task, 'updated_at', None) or cancelling_task.created_at
+        # 确保时区一致性
+        if task_timestamp and task_timestamp.tzinfo is None:
+            task_timestamp = task_timestamp.replace(tzinfo=timezone.utc)
+        task_age = now - task_timestamp if task_timestamp else timedelta(hours=1)  # 默认超时
 
-        if task_age > CANCELLING_TIMEOUT:
-            # 超时的取消任务，自动标记为已取消
-            print(f"检测到超时的取消任务 {cancelling_task.id}（已存在 {task_age}），自动清理")
+        # 先检查 Celery 任务的实际状态
+        celery_task_finished = False
+        if cancelling_task.celery_task_id:
+            try:
+                from celery.result import AsyncResult
+                celery_result = AsyncResult(cancelling_task.celery_task_id, app=celery_app)
+                # Celery 任务已结束的状态
+                if celery_result.state in ('SUCCESS', 'FAILURE', 'REVOKED'):
+                    celery_task_finished = True
+                    print(f"Celery 任务 {cancelling_task.celery_task_id} 已结束，状态: {celery_result.state}")
+            except Exception as e:
+                print(f"检查 Celery 任务状态失败: {e}")
+
+        if celery_task_finished or task_age > CANCELLING_TIMEOUT:
+            # Celery 任务已结束或超时，自动标记为已取消
+            reason = "Celery 任务已结束" if celery_task_finished else f"超时 {task_age}"
+            print(f"检测到僵尸取消任务 {cancelling_task.id}（{reason}），自动清理")
             cancelling_task.status = TaskStatus.CANCELLED
-            cancelling_task.error_message = "任务取消超时，自动标记为已取消"
+            cancelling_task.error_message = f"任务取消完成（{reason}）"
             # 同时更新批次状态为 pending
             batch.breakdown_status = BatchStatus.PENDING
             await db.flush()
@@ -186,6 +205,23 @@ async def start_breakdown(
         failed_tasks = failed_task_result.scalars().all()
         # 注意：不删除失败任务记录，保留用于历史追溯
         # 只是允许创建新任务
+
+    # 检查前置批次是否已完成（强制顺序执行，避免集数编号错乱）
+    # 查询同项目中 start_chapter 更小的批次，检查是否都已完成
+    pending_previous_result = await db.execute(
+        select(Batch).where(
+            Batch.project_id == batch.project_id,
+            Batch.start_chapter < batch.start_chapter,
+            Batch.breakdown_status.not_in([BatchStatus.COMPLETED])
+        ).order_by(Batch.start_chapter).limit(1)
+    )
+    pending_previous_batch = pending_previous_result.scalar_one_or_none()
+
+    if pending_previous_batch:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"请先完成前面的批次拆解（第 {pending_previous_batch.start_chapter}-{pending_previous_batch.end_chapter} 章尚未完成）"
+        )
 
     # 锁定用户记录，防止并发请求导致积分超支
     user_result = await db.execute(
@@ -265,7 +301,8 @@ async def start_breakdown(
         task.celery_task_id = celery_task.id
         
     except Exception as celery_error:
-        # Celery 连接失败，回滚配额和任务
+        # Celery 连接失败，显式返还已扣积分
+        await quota_service.refund_episode_quota(locked_user, 1)
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -727,8 +764,12 @@ async def start_all_breakdowns(
 
     for batch in batches:
         try:
-            # 消耗积分（预扣）
-            await quota_service.consume_credits(locked_user, "breakdown", "剧情拆解")
+            # 消耗积分（预扣），检查返回值
+            consume_result = await quota_service.consume_credits(locked_user, "breakdown", "剧情拆解")
+            if not consume_result:
+                # 积分不足，标记该批次失败并继续处理下一个
+                failed_batches.append(str(batch.id))
+                continue
 
             # 创建AI任务
             task = AITask(
@@ -757,13 +798,15 @@ async def start_all_breakdowns(
                 )
                 task.celery_task_id = celery_task.id
             except Exception as celery_error:
-                # Celery 提交失败，标记任务为失败
+                # Celery 提交失败，返还已扣积分
+                await quota_service.refund_episode_quota(locked_user, 1)
+                # 标记任务为失败
                 import json
                 task.status = TaskStatus.FAILED
                 task.error_message = json.dumps({
                     "code": "CELERY_UNAVAILABLE",
                     "message": "任务队列服务不可用，请稍后重试",
-                    "failed_at": datetime.utcnow().isoformat(),
+                    "failed_at": datetime.now(timezone.utc).isoformat(),
                     "retry_count": 0
                 })
                 batch.breakdown_status = BatchStatus.FAILED
@@ -883,23 +926,43 @@ async def start_continue_breakdown(
     cancelling_task = cancelling_task_result.scalar_one_or_none()
 
     if cancelling_task:
-        # 检查取消任务是否超时（超过30分钟视为僵尸任务）
-        CANCELLING_TIMEOUT = timedelta(minutes=30)
+        # 检查取消任务是否超时（超过 5 分钟视为僵尸任务，与 /start 端点保持一致）
+        CANCELLING_TIMEOUT = timedelta(minutes=5)
         now = datetime.now(timezone.utc)
-        task_age = now - cancelling_task.updated_at
+        # 使用 updated_at，如果不存在则回退到 created_at
+        task_timestamp = getattr(cancelling_task, 'updated_at', None) or cancelling_task.created_at
+        # 确保时区一致性
+        if task_timestamp and task_timestamp.tzinfo is None:
+            task_timestamp = task_timestamp.replace(tzinfo=timezone.utc)
+        task_age = now - task_timestamp if task_timestamp else timedelta(hours=1)  # 默认超时
 
-        if task_age > CANCELLING_TIMEOUT:
-            # 超时的取消任务，自动标记为已取消
-            print(f"[continue_all] 检测到超时的取消任务 {cancelling_task.id}，自动清理")
+        # 先检查 Celery 任务的实际状态
+        celery_task_finished = False
+        if cancelling_task.celery_task_id:
+            try:
+                from celery.result import AsyncResult
+                celery_result = AsyncResult(cancelling_task.celery_task_id, app=celery_app)
+                # Celery 任务已结束的状态
+                if celery_result.state in ('SUCCESS', 'FAILURE', 'REVOKED'):
+                    celery_task_finished = True
+                    print(f"[continue] Celery 任务 {cancelling_task.celery_task_id} 已结束，状态: {celery_result.state}")
+            except Exception as e:
+                print(f"[continue] 检查 Celery 任务状态失败: {e}")
+
+        if celery_task_finished or task_age > CANCELLING_TIMEOUT:
+            # Celery 任务已结束或超时，自动标记为已取消
+            reason = "Celery 任务已结束" if celery_task_finished else f"超时 {task_age}"
+            print(f"[continue] 检测到僵尸取消任务 {cancelling_task.id}（{reason}），自动清理")
             cancelling_task.status = TaskStatus.CANCELLED
-            cancelling_task.error_message = "任务取消超时，自动标记为已取消"
+            cancelling_task.error_message = f"任务取消完成（{reason}）"
             batch.breakdown_status = BatchStatus.PENDING
             await db.flush()
+            print(f"[continue] 已将任务 {cancelling_task.id} 标记为 cancelled，批次状态更新为 pending")
         else:
             # 取消中的任务还未超时
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"该批次有任务正在取消中，请稍候再试"
+                detail=f"该批次有任务正在取消中，请稍候再试（已等待 {task_age.seconds // 60} 分钟）"
             )
 
     # 如果批次状态是 failed，允许重新提交
@@ -952,7 +1015,8 @@ async def start_continue_breakdown(
         )
         task.celery_task_id = celery_task.id
     except Exception:
-        # Celery 连接失败，回滚配额和任务
+        # Celery 连接失败，显式返还已扣积分
+        await quota_service.refund_episode_quota(locked_user, 1)
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1021,9 +1085,7 @@ async def get_breakdown_results(
 ):
     """获取拆解结果
 
-    根据 format_version 返回不同结构：
-    - format_version == 2: 返回 plot_points（新统一格式）
-    - format_version == 1: 返回 6 个字段（旧格式）
+    返回统一的结构化文本格式（plot_points）
     """
     from app.models.plot_breakdown import PlotBreakdown
 
@@ -1042,39 +1104,19 @@ async def get_breakdown_results(
             detail="拆解结果不存在"
         )
 
-    # 根据 format_version 返回不同结构
-    if breakdown.format_version == 2:
-        # 新格式：返回 plot_points
-        return {
-            "id": str(breakdown.id),
-            "batch_id": str(breakdown.batch_id),
-            "format_version": 2,
-            "plot_points": breakdown.plot_points,
-            "qa_status": breakdown.qa_status,
-            "qa_score": breakdown.qa_score,
-            "qa_report": breakdown.qa_report,
-            "qa_retry_count": breakdown.qa_retry_count,
-            "used_adapt_method_id": breakdown.used_adapt_method_id,
-            "created_at": breakdown.created_at.isoformat() if breakdown.created_at else None
-        }
-    else:
-        # 旧格式：返回 6 个字段
-        return {
-            "id": str(breakdown.id),
-            "batch_id": str(breakdown.batch_id),
-            "format_version": 1,
-            "conflicts": breakdown.conflicts,
-            "plot_hooks": breakdown.plot_hooks,
-            "characters": breakdown.characters,
-            "scenes": breakdown.scenes,
-            "emotions": breakdown.emotions,
-            "episodes": breakdown.episodes,
-            "consistency_status": breakdown.consistency_status,
-            "consistency_score": breakdown.consistency_score,
-            "qa_status": breakdown.qa_status,
-            "qa_report": breakdown.qa_report,
-            "created_at": breakdown.created_at.isoformat() if breakdown.created_at else None
-        }
+    # 返回统一格式（plot_points）
+    return {
+        "id": str(breakdown.id),
+        "batch_id": str(breakdown.batch_id),
+        "format_version": breakdown.format_version,
+        "plot_points": breakdown.plot_points,
+        "qa_status": breakdown.qa_status,
+        "qa_score": breakdown.qa_score,
+        "qa_report": breakdown.qa_report,
+        "qa_retry_count": breakdown.qa_retry_count,
+        "used_adapt_method_id": breakdown.used_adapt_method_id,
+        "created_at": breakdown.created_at.isoformat() if breakdown.created_at else None
+    }
 
 
 @router.patch("/results/{batch_id}/plot-points/{point_id}/status")
@@ -1086,8 +1128,6 @@ async def update_plot_point_status(
     db: AsyncSession = Depends(get_db)
 ):
     """更新剧情点状态（used/unused）
-
-    仅适用于 format_version == 2 的拆解结果。
     """
     from app.models.plot_breakdown import PlotBreakdown
 
@@ -1104,13 +1144,6 @@ async def update_plot_point_status(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="拆解结果不存在"
-        )
-
-    # 检查是否为新格式
-    if breakdown.format_version != 2:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="此操作仅适用于 format_version == 2 的拆解结果"
         )
 
     # 检查 plot_points 是否存在
@@ -1321,8 +1354,12 @@ async def start_batch_breakdown(
 
     for batch in batches:
         try:
-            # 消耗积分（预扣）
-            await quota_service.consume_credits(locked_user, "breakdown", "剧情拆解")
+            # 消耗积分（预扣），检查返回值
+            consume_result = await quota_service.consume_credits(locked_user, "breakdown", "剧情拆解")
+            if not consume_result:
+                # 积分不足，标记该批次失败并继续处理下一个
+                failed_batches.append(str(batch.id))
+                continue
 
             # 创建AI任务
             task = AITask(
@@ -1349,7 +1386,8 @@ async def start_batch_breakdown(
                 )
                 task.celery_task_id = celery_task.id
             except Exception:
-                # Celery 提交失败
+                # Celery 提交失败，返还已扣积分
+                await quota_service.refund_episode_quota(locked_user, 1)
                 failed_batches.append(str(batch.id))
                 continue
 
@@ -1468,11 +1506,12 @@ async def get_batch_progress(
             # 解析错误信息
             if task.error_message:
                 try:
-                    error_data = eval(task.error_message) if task.error_message.startswith('{') else None
+                    import json
+                    error_data = json.loads(task.error_message) if task.error_message.startswith('{') else None
                     if error_data and isinstance(error_data, dict):
                         task_detail["error_code"] = error_data.get("code")
                         task_detail["error_info"] = error_data
-                except:
+                except (json.JSONDecodeError, TypeError):
                     pass
 
         task_details.append(task_detail)
@@ -1492,7 +1531,7 @@ async def get_batch_progress(
         "overall_progress": overall_progress,
         "status_summary": status_counts,
         "task_details": task_details,
-        "last_updated": datetime.utcnow().isoformat()
+        "last_updated": datetime.now(timezone.utc).isoformat()
     }
 
 
@@ -1893,6 +1932,7 @@ async def stop_breakdown_task(
         )
 
     cancelled_count = 0  # 取消的任务数量
+    original_status = task.status  # 保存原始状态，用于判断是否需要扣 Token
 
     try:
         # 1. 使用 Celery revoke 停止任务（如果任务已在队列中）
@@ -1900,10 +1940,12 @@ async def stop_breakdown_task(
             celery_app.control.revoke(task.celery_task_id, terminate=True)
             print(f"已撤销 Celery 任务: {task.celery_task_id}")
 
-        # 2. 标记任务正在取消
+        # 2. 标记任务正在取消，并设置标记防止 Celery 回调重复扣费
         task.status = TaskStatus.CANCELLING
         task.current_step = "正在停止"
         task.error_message = None  # 清除错误信息
+        # 在 result 字段中标记已在 API 端处理过积分，防止 Celery 回调重复扣费
+        task.result = {"api_handled_credits": True}
         cancelled_count += 1
 
         # 3. 获取批次信息
@@ -1950,49 +1992,62 @@ async def stop_breakdown_task(
             if subsequent_tasks:
                 print(f"已取消 {len(subsequent_tasks)} 个后续排队任务")
 
-        # 5. 返还配额（使用同步方法，避免 greenlet 问题）
-        try:
-            from app.core.database import SyncSessionLocal
-            sync_db = SyncSessionLocal()
-            try:
-                refund_episode_quota_sync(sync_db, task.project_id, 1)
-                sync_db.commit()
-                print(f"已返还配额: project_id={task.project_id}")
-            finally:
-                sync_db.close()
-        except Exception as refund_error:
-            print(f"返还配额失败: {refund_error}")
-
-        # 6. 扣除已消耗的 Token 费用（即使任务被停止，也需要扣费）
-        token_deducted = 0
-        try:
-            from app.core.credits import consume_token_credits_sync
-            sync_db = SyncSessionLocal()
-            try:
-                token_result = consume_token_credits_sync(
-                    db=sync_db,
-                    user_id=str(current_user.id),
-                    task_id=task_id,
-                    task_type="breakdown"
-                )
-                if token_result.get("token_credits", 0) > 0:
-                    sync_db.commit()
-                    token_deducted = token_result.get("token_credits", 0)
-                    print(f"已扣除 Token 费用: {token_deducted} 积分")
-            finally:
-                sync_db.close()
-        except Exception as token_error:
-            print(f"扣除 Token 费用失败: {token_error}")
-
-        # 7. 提交事务
+        # 5. 先提交任务状态变更（确保状态更新成功）
         await db.commit()
 
+        # 6. 处理积分（在主事务提交后进行，使用独立事务）
+        # 注意：积分操作失败不应影响任务取消的结果
+        token_deducted = 0
+        refund_success = False
+
+        # 获取任务的 model_config_id，用于正确的 Token 计费
+        model_config_id = task.config.get("model_config_id") if task.config else None
+
+        try:
+            from app.core.database import SyncSessionLocal
+            from app.core.credits import consume_token_credits_sync
+
+            sync_db = SyncSessionLocal()
+            try:
+                # 6.1 如果任务已开始执行，先扣除 Token 费用
+                if original_status in [TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS]:
+                    token_result = consume_token_credits_sync(
+                        db=sync_db,
+                        user_id=str(current_user.id),
+                        task_id=task_id,
+                        task_type="breakdown",
+                        model_config_id=model_config_id
+                    )
+                    token_deducted = token_result.get("token_credits", 0)
+                    if token_deducted > 0:
+                        sync_db.commit()
+                        print(f"已扣除 Token 费用: {token_deducted} 积分")
+                    else:
+                        # 无 Token 消耗，返还预扣积分
+                        refund_episode_quota_sync(sync_db, str(current_user.id), 1)
+                        sync_db.commit()
+                        refund_success = True
+                        print(f"无 Token 消耗，已返还配额: user_id={current_user.id}")
+                else:
+                    # QUEUED 状态的任务还没开始执行，直接返还积分
+                    refund_episode_quota_sync(sync_db, str(current_user.id), 1)
+                    sync_db.commit()
+                    refund_success = True
+                    print(f"任务未执行，已返还配额: user_id={current_user.id}")
+            finally:
+                sync_db.close()
+        except Exception as credits_error:
+            print(f"积分处理失败: {credits_error}")
+            # 积分处理失败不影响任务取消结果，但需要记录日志
+
         # 构建返回消息
-        message_parts = [f"已停止任务"]
+        message_parts = ["已停止任务"]
         if cancelled_count > 1:
             message_parts.append(f"（含 {cancelled_count - 1} 个后续排队任务）")
         if token_deducted > 0:
             message_parts.append(f"，已扣除 Token 费用 {token_deducted} 积分")
+        elif refund_success:
+            message_parts.append("，已返还积分")
         message = "".join(message_parts)
 
         return {

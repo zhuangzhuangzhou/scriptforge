@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Integer, Boolean, ForeignKey, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID
 from app.core.database import Base
@@ -26,5 +26,5 @@ class Batch(Base):
     ai_processed = Column(Boolean, default=False)
     context_size = Column(Integer, default=10)  # 该批次推荐的上下文大小
     
-    created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
-    updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(TIMESTAMP(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

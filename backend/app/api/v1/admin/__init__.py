@@ -34,8 +34,22 @@ router = APIRouter()
 from app.api.v1.admin_core import router as admin_base_router
 router.include_router(admin_base_router, tags=["管理端基础功能"])
 
-# 导入并注册模型管理路由
-from app.api.v1.admin.models_router import router as models_router
-router.include_router(models_router, prefix="/models", tags=["模型管理"])
+# 导入并注册模型管理路由 - 统一放在 /models 前缀下
+from app.api.v1.admin.model_providers import router as providers_router
+from app.api.v1.admin.models import router as models_router
+from app.api.v1.admin.credentials import router as credentials_router
+from app.api.v1.admin.pricing import router as pricing_router
+from app.api.v1.admin.system_config import router as system_config_router
+
+# 创建模型管理子路由器，统一前缀为 /models
+models_admin_router = APIRouter()
+models_admin_router.include_router(providers_router, prefix="/providers", tags=["模型提供商管理"])
+models_admin_router.include_router(models_router, prefix="/models", tags=["模型配置"])
+models_admin_router.include_router(credentials_router, prefix="/credentials", tags=["凭证管理"])
+models_admin_router.include_router(pricing_router, prefix="/pricing", tags=["计费规则管理"])
+models_admin_router.include_router(system_config_router, prefix="/system-config", tags=["系统配置管理"])
+
+# 注册到主路由，前缀为 /models
+router.include_router(models_admin_router, prefix="/models", tags=["模型管理"])
 
 __all__ = ["check_admin", "router"]

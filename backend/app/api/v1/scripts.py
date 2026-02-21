@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, Field
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from app.core.database import get_db
 from app.models.user import User
 from app.models.batch import Batch
@@ -127,7 +127,7 @@ async def start_episode_script(
         raise HTTPException(status_code=404, detail="拆解结果不存在")
 
     # 验证集数存在于 plot_points 中
-    if breakdown.format_version == 2 and breakdown.plot_points:
+    if breakdown.plot_points:
         episode_exists = any(
             pp.get("episode") == request.episode_number
             for pp in breakdown.plot_points
@@ -139,13 +139,13 @@ async def start_episode_script(
     project_result = await db.execute(select(Project).where(Project.id == breakdown.project_id))
     project = project_result.scalar_one_or_none()
 
-    # 检查积分（纯积分制）
+    # 检查积分（纯积分制）- 只是在任务启动前检查，Celery 任务成功完成后才实际扣除
     quota_service = QuotaService(db)
     credits_check = await quota_service.check_credits(current_user, "script")
     if not credits_check["allowed"]:
         raise HTTPException(status_code=403, detail=f"积分不足: 需要 {credits_check['cost']}，余额 {credits_check['balance']}")
 
-    await quota_service.consume_credits(current_user, "script", "剧本生成")
+    # 注意：积分在实际扣除在 Celery 任务完成后执行 (script_tasks.py)
 
     # 创建任务
     task_config = {
@@ -302,7 +302,7 @@ async def start_batch_scripts(
     project_result = await db.execute(select(Project).where(Project.id == breakdown.project_id))
     project = project_result.scalar_one_or_none()
 
-    # 检查积分（纯积分制）
+    # 检查积分（纯积分制）- 只是检查，Celery 任务成功完成后才实际扣除
     quota_service = QuotaService(db)
     required = len(request.episode_numbers)
     required_credits = required * 50  # script 每次 50 积分
@@ -315,7 +315,7 @@ async def start_batch_scripts(
     from app.tasks.script_tasks import run_episode_script_task
 
     for ep_num in request.episode_numbers:
-        await quota_service.consume_credits(current_user, "script", "剧本生成")
+        # 注意：积分在实际扣除在 Celery 任务完成后执行 (script_tasks.py)
 
         task = AITask(
             project_id=breakdown.project_id,
@@ -374,7 +374,7 @@ async def update_script(
         script.content["full_script"] = request.full_script
         script.word_count = len(request.full_script)
 
-    script.updated_at = datetime.utcnow()
+    script.updated_at = datetime.now(timezone.utc)
     await db.commit()
 
     return {"message": "更新成功", "script_id": script_id}
@@ -399,7 +399,7 @@ async def approve_script(
         raise HTTPException(status_code=404, detail="剧本不存在")
 
     script.status = "approved"
-    script.approved_at = datetime.utcnow()
+    script.approved_at = datetime.now(timezone.utc)
     await db.commit()
 
     return {"message": "审核通过", "script_id": script_id, "status": "approved"}

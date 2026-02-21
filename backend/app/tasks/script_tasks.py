@@ -58,6 +58,13 @@ def run_episode_script_task(
 
         update_task_progress_sync(db, task_id, status=TaskStatus.RUNNING, progress=0, current_step="初始化剧本创作任务... (0%)")
 
+        # 发布任务开始日志
+        if log_publisher:
+            log_publisher.publish_info(
+                task_id,
+                f"🎬 开始生成第 {episode_number} 集剧本..."
+            )
+
         task_record = db.query(AITask).filter(AITask.id == task_id).first()
         task_config = task_record.config if task_record else {}
 
@@ -76,6 +83,14 @@ def run_episode_script_task(
         )
 
         update_task_progress_sync(db, task_id, status=TaskStatus.COMPLETED, progress=100, current_step="剧本创作完成 (100%)")
+
+        # 发布任务完成日志
+        if log_publisher:
+            log_publisher.publish_task_complete(
+                task_id,
+                status=TaskStatus.COMPLETED,
+                message=f"✅ 第 {episode_number} 集剧本生成完成！"
+            )
 
         # 扣除积分（任务完成后扣费）
         credits_result = consume_credits_for_task_sync(db, user_id, "script", task_id)
@@ -114,12 +129,21 @@ def _execute_episode_script_sync(
 
     # 1. 加载剧情拆解
     update_task_progress_sync(db, task_id, progress=5, current_step="加载剧情拆解结果... (5%)")
+    if log_publisher:
+        log_publisher.publish_step_start(task_id, "load_breakdown", "加载剧情拆解结果")
+
     breakdown = db.query(PlotBreakdown).filter(PlotBreakdown.id == breakdown_id).first()
     if not breakdown:
         raise AITaskException(code="DATA_NOT_FOUND", message=f"剧情拆解 {breakdown_id} 不存在")
 
+    if log_publisher:
+        log_publisher.publish_step_end(task_id, "load_breakdown", {"status": "completed", "plot_points_count": len(breakdown.plot_points or [])})
+
     # 2. 筛选本集剧情点
     update_task_progress_sync(db, task_id, progress=10, current_step=f"筛选第 {episode_number} 集剧情点... (10%)")
+    if log_publisher:
+        log_publisher.publish_step_start(task_id, "filter_plot_points", "筛选本集剧情点")
+
     episode_plot_points = [
         pp for pp in (breakdown.plot_points or [])
         if isinstance(pp, dict) and pp.get("episode") == episode_number
@@ -127,8 +151,14 @@ def _execute_episode_script_sync(
     if not episode_plot_points:
         raise AITaskException(code="NO_PLOT_POINTS", message=f"第 {episode_number} 集没有剧情点")
 
+    if log_publisher:
+        log_publisher.publish_step_end(task_id, "filter_plot_points", {"status": "completed", "episode": episode_number, "count": len(episode_plot_points)})
+
     # 3. 加载章节原文
     update_task_progress_sync(db, task_id, progress=15, current_step="加载章节原文... (15%)")
+    if log_publisher:
+        log_publisher.publish_step_start(task_id, "load_chapters", "加载章节原文")
+
     source_chapters = {pp.get("source_chapter") for pp in episode_plot_points if pp.get("source_chapter")}
     chapters = db.query(Chapter).filter(
         Chapter.batch_id == breakdown.batch_id,
@@ -136,14 +166,26 @@ def _execute_episode_script_sync(
     ).order_by(Chapter.chapter_number).limit(10).all()
     chapters_text = "\n\n".join([f"## 第 {ch.chapter_number} 章\n{ch.content or ''}" for ch in chapters])
 
+    if log_publisher:
+        log_publisher.publish_step_end(task_id, "load_chapters", {"status": "completed", "chapters_loaded": len(chapters)})
+
     # 4. 加载 AI 资源
     update_task_progress_sync(db, task_id, progress=20, current_step="加载 AI 资源... (20%)")
+    if log_publisher:
+        log_publisher.publish_step_start(task_id, "load_resources", "加载 AI 资源")
+
     novel_type = task_config.get("novel_type")
     resources = load_layered_resources_sync(db, stage="script", novel_type=novel_type)
     adapt_method = "\n\n---\n\n".join([v for v in [resources.get("core"), resources.get("script"), resources.get("type")] if v])
 
+    if log_publisher:
+        log_publisher.publish_step_end(task_id, "load_resources", {"status": "completed"})
+
     # 5. 生成剧本
     update_task_progress_sync(db, task_id, progress=30, current_step=f"生成第 {episode_number} 集剧本... (30%)")
+    if log_publisher:
+        log_publisher.publish_step_start(task_id, "generate_script", "生成剧本内容")
+
     skill_executor = SimpleSkillExecutor(db, model_adapter, log_publisher)
 
     try:
@@ -160,17 +202,89 @@ def _execute_episode_script_sync(
     except Exception as e:
         raise AITaskException(code="SKILL_EXECUTION_ERROR", message=f"剧本生成失败: {str(e)}")
 
+    # 剧本生成完成
+    if log_publisher:
+        log_publisher.publish_step_end(
+            task_id,
+            "generate_script",
+            {"status": "completed", "word_count": len(script_result.get("full_script", "") if isinstance(script_result, dict) else 0)}
+        )
+
     update_task_progress_sync(db, task_id, progress=70, current_step="剧本生成完成 (70%)")
 
-    # 6. 保存结果
+    # 6. 保存结果到数据库
     update_task_progress_sync(db, task_id, progress=90, current_step="保存剧本... (90%)")
+    if log_publisher:
+        log_publisher.publish_info(task_id, "💾 保存剧本到数据库...")
 
+    from app.models.script import Script
+
+    # 提取剧本数据
     full_script = script_result.get("full_script", "") if isinstance(script_result, dict) else str(script_result)
     title = script_result.get("title", f"第 {episode_number} 集") if isinstance(script_result, dict) else f"第 {episode_number} 集"
+    structure = script_result.get("structure", {}) if isinstance(script_result, dict) else {}
+    scenes = script_result.get("scenes", []) if isinstance(script_result, dict) else []
+    characters = script_result.get("characters", []) if isinstance(script_result, dict) else []
+    hook_type = script_result.get("hook_type", "") if isinstance(script_result, dict) else ""
+
+    # 计算字数和场景数
+    word_count = len(full_script)
+    scene_count = len(scenes)
+
+    # 检查是否已存在该集剧本
+    existing_script = db.query(Script).filter(
+        Script.plot_breakdown_id == breakdown_id,
+        Script.episode_number == episode_number
+    ).first()
+
+    if existing_script:
+        # 更新现有剧本
+        existing_script.title = title
+        existing_script.content = {
+            "structure": structure,
+            "full_script": full_script,
+            "scenes": scenes,
+            "characters": characters,
+            "hook_type": hook_type
+        }
+        existing_script.word_count = word_count
+        existing_script.scene_count = scene_count
+        existing_script.status = "draft"
+        script_id = str(existing_script.id)
+        if log_publisher:
+            log_publisher.publish_info(task_id, f"✏️ 更新已存在的剧本 (ID: {script_id[:8]}...)")
+    else:
+        # 创建新剧本
+        new_script = Script(
+            batch_id=breakdown.batch_id,
+            project_id=project_id,
+            plot_breakdown_id=breakdown_id,
+            episode_number=episode_number,
+            title=title,
+            content={
+                "structure": structure,
+                "full_script": full_script,
+                "scenes": scenes,
+                "characters": characters,
+                "hook_type": hook_type
+            },
+            word_count=word_count,
+            scene_count=scene_count,
+            status="draft"
+        )
+        db.add(new_script)
+        db.flush()
+        script_id = str(new_script.id)
+        if log_publisher:
+            log_publisher.publish_success(task_id, f"✅ 剧本已保存 (ID: {script_id[:8]}...)")
+
+    db.commit()
 
     return {
         "episode_number": episode_number,
         "title": title,
-        "word_count": len(full_script),
+        "word_count": word_count,
+        "scene_count": scene_count,
+        "script_id": script_id,
         "script": script_result
     }
