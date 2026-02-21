@@ -127,6 +127,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const [breakdownResult, setBreakdownResult] = useState<PlotBreakdown | null>(null);
     const [breakdownLoading, setBreakdownLoading] = useState(false);
     const [breakdownTaskId, setBreakdownTaskId] = useState<string | null>(null);
+    const [executingBatchId, setExecutingBatchId] = useState<string | null>(null);  // 当前正在执行的批次 ID
     const [breakdownProgress, setBreakdownProgress] = useState(0);
     const [breakdownCurrentStep, setBreakdownCurrentStep] = useState('');
     const [breakdownCompleted, setBreakdownCompleted] = useState(false);
@@ -145,11 +146,16 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const [isBatchRunning, setIsBatchRunning] = useState(false);
 
     useEffect(() => {
+        // 只有在控制台打开且没有正在执行的任务时才重置进度
+        // 但如果已完成（进度为100），则保持显示完成状态
         if (showConsole && !breakdownTaskId) {
-            setBreakdownProgress(0);
-            setBreakdownCurrentStep('');
+            // 如果进度已经是100（任务完成），不重置
+            if (breakdownProgress < 100) {
+                setBreakdownProgress(0);
+                setBreakdownCurrentStep('');
+            }
         }
-    }, [showConsole, breakdownTaskId]);
+    }, [showConsole, breakdownTaskId, breakdownProgress]);
 
     // 停止任务状态
     const [isStopping, setIsStopping] = useState(false);
@@ -194,6 +200,50 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         return { selectedBreakdownSkills: [], breakdownConfig: [] };
     };
 
+    // 获取拆解结果（带重试机制和指数退避）
+    const fetchBreakdownResults = async (batchId: string, retryCount = 0) => {
+        if (retryCount === 0) {
+            setBreakdownLoading(true);
+        }
+
+        console.log(`[fetchBreakdownResults] 开始获取拆解结果, batchId: ${batchId}, 重试次数: ${retryCount}`);
+
+        try {
+            const res = await breakdownApi.getBreakdownResults(batchId);
+            console.log('[fetchBreakdownResults] 获取成功:', res.data);
+            setBreakdownResult(res.data);
+            setBreakdownLoading(false);
+        } catch (err: any) {
+            console.error('[fetchBreakdownResults] 获取失败:', err);
+            console.error('[fetchBreakdownResults] 错误详情:', {
+                status: err.response?.status,
+                statusText: err.response?.statusText,
+                data: err.response?.data,
+                message: err.message
+            });
+
+            // 如果是 404 或 500，且重试次数未达上限，自动重试
+            if ((err.response?.status === 404 || err.response?.status === 500) && retryCount < 5) {
+                const retryDelay = Math.pow(2, retryCount) * 1000; // 指数退避：1s, 2s, 4s, 8s, 16s
+                console.log(`[fetchBreakdownResults] ${retryDelay / 1000}秒后重试 (${retryCount + 1}/5)...`);
+                setTimeout(() => {
+                    fetchBreakdownResults(batchId, retryCount + 1);
+                }, retryDelay);
+            } else if (err.response?.status === 401) {
+                // 认证失败
+                console.error('[fetchBreakdownResults] 认证失败，请重新登录');
+                message.error('认证失败，请重新登录');
+                setBreakdownResult(null);
+                setBreakdownLoading(false);
+            } else {
+                console.error('[fetchBreakdownResults] 获取拆解结果失败，已达最大重试次数');
+                message.error('获取拆解结果失败，请刷新页面重试');
+                setBreakdownResult(null);
+                setBreakdownLoading(false);
+            }
+        }
+    };
+
     // Method View Modal State
     const [methodViewModalOpen, setMethodViewModalOpen] = useState(false);
     const [viewingMethodId, setViewingMethodId] = useState<string | null>(null);
@@ -233,14 +283,14 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             },
             onComplete: () => {
                 setBreakdownTaskId(null);
+                setExecutingBatchId(null);  // 清空当前执行批次
                 message.success('拆解完成');
-                if (selectedBatch) {
-                    fetchBreakdownResults(selectedBatch.id);
-                }
+                // 由 useEffect 统一触发 fetchBreakdownResults
                 fetchBatches();
             },
             onError: (error) => {
                 setBreakdownTaskId(null);
+                setExecutingBatchId(null);  // 清空当前执行批次
                 const parsedError = parseErrorMessage(error);
                 showError(parsedError);
             },
@@ -268,18 +318,20 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         if (breakdownCompleted) return;
         setBreakdownCompleted(true);
         setBreakdownTaskId(null);
+        setExecutingBatchId(null);  // 清空当前执行批次
         setBreakdownProgress(100);
         setBreakdownCurrentStep('已完成');
         if (messageText) {
             addLog('formatted', messageText);
         }
         message.success('拆解完成');
+        // 只更新 selectedBatch 状态，由 useEffect 统一触发 fetchBreakdownResults
+        // 避免多个地方同时调用导致重复请求
         if (selectedBatch) {
             setSelectedBatch({
                 ...selectedBatch,
                 breakdown_status: BATCH_STATUS.COMPLETED
             });
-            fetchBreakdownResults(selectedBatch.id);
         }
         fetchBatches();
     };
@@ -346,7 +398,8 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         }
     );
 
-    // 监听 selectedBatch 变化，自动加载拆解结果
+    // 监听 selectedBatch 变化，只处理状态同步和清理
+    // 不触发 fetchBreakdownResults（避免重复调用）
     useEffect(() => {
         if (!selectedBatch) return;
 
@@ -358,17 +411,30 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
         if (!isRunning) {
             setBreakdownTaskId(null);
-        }
-
-        if (status === BATCH_STATUS.COMPLETED) {
-            console.log('[Workspace] 批次选择变化，加载拆解结果:', selectedBatch.id);
-            setBreakdownLoading(true);
-            fetchBreakdownResults(selectedBatch.id);
-        } else {
-            console.log('[Workspace] 批次选择变化，状态:', status, '- 不加载拆解结果');
-            setBreakdownLoading(false);
+            setExecutingBatchId(null);  // 清空当前执行批次
         }
     }, [selectedBatch?.id, selectedBatch?.breakdown_status]);
+
+    // 追踪上一个状态，用 ref 避免 useEffect 循环触发
+    const prevBatchStatusRef = React.useRef<string | null>(null);
+
+    // 监听批次状态变化，当变成 COMPLETED 时加载拆解结果
+    useEffect(() => {
+        if (!selectedBatch) return;
+
+        const currentStatus = selectedBatch.breakdown_status;
+        const prevStatus = prevBatchStatusRef.current;
+
+        // 只有当状态从非 COMPLETED 变成 COMPLETED 时才加载结果
+        if (currentStatus === BATCH_STATUS.COMPLETED && prevStatus !== BATCH_STATUS.COMPLETED) {
+            console.log('[Workspace] 批次状态变为完成，加载拆解结果:', selectedBatch.id);
+            setBreakdownLoading(true);
+            fetchBreakdownResults(selectedBatch.id);
+        }
+
+        // 更新上一个状态
+        prevBatchStatusRef.current = currentStatus;
+    }, [selectedBatch?.breakdown_status, selectedBatch?.id]);
 
     // 批次列表更新时，同步选中批次状态（避免完成后仍显示停止按钮）
     useEffect(() => {
@@ -376,12 +442,10 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         const latest = batches.find(b => b.id === selectedBatch.id);
         if (!latest) return;
         if (latest.breakdown_status !== selectedBatch.breakdown_status) {
+            console.log('[Workspace] 批次状态变化，同步选中批次状态:', latest.breakdown_status);
             setSelectedBatch(latest);
         }
-        if (latest.breakdown_status === BATCH_STATUS.COMPLETED && breakdownTaskId) {
-            setBreakdownTaskId(null);
-        }
-    }, [batches, selectedBatch?.id, selectedBatch?.breakdown_status, breakdownTaskId]);
+    }, [batches, selectedBatch?.id]);
 
     // 处理 processing/queued 状态但缺少 taskId 的情况
     useEffect(() => {
@@ -455,8 +519,9 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                         pollingIntervalRef.current = null;
                     }
                     setBreakdownTaskId(null);
+                    setExecutingBatchId(null);  // 清空当前执行批次
                     message.success('拆解完成');
-                    fetchBreakdownResults(batchId);
+                    // 由 useEffect 统一触发 fetchBreakdownResults
                     fetchBatches();
                     return;
                 }
@@ -468,6 +533,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                         pollingIntervalRef.current = null;
                     }
                     setBreakdownTaskId(null);
+                    setExecutingBatchId(null);  // 清空当前执行批次
 
                     const errorMsg = res.data.error_message || '拆解失败';
                     const parsedError = parseErrorMessage(errorMsg);
@@ -847,62 +913,6 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         URL.revokeObjectURL(url);
     };
 
-    // 监听 Tab 切换加载数据
-    useEffect(() => {
-        if (activeTab === 'SOURCE') {
-            fetchChapters();
-        }
-        if (activeTab === 'PLOT') {
-            // 进入 PLOT 页面时，先创建批次（幂等），再获取批次列表
-            createBatchesAndFetch();
-        }
-    }, [activeTab, projectId]);
-
-
-    // 获取拆解结果（带重试机制和指数退避）
-    const fetchBreakdownResults = async (batchId: string, retryCount = 0) => {
-        if (retryCount === 0) {
-            setBreakdownLoading(true);
-        }
-
-        console.log(`[fetchBreakdownResults] 开始获取拆解结果, batchId: ${batchId}, 重试次数: ${retryCount}`);
-
-        try {
-            const res = await breakdownApi.getBreakdownResults(batchId);
-            console.log('[fetchBreakdownResults] 获取成功:', res.data);
-            setBreakdownResult(res.data);
-            setBreakdownLoading(false);
-        } catch (err: any) {
-            console.error('[fetchBreakdownResults] 获取失败:', err);
-            console.error('[fetchBreakdownResults] 错误详情:', {
-                status: err.response?.status,
-                statusText: err.response?.statusText,
-                data: err.response?.data,
-                message: err.message
-            });
-
-            // 如果是 404 或 500，且重试次数未达上限，自动重试
-            if ((err.response?.status === 404 || err.response?.status === 500) && retryCount < 5) {
-                const retryDelay = Math.pow(2, retryCount) * 1000; // 指数退避：1s, 2s, 4s, 8s, 16s
-                console.log(`[fetchBreakdownResults] ${retryDelay / 1000}秒后重试 (${retryCount + 1}/5)...`);
-                setTimeout(() => {
-                    fetchBreakdownResults(batchId, retryCount + 1);
-                }, retryDelay);
-            } else if (err.response?.status === 401) {
-                // 认证失败
-                console.error('[fetchBreakdownResults] 认证失败，请重新登录');
-                message.error('认证失败，请重新登录');
-                setBreakdownResult(null);
-                setBreakdownLoading(false);
-            } else {
-                console.error('[fetchBreakdownResults] 获取拆解结果失败，已达最大重试次数');
-                message.error('获取拆解结果失败，请刷新页面重试');
-                setBreakdownResult(null);
-                setBreakdownLoading(false);
-            }
-        }
-    };
-
     // 启动拆解任务 - 弹出模式选择弹窗
     const handleStartBreakdownClick = (batchId: string) => {
         setPendingBreakdownBatchId(batchId);
@@ -934,6 +944,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 executionMode: mode  // 传递执行模式
             });
             setBreakdownTaskId(res.data.task_id);
+            setExecutingBatchId(batchId);  // 记录当前正在执行的批次
             message.info('拆解任务已启动');
 
             // 刷新批次列表，显示当前正在拆解的批次
@@ -1159,6 +1170,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             message.success(successMsg);
 
             setBreakdownTaskId(null);
+            setExecutingBatchId(null);  // 清空当前执行批次
             setBreakdownProgress(0);
             setShowStopConfirmModal(false);
             // 刷新批次列表以更新状态
@@ -1628,7 +1640,12 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     currentStep={breakdownCurrentStep}
                     currentRound={currentRound}
                     totalRounds={totalRounds}
-                    batchNumber={selectedBatch?.batch_number || 0}
+                    batchNumber={(() => {
+                        // 优先使用正在执行的批次 ID，如果没有则使用选中的批次
+                        const activeBatchId = executingBatchId || selectedBatch?.id;
+                        const activeBatch = batches.find(b => b.id === activeBatchId);
+                        return activeBatch?.batch_number || 0;
+                    })()}
                     onClose={() => setShowConsole(false)}
                 />
 
