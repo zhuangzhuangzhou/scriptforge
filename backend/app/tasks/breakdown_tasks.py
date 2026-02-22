@@ -44,6 +44,102 @@ CELERY_TASK_CONFIG = {
 }
 
 
+def _trigger_next_task_sync(db: Session, completed_task_id: str, project_id: str, user_id: str):
+    """触发下一个批次的拆解任务（自动连续拆解模式）
+
+    当一个批次完成后，自动查找下一个待拆解的批次并启动。
+    这是"全部拆解"功能的核心逻辑。
+
+    Args:
+        db: 数据库会话
+        completed_task_id: 已完成的任务ID
+        project_id: 项目ID
+        user_id: 用户ID
+    """
+    try:
+        # 获取刚完成的任务信息
+        completed_task = db.query(AITask).filter(AITask.id == completed_task_id).first()
+        if not completed_task:
+            logger.error(f"未找到已完成的任务: {completed_task_id}")
+            return
+
+        # 检查是否是自动连续拆解模式
+        task_config = completed_task.config or {}
+        auto_continue = task_config.get("auto_continue", False)
+
+        if not auto_continue:
+            logger.info(f"任务 {completed_task_id} 不是自动连续拆解模式，跳过触发下一个批次")
+            return
+
+        # 获取当前批次信息
+        current_batch = db.query(Batch).filter(Batch.id == completed_task.batch_id).first()
+        if not current_batch:
+            logger.error(f"未找到当前批次: {completed_task.batch_id}")
+            return
+
+        current_batch_number = current_batch.batch_number
+        logger.info(f"当前批次 {current_batch_number} 已完成，查找下一个批次...")
+
+        # 查找下一个待拆解的批次（按 batch_number 顺序）
+        next_batch = db.query(Batch).filter(
+            Batch.project_id == project_id,
+            Batch.batch_number > current_batch_number,
+            Batch.breakdown_status.in_([BatchStatus.PENDING, BatchStatus.FAILED])
+        ).order_by(Batch.batch_number).first()
+
+        if not next_batch:
+            logger.info(f"项目 {project_id} 没有更多待拆解的批次，自动连续拆解完成")
+            return
+
+        logger.info(f"找到下一个批次: batch_number={next_batch.batch_number}, batch_id={next_batch.id}")
+
+        # 检查用户积分是否足够
+        from app.models.user import User
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user or user.credits < 100:
+            logger.warning(f"用户 {user_id} 积分不足，停止自动连续拆解")
+            return
+
+        # 扣除积分
+        user.credits -= 100
+        logger.info(f"用户 {user_id} 扣除100积分，剩余: {user.credits}")
+
+        # 创建新任务
+        new_task = AITask(
+            project_id=project_id,
+            batch_id=next_batch.id,
+            task_type="breakdown",
+            status=TaskStatus.QUEUED,
+            depends_on=[],
+            config=task_config  # 继承配置（包含 auto_continue 标记）
+        )
+        db.add(new_task)
+        db.flush()
+
+        # 启动 Celery 任务
+        celery_task = run_breakdown_task.delay(
+            str(new_task.id),
+            str(next_batch.id),
+            str(project_id),
+            str(user_id)
+        )
+
+        # 更新任务和批次状态
+        new_task.celery_task_id = celery_task.id
+        next_batch.breakdown_status = BatchStatus.QUEUED
+
+        db.commit()
+
+        logger.info(
+            f"成功启动下一个批次: batch_number={next_batch.batch_number}, "
+            f"task_id={new_task.id}, celery_task_id={celery_task.id}"
+        )
+
+    except Exception as e:
+        logger.error(f"触发下一个批次失败: {e}", exc_info=True)
+        db.rollback()
+
+
 @celery_app.task(**CELERY_TASK_CONFIG)
 def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_id: str):
     """执行Breakdown任务（同步版本，支持流式输出）
@@ -99,7 +195,7 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
         # 批次状态与任务状态保持同步：任务运行中 => batch.processing
         batch_record = db.query(Batch).filter(Batch.id == batch_id).first()
         if batch_record:
-            batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.RUNNING) or BatchStatus.PROCESSING
+            batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.RUNNING) or BatchStatus.IN_PROGRESS
             db.commit()
 
         # 读取任务配置
@@ -183,6 +279,9 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
         # 发布任务完成消息到 logs 频道（在 commit 之后发送，确保前端查询到最新状态）
         if log_publisher:
             log_publisher.publish_task_complete(task_id, status=TaskStatus.COMPLETED, message="拆解任务执行完成")
+
+        # 触发下一个依赖任务（顺序执行）
+        _trigger_next_task_sync(db, task_id, project_id, user_id)
 
         return {"status": TaskStatus.COMPLETED, "task_id": task_id}
 
@@ -334,7 +433,7 @@ def _handle_retryable_error_sync(
         )
 
         if batch_record:
-            batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.RETRYING) or BatchStatus.PROCESSING
+            batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.RETRYING) or BatchStatus.IN_PROGRESS
             db.commit()
 
         # 发布错误消息
@@ -370,12 +469,20 @@ def _handle_quota_exceeded_sync(
     """
     from app.core.quota import refund_episode_quota_sync
 
+    # 预先提取需要的属性，避免后续访问已过期的 ORM 对象
+    batch_id_str = str(batch_record.id) if batch_record else None
+
     try:
-        # 如果当前事务已经 abort，先回滚
+        # 如果当前事务已经 abort，先回滚并关闭 session，创建新 session
+        # 这是为了避免 "current transaction is aborted" 错误
         try:
             db.rollback()
         except Exception:
             pass
+
+        # 关闭当前 session 并创建新 session，确保事务状态干净
+        db.close()
+        db = SyncSessionLocal()
 
         # rollback 后重新查询 ORM 对象，避免 detached 状态
         task_record = db.query(AITask).filter(AITask.id == task_id).first()
@@ -391,9 +498,25 @@ def _handle_quota_exceeded_sync(
             error_message=json.dumps(error_info)
         )
 
-        # 更新批次状态
+        # 更新批次状态（智能回滚机制）
         if batch_record:
-            batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.FAILED) or BatchStatus.FAILED
+            # 检查是否有之前成功的拆解结果
+            has_previous_success = _check_previous_breakdown_success(db, batch_record.id, task_id)
+
+            if has_previous_success:
+                # 有之前的成功结果，恢复为 completed 状态
+                batch_record.breakdown_status = BatchStatus.COMPLETED
+                logger.info(f"批次 {batch_record.id} 有之前的成功结果，状态回滚为 completed（配额不足）")
+
+                if log_publisher:
+                    log_publisher.publish_warning(
+                        task_id,
+                        "配额不足，但批次已恢复到之前的成功状态"
+                    )
+            else:
+                # 没有之前的成功结果，标记为 failed
+                batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.FAILED) or BatchStatus.FAILED
+                logger.info(f"批次 {batch_record.id} 无之前的成功结果，状态更新为 failed（配额不足）")
 
         db.commit()
 
@@ -446,6 +569,20 @@ def _handle_timeout_failure_sync(
     """
     from app.core.quota import refund_episode_quota_sync
 
+    # 预先提取需要的属性，避免后续访问已过期的 ORM 对象
+    batch_id_str = str(batch_record.id) if batch_record else None
+
+    # 如果当前事务已经 abort，先回滚并关闭 session，创建新 session
+    # 这是为了避免 "current transaction is aborted" 错误
+    try:
+        db.rollback()
+    except Exception:
+        pass
+
+    # 关闭当前 session 并创建新 session，确保事务状态干净
+    db.close()
+    db = SyncSessionLocal()
+
     # 重新查询 ORM 对象，确保状态有效
     task_record = db.query(AITask).filter(AITask.id == task_id).first()
     batch_record = db.query(Batch).filter(Batch.id == task_record.batch_id).first() if task_record else None
@@ -467,11 +604,27 @@ def _handle_timeout_failure_sync(
         current_step="任务超时"
     )
 
-    # 更新批次状态为 failed
+    # 更新批次状态（智能回滚机制）
     if batch_record:
-        batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.FAILED) or BatchStatus.FAILED
+        # 检查是否有之前成功的拆解结果
+        has_previous_success = _check_previous_breakdown_success(db, batch_record.id, task_id)
+
+        if has_previous_success:
+            # 有之前的成功结果，恢复为 completed 状态
+            batch_record.breakdown_status = BatchStatus.COMPLETED
+            logger.info(f"批次 {batch_record.id} 有之前的成功结果，状态回滚为 completed（超时）")
+
+            if log_publisher:
+                log_publisher.publish_warning(
+                    task_id,
+                    "任务超时，但批次已恢复到之前的成功状态"
+                )
+        else:
+            # 没有之前的成功结果，标记为 failed
+            batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.FAILED) or BatchStatus.FAILED
+            logger.info(f"批次 {batch_record.id} 无之前的成功结果，状态更新为 failed（超时）")
+
         db.commit()
-        logger.info(f"批次 {batch_record.id} 状态已更新为 failed（超时）")
 
     # 返还配额（超时场景：返还 100%）
     try:
@@ -515,12 +668,20 @@ def _handle_task_failure_sync(
     """
     from app.core.quota import refund_episode_quota_sync
 
+    # 预先提取需要的属性，避免后续访问已过期的 ORM 对象
+    batch_id_str = str(batch_record.id) if batch_record else None
+
     try:
-        # 如果当前事务已经 abort，先回滚
+        # 如果当前事务已经 abort，先回滚并关闭 session，创建新 session
+        # 这是为了避免 "current transaction is aborted" 错误
         try:
             db.rollback()
         except Exception:
             pass
+
+        # 关闭当前 session 并创建新 session，确保事务状态干净
+        db.close()
+        db = SyncSessionLocal()
 
         # rollback 后重新查询 ORM 对象，避免 detached 状态
         task_record = db.query(AITask).filter(AITask.id == task_id).first()
@@ -537,9 +698,26 @@ def _handle_task_failure_sync(
             error_message=json.dumps(error_info)
         )
 
-        # 更新批次状态
+        # 更新批次状态（智能回滚机制）
         if batch_record:
-            batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.FAILED) or BatchStatus.FAILED
+            # 检查是否有之前成功的拆解结果
+            has_previous_success = _check_previous_breakdown_success(db, batch_record.id, task_id)
+
+            if has_previous_success:
+                # 有之前的成功结果，恢复为 completed 状态
+                batch_record.breakdown_status = BatchStatus.COMPLETED
+                logger.info(f"批次 {batch_record.id} 有之前的成功结果，状态回滚为 completed")
+
+                if log_publisher:
+                    log_publisher.publish_warning(
+                        task_id,
+                        "当前任务失败，但批次已恢复到之前的成功状态"
+                    )
+            else:
+                # 没有之前的成功结果，标记为 failed
+                batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.FAILED) or BatchStatus.FAILED
+                logger.info(f"批次 {batch_record.id} 无之前的成功结果，状态更新为 failed")
+
             db.commit()
 
         # Token 计费：检查是否有 Token 消耗
@@ -1316,6 +1494,57 @@ def _load_resources_by_ids_sync(db: Session, resource_ids: list) -> dict:
             grouped[category].append(resource.content)
 
     return grouped
+
+
+def _check_previous_breakdown_success(db: Session, batch_id: str, current_task_id: str) -> bool:
+    """检查批次是否有之前成功的拆解结果
+
+    Args:
+        db: 数据库会话
+        batch_id: 批次 ID
+        current_task_id: 当前失败的任务 ID
+
+    Returns:
+        bool: 如果有之前成功的拆解结果返回 True，否则返回 False
+    """
+    from app.models.plot_breakdown import PlotBreakdown
+    from app.models.ai_task import AITask
+
+    try:
+        # 查找该批次下所有成功完成的任务（排除当前失败的任务）
+        successful_tasks = db.query(AITask).filter(
+            AITask.batch_id == batch_id,
+            AITask.id != current_task_id,
+            AITask.status == TaskStatus.COMPLETED
+        ).all()
+
+        if not successful_tasks:
+            return False
+
+        # 检查是否有对应的有效拆解结果
+        for task in successful_tasks:
+            breakdown = db.query(PlotBreakdown).filter(
+                PlotBreakdown.batch_id == batch_id,
+                PlotBreakdown.task_id == task.id,
+                PlotBreakdown.plot_points.isnot(None)  # 有有效的剧情点数据
+            ).first()
+
+            if breakdown and breakdown.plot_points:
+                # 检查剧情点数量是否合理（至少有1个）
+                if isinstance(breakdown.plot_points, list) and len(breakdown.plot_points) > 0:
+                    logger.info(
+                        f"批次 {batch_id} 找到之前的成功结果: "
+                        f"breakdown_id={breakdown.id}, "
+                        f"plot_points={len(breakdown.plot_points)}, "
+                        f"qa_status={breakdown.qa_status}"
+                    )
+                    return True
+
+        return False
+
+    except Exception as e:
+        logger.error(f"检查之前的拆解结果失败: {e}")
+        return False
 
 
 def _extract_fix_instructions_from_qa_report(qa_report: dict) -> str:

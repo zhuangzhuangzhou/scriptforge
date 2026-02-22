@@ -471,7 +471,7 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   }
 
   // 拆解中状态（包括排队中，对用户来说都是"拆解中"）
-  if (selectedBatch.breakdown_status === BATCH_STATUS.PROCESSING || selectedBatch.breakdown_status === BATCH_STATUS.QUEUED) {
+  if (selectedBatch.breakdown_status === BATCH_STATUS.IN_PROGRESS || selectedBatch.breakdown_status === BATCH_STATUS.QUEUED) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
         <div className="w-20 h-20 rounded-2xl bg-cyan-500/10 flex items-center justify-center border border-cyan-500/20 animate-pulse">

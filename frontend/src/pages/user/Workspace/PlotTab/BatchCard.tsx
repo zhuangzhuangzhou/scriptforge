@@ -43,18 +43,18 @@ const BatchCard: React.FC<BatchCardProps> = ({
         <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold border transition-colors ${
           batch.breakdown_status === BATCH_STATUS.COMPLETED
             ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
-            : (batch.breakdown_status === BATCH_STATUS.PROCESSING || batch.breakdown_status === BATCH_STATUS.QUEUED)
+            : (batch.breakdown_status === BATCH_STATUS.IN_PROGRESS || batch.breakdown_status === BATCH_STATUS.QUEUED)
             ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20 animate-pulse'
             : batch.breakdown_status === BATCH_STATUS.FAILED
             ? 'bg-red-500/10 text-red-400 border-red-500/20'
             : 'bg-slate-800 text-slate-500 border-slate-700'
         }`}>
           {batch.breakdown_status === BATCH_STATUS.COMPLETED && <CheckCircle2 size={10} />}
-          {(batch.breakdown_status === BATCH_STATUS.PROCESSING || batch.breakdown_status === BATCH_STATUS.QUEUED) && <Loader2 size={10} className="animate-spin" />}
+          {(batch.breakdown_status === BATCH_STATUS.IN_PROGRESS || batch.breakdown_status === BATCH_STATUS.QUEUED) && <Loader2 size={10} className="animate-spin" />}
           {batch.breakdown_status === BATCH_STATUS.FAILED && <X size={10} />}
           {batch.breakdown_status === BATCH_STATUS.PENDING && <CircleDashed size={10} />}
           {batch.breakdown_status === BATCH_STATUS.COMPLETED ? '已拆解' :
-           (batch.breakdown_status === BATCH_STATUS.PROCESSING || batch.breakdown_status === BATCH_STATUS.QUEUED) ? '拆解中' :
+           (batch.breakdown_status === BATCH_STATUS.IN_PROGRESS || batch.breakdown_status === BATCH_STATUS.QUEUED) ? '拆解中' :
            batch.breakdown_status === BATCH_STATUS.FAILED ? '失败' : '未拆解'}
         </div>
       </div>
@@ -62,7 +62,7 @@ const BatchCard: React.FC<BatchCardProps> = ({
         第 {batch.start_chapter} - {batch.end_chapter} 章
         <span className="text-slate-600 ml-2">({batch.total_chapters} 章)</span>
       </div>
-      {(batch.breakdown_status === BATCH_STATUS.PROCESSING || batch.breakdown_status === BATCH_STATUS.QUEUED) && (
+      {(batch.breakdown_status === BATCH_STATUS.IN_PROGRESS || batch.breakdown_status === BATCH_STATUS.QUEUED) && (
         <div className="mt-2">
           {/* 进度条 */}
           <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">

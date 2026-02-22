@@ -38,7 +38,7 @@ def check_and_terminate_stuck_tasks():
         # 查询超时或停滞的任务
         query = select(AITask).where(
             and_(
-                AITask.status.in_([TaskStatus.RUNNING, TaskStatus.PROCESSING, TaskStatus.QUEUED]),
+                AITask.status.in_([TaskStatus.RUNNING, TaskStatus.IN_PROGRESS, TaskStatus.QUEUED]),
                 # 条件1: 创建时间超过1小时
                 # 或条件2: 更新时间超过30分钟（停滞）
                 (AITask.created_at < timeout_time) | (AITask.updated_at < stale_time)
@@ -108,7 +108,7 @@ def _terminate_stuck_task(db: Session, task: AITask, now: datetime):
     # 2. 更新关联批次状态
     if task.batch_id:
         batch = db.query(Batch).filter(Batch.id == task.batch_id).first()
-        if batch and batch.breakdown_status in [BatchStatus.PROCESSING, BatchStatus.QUEUED]:
+        if batch and batch.breakdown_status in [BatchStatus.IN_PROGRESS, BatchStatus.QUEUED]:
             batch.breakdown_status = BatchStatus.FAILED
             batch.updated_at = now
             logger.info(f"更新批次 {batch.id} 状态为 failed")

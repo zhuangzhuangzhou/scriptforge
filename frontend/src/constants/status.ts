@@ -13,7 +13,7 @@ export const TASK_STATUS = {
 export const BATCH_STATUS = {
   PENDING: 'pending',
   QUEUED: 'queued',
-  PROCESSING: 'processing',
+  IN_PROGRESS: 'in_progress',  // 与后端 BatchStatus.IN_PROGRESS 统一
   COMPLETED: 'completed',
   FAILED: 'failed',
 } as const;

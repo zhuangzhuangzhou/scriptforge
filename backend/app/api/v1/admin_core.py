@@ -16,6 +16,7 @@ from app.models.batch import Batch
 from app.models.api_log import APILog
 from app.models.llm_call_log import LLMCallLog
 from app.api.v1.admin import check_admin
+from app.models.split_rule import SplitRule
 
 router = APIRouter()
 
@@ -1132,29 +1133,84 @@ async def get_llm_logs_stats(
     }
 
 
-@router.post("/tasks/check-stuck")
-async def check_stuck_tasks(
-    admin: User = Depends(check_admin)
+@router.get("/tasks/stuck")
+async def get_stuck_tasks(
+    admin: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
 ):
-    """管理员：手动检查并终止卡住的任务
+    """管理员：查询卡住的任务（不自动终止）
 
     检查条件：
     - 状态为 running/processing/queued
     - 创建时间超过 1 小时
     - 或更新时间超过 30 分钟（停滞）
     """
-    from app.tasks.task_monitor import check_and_terminate_stuck_tasks
+    from app.tasks.task_monitor import TASK_TIMEOUT_THRESHOLD, TASK_STALE_THRESHOLD
 
     try:
-        check_and_terminate_stuck_tasks()
+        now = datetime.now(timezone.utc)
+        timeout_time = now - timedelta(seconds=TASK_TIMEOUT_THRESHOLD)
+        stale_time = now - timedelta(seconds=TASK_STALE_THRESHOLD)
+
+        # 查询超时或停滞的任务
+        query = (
+            select(AITask)
+            .options(selectinload(AITask.user), selectinload(AITask.project), selectinload(AITask.batch))
+            .where(
+                and_(
+                    AITask.status.in_([TaskStatus.RUNNING, TaskStatus.IN_PROGRESS, TaskStatus.QUEUED]),
+                # 条件1: 创建时间超过1小时 或 条件2: 更新时间超过30分钟（停滞）
+                    or_(AITask.created_at < timeout_time, AITask.updated_at < stale_time)
+                )
+            )
+        )
+
+        result = await db.execute(query)
+        stuck_tasks = result.scalars().all()
+
+        # 构建返回数据
+        tasks_data = []
+        for task in stuck_tasks:
+            created_at = task.created_at.replace(tzinfo=timezone.utc) if task.created_at else now
+            updated_at = task.updated_at.replace(tzinfo=timezone.utc) if task.updated_at else now
+            running_time = int((now - created_at).total_seconds())
+            idle_time = int((now - updated_at).total_seconds())
+
+            # 判断卡住原因
+            if running_time > TASK_TIMEOUT_THRESHOLD:
+                reason = f"运行超时（{int(running_time/60)} 分钟）"
+            else:
+                reason = f"停滞无响应（{int(idle_time/60)} 分钟）"
+
+            tasks_data.append({
+                "id": str(task.id),
+                "task_type": task.task_type,
+                "status": task.status,
+                "progress": task.progress or 0,
+                "current_step": task.current_step or "",
+                "user_id": str(task.user_id),
+                "username": task.user.username if task.user else "未知",
+                "project_id": str(task.project_id) if task.project_id else None,
+                "project_name": task.project.name if task.project else "未知",
+                "batch_id": str(task.batch_id) if task.batch_id else None,
+                "batch_number": task.batch.batch_number if task.batch else 0,
+                "created_at": task.created_at.isoformat() if task.created_at else None,
+                "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+                "running_time": running_time,
+                "idle_time": idle_time,
+                "reason": reason
+            })
+
         return {
             "success": True,
-            "message": "任务检查完成，已终止卡住的任务"
+            "tasks": tasks_data,
+            "count": len(tasks_data)
         }
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"检查任务失败: {str(e)}"
+            detail=f"查询卡住任务失败: {str(e)}"
         )
 
 
@@ -1215,5 +1271,308 @@ async def stop_task(
         "success": True,
         "message": "任务已停止",
         "task_id": task_id
+    }
+
+
+# ==================== 拆分规则管理 ====================
+
+class SplitRuleCreate(BaseModel):
+    """创建拆分规则请求"""
+    name: str = Field(..., description="内部标识，如 standard_chinese")
+    display_name: str = Field(..., description="显示名称")
+    pattern: str = Field(..., description="正则表达式或空字符串")
+    pattern_type: str = Field(default="regex", description="模式类型: regex 或 blank_line")
+    example: Optional[str] = Field(None, description="示例文字")
+    is_default: bool = Field(default=False, description="是否默认规则")
+    is_active: bool = Field(default=True, description="是否启用")
+
+
+class SplitRuleUpdate(BaseModel):
+    """更新拆分规则请求"""
+    display_name: Optional[str] = None
+    pattern: Optional[str] = None
+    pattern_type: Optional[str] = None
+    example: Optional[str] = None
+    is_default: Optional[bool] = None
+    is_active: Optional[bool] = None
+
+
+class SplitRuleResponse(BaseModel):
+    """拆分规则响应"""
+    id: str
+    name: str
+    display_name: str
+    pattern: str
+    pattern_type: str
+    example: Optional[str]
+    is_default: bool
+    is_active: bool
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+
+
+@router.get("/split-rules", response_model=List[SplitRuleResponse])
+async def get_admin_split_rules(
+    active_only: bool = Query(default=False, description="是否只返回启用的规则"),
+    current_user: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取所有拆分规则（管理端）"""
+    query = select(SplitRule)
+
+    if active_only:
+        query = query.where(SplitRule.is_active == True)
+
+    query = query.order_by(SplitRule.is_default.desc(), SplitRule.display_name)
+
+    result = await db.execute(query)
+    rules = result.scalars().all()
+
+    return [
+        SplitRuleResponse(
+            id=str(rule.id),
+            name=rule.name,
+            display_name=rule.display_name,
+            pattern=rule.pattern,
+            pattern_type=rule.pattern_type,
+            example=rule.example,
+            is_default=rule.is_default,
+            is_active=rule.is_active,
+            created_at=rule.created_at,
+            updated_at=rule.updated_at
+        )
+        for rule in rules
+    ]
+
+
+@router.post("/split-rules", response_model=SplitRuleResponse)
+async def create_split_rule(
+    rule_data: SplitRuleCreate,
+    current_user: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """创建拆分规则"""
+    # 检查名称是否已存在
+    result = await db.execute(
+        select(SplitRule).where(SplitRule.name == rule_data.name)
+    )
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail=f"规则名称 '{rule_data.name}' 已存在")
+
+    # 如果设置为默认规则，取消其他规则的默认状态
+    if rule_data.is_default:
+        await db.execute(
+            select(SplitRule).where(SplitRule.is_default == True)
+        )
+        existing_defaults = (await db.execute(
+            select(SplitRule).where(SplitRule.is_default == True)
+        )).scalars().all()
+
+        for rule in existing_defaults:
+            rule.is_default = False
+
+    # 创建新规则
+    new_rule = SplitRule(
+        name=rule_data.name,
+        display_name=rule_data.display_name,
+        pattern=rule_data.pattern,
+        pattern_type=rule_data.pattern_type,
+        example=rule_data.example,
+        is_default=rule_data.is_default,
+        is_active=rule_data.is_active
+    )
+
+    db.add(new_rule)
+    await db.commit()
+    await db.refresh(new_rule)
+
+    return SplitRuleResponse(
+        id=str(new_rule.id),
+        name=new_rule.name,
+        display_name=new_rule.display_name,
+        pattern=new_rule.pattern,
+        pattern_type=new_rule.pattern_type,
+        example=new_rule.example,
+        is_default=new_rule.is_default,
+        is_active=new_rule.is_active,
+        created_at=new_rule.created_at,
+        updated_at=new_rule.updated_at
+    )
+
+
+@router.put("/split-rules/{rule_id}", response_model=SplitRuleResponse)
+async def update_split_rule(
+    rule_id: str,
+    rule_data: SplitRuleUpdate,
+    current_user: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """更新拆分规则"""
+    from uuid import UUID
+
+    try:
+        rule_uuid = UUID(rule_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="无效的规则 ID")
+
+    result = await db.execute(
+        select(SplitRule).where(SplitRule.id == rule_uuid)
+    )
+    rule = result.scalar_one_or_none()
+
+    if not rule:
+        raise HTTPException(status_code=404, detail="规则不存在")
+
+    # 如果设置为默认规则，取消其他规则的默认状态
+    if rule_data.is_default and not rule.is_default:
+        existing_defaults = (await db.execute(
+            select(SplitRule).where(SplitRule.is_default == True)
+        )).scalars().all()
+
+        for default_rule in existing_defaults:
+            default_rule.is_default = False
+
+    # 更新字段
+    if rule_data.display_name is not None:
+        rule.display_name = rule_data.display_name
+    if rule_data.pattern is not None:
+        rule.pattern = rule_data.pattern
+    if rule_data.pattern_type is not None:
+        rule.pattern_type = rule_data.pattern_type
+    if rule_data.example is not None:
+        rule.example = rule_data.example
+    if rule_data.is_default is not None:
+        rule.is_default = rule_data.is_default
+    if rule_data.is_active is not None:
+        rule.is_active = rule_data.is_active
+
+    rule.updated_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(rule)
+
+    return SplitRuleResponse(
+        id=str(rule.id),
+        name=rule.name,
+        display_name=rule.display_name,
+        pattern=rule.pattern,
+        pattern_type=rule.pattern_type,
+        example=rule.example,
+        is_default=rule.is_default,
+        is_active=rule.is_active,
+        created_at=rule.created_at,
+        updated_at=rule.updated_at
+    )
+
+
+@router.delete("/split-rules/{rule_id}")
+async def delete_split_rule(
+    rule_id: str,
+    current_user: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """删除拆分规则"""
+    from uuid import UUID
+
+    try:
+        rule_uuid = UUID(rule_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="无效的规则 ID")
+
+    result = await db.execute(
+        select(SplitRule).where(SplitRule.id == rule_uuid)
+    )
+    rule = result.scalar_one_or_none()
+
+    if not rule:
+        raise HTTPException(status_code=404, detail="规则不存在")
+
+    if rule.is_default:
+        raise HTTPException(status_code=400, detail="不能删除默认规则")
+
+    await db.delete(rule)
+    await db.commit()
+
+    return {"message": "删除成功"}
+
+
+@router.post("/split-rules/init-defaults")
+async def init_default_split_rules(
+    current_user: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """初始化预置拆分规则"""
+    default_rules = [
+        {
+            "name": "standard_chinese",
+            "display_name": "中文标准 - 第N章",
+            "pattern": r"第[一二三四五六七八九十百千\d]+章",
+            "pattern_type": "regex",
+            "example": "第1章 初入江湖\n第二章 奇遇",
+            "is_default": True,
+            "is_active": True
+        },
+        {
+            "name": "numeric_chapter",
+            "display_name": "数字章节 - Chapter X",
+            "pattern": r"Chapter\s*\d+",
+            "pattern_type": "regex",
+            "example": "Chapter 1\nChapter 2",
+            "is_default": False,
+            "is_active": True
+        },
+        {
+            "name": "blank_line",
+            "display_name": "空行分隔",
+            "pattern": "",
+            "pattern_type": "blank_line",
+            "example": "段落1\n\n段落2\n\n段落3",
+            "is_default": False,
+            "is_active": True
+        },
+        {
+            "name": "double_newline",
+            "display_name": "双换行分隔",
+            "pattern": "",
+            "pattern_type": "blank_line",
+            "example": "内容1\n\n内容2",
+            "is_default": False,
+            "is_active": True
+        }
+    ]
+
+    created_count = 0
+    updated_count = 0
+
+    for rule_data in default_rules:
+        result = await db.execute(
+            select(SplitRule).where(SplitRule.name == rule_data["name"])
+        )
+        existing_rule = result.scalar_one_or_none()
+
+        if existing_rule:
+            # 更新现有规则
+            existing_rule.display_name = rule_data["display_name"]
+            existing_rule.pattern = rule_data["pattern"]
+            existing_rule.pattern_type = rule_data["pattern_type"]
+            existing_rule.example = rule_data["example"]
+            existing_rule.is_active = rule_data["is_active"]
+            # 只有当前规则标记为默认且数据库中没有其他默认规则时才设置
+            if rule_data["is_default"]:
+                existing_rule.is_default = True
+            existing_rule.updated_at = datetime.now(timezone.utc)
+            updated_count += 1
+        else:
+            # 创建新规则
+            new_rule = SplitRule(**rule_data)
+            db.add(new_rule)
+            created_count += 1
+
+    await db.commit()
+
+    return {
+        "message": f"初始化完成：创建 {created_count} 条，更新 {updated_count} 条",
+        "created": created_count,
+        "updated": updated_count
     }
 

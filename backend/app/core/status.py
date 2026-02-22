@@ -4,7 +4,7 @@ from typing import Optional
 
 # AITask.status	  Batch.breakdown_status	            解释
 # queued	      queued	                            任务已排队
-# running /       retrying / in_progress	processing	拆解执行中
+# running /       retrying / in_progress	in_progress	拆解执行中
 # completed	      completed	                            拆解完成
 # failed	      failed	                            拆解失败
 # canceled	      pending（或 failed）	                 取消后批次可重新提交
@@ -28,7 +28,7 @@ class TaskStatus:
 class BatchStatus:
     PENDING = "pending"
     QUEUED = "queued"
-    PROCESSING = "processing"
+    IN_PROGRESS = "in_progress"  # 与 TaskStatus.IN_PROGRESS 统一
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -46,7 +46,7 @@ def map_task_status_to_batch(status: Optional[str]) -> Optional[str]:
     if normalized in (TaskStatus.QUEUED,):
         return BatchStatus.QUEUED
     if normalized in TaskStatus.RUNNING_SET or normalized == TaskStatus.CANCELLING:
-        return BatchStatus.PROCESSING
+        return BatchStatus.IN_PROGRESS
     if normalized == TaskStatus.COMPLETED:
         return BatchStatus.COMPLETED
     if normalized == TaskStatus.FAILED:

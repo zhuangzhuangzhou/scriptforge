@@ -2,6 +2,34 @@
 
 记录所有规范文档的更新历史。
 
+## 2026-02-22 - 任务状态常量统一
+
+### 更新的规范
+
+1. **`backend/index.md`** - 更新
+   - 任务/批次状态规范：将 `BatchStatus.PROCESSING` 改为 `BatchStatus.IN_PROGRESS`
+   - 新增常见错误：状态常量不一致问题
+
+### 学到的关键知识
+
+#### 1. 状态常量不一致导致 API 报错
+
+**问题**：`TaskStatus.IN_PROGRESS` 和 `BatchStatus.PROCESSING` 值不同
+- `TaskStatus.IN_PROGRESS = "in_progress"`
+- `BatchStatus.PROCESSING = "processing"`
+
+代码中混用了这两个常量，导致 `AttributeError: type object 'TaskStatus' has no attribute 'PROCESSING'`
+
+**解决**：统一使用 `"in_progress"` 值
+- 修改 `BatchStatus.IN_PROGRESS = "in_progress"`
+- 修改所有使用 `BatchStatus.PROCESSING` 的地方
+
+**规范**：
+1. 所有状态常量值必须统一使用 `"in_progress"`
+2. 不要混用 `PROCESSING` 和 `IN_PROGRESS`
+
+---
+
 ## 2026-02-12 - WorkflowEditor 可视化编辑器
 
 ### 更新的规范

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, Tag, message, Modal, Progress, Tooltip, Space, Select, Card, Typography } from 'antd';
+import { Button, Tag, message, Modal, Progress, Tooltip, Space, Select, Card, Typography, Table, Checkbox } from 'antd';
 import { ReloadOutlined, StopOutlined, DeleteOutlined, ExclamationCircleOutlined, PlayCircleOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { adminApi } from '../../../services/api';
@@ -22,6 +22,7 @@ interface RunningTask {
   updated_at: string;
   running_time: number;
   idle_time: number;
+  reason?: string;
 }
 
 const TaskManagement: React.FC = () => {
@@ -29,6 +30,13 @@ const TaskManagement: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshInterval, setRefreshInterval] = useState(5);
+
+  // 卡住任务 Modal 状态
+  const [stuckTasksModalVisible, setStuckTasksModalVisible] = useState(false);
+  const [stuckTasks, setStuckTasks] = useState<RunningTask[]>([]);
+  const [selectedStuckTaskIds, setSelectedStuckTaskIds] = useState<string[]>([]);
+  const [loadingStuckTasks, setLoadingStuckTasks] = useState(false);
+  const [terminatingTasks, setTerminatingTasks] = useState(false);
 
   // 加载正在运行的任务
   const loadRunningTasks = useCallback(async () => {
@@ -94,33 +102,74 @@ const TaskManagement: React.FC = () => {
   };
 
   // 检查并终止卡住的任务
-  const handleCheckStuckTasks = () => {
+  const handleCheckStuckTasks = async () => {
+    setLoadingStuckTasks(true);
+    try {
+      const response = await adminApi.getStuckTasks();
+      const stuckTasksList = response.data.tasks || [];
+
+      if (stuckTasksList.length === 0) {
+        message.info('未发现卡住的任务');
+        return;
+      }
+
+      setStuckTasks(stuckTasksList);
+      setSelectedStuckTaskIds([]);
+      setStuckTasksModalVisible(true);
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '查询卡住任务失败');
+    } finally {
+      setLoadingStuckTasks(false);
+    }
+  };
+
+  // 批量终止选中的卡住任务
+  const handleTerminateSelectedTasks = async () => {
+    if (selectedStuckTaskIds.length === 0) {
+      message.warning('请至少选择一个任务');
+      return;
+    }
+
     Modal.confirm({
-      title: '检查卡住的任务',
+      title: '确认终止任务',
       icon: <ExclamationCircleOutlined />,
       content: (
         <div className="py-2">
-          <div className="mb-3">系统将检查并自动终止以下任务：</div>
-          <ul className="text-slate-400 text-sm list-disc list-inside space-y-1">
-            <li>创建时间超过 1 小时的任务</li>
-            <li>更新时间超过 30 分钟的任务（停滞）</li>
-          </ul>
+          <div className="mb-3">确定要终止选中的 {selectedStuckTaskIds.length} 个任务吗？</div>
           <div className="mt-3 text-amber-500 text-sm">
-            ⚠️ 此操作会终止所有符合条件的卡住任务
+            ⚠️ 停止任务后，已消耗的积分不会退还
           </div>
         </div>
       ),
-      okText: '开始检查',
-      okType: 'primary',
+      okText: '确认终止',
+      okType: 'danger',
       cancelText: '取消',
       onOk: async () => {
-        try {
-          const response = await adminApi.checkStuckTasks();
-          message.success(response.data.message || '检查完成');
-          loadRunningTasks();
-        } catch (error: any) {
-          message.error(error.response?.data?.detail || '检查失败');
+        setTerminatingTasks(true);
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const taskId of selectedStuckTaskIds) {
+          try {
+            await adminApi.stopTask(taskId);
+            successCount++;
+          } catch (error) {
+            failCount++;
+          }
         }
+
+        setTerminatingTasks(false);
+
+        if (successCount > 0) {
+          message.success(`成功终止 ${successCount} 个任务${failCount > 0 ? `，${failCount} 个失败` : ''}`);
+        } else {
+          message.error('终止任务失败');
+        }
+
+        // 关闭 Modal 并刷新任务列表
+        setStuckTasksModalVisible(false);
+        setSelectedStuckTaskIds([]);
+        loadRunningTasks();
       },
     });
   };
@@ -443,6 +492,147 @@ const TaskManagement: React.FC = () => {
         <span className="text-amber-500">30分钟 - 1小时</span>
         <span className="text-red-500">超过 1小时</span>
       </div>
+
+      {/* 卡住任务 Modal */}
+      <Modal
+        title="卡住的任务列表"
+        open={stuckTasksModalVisible}
+        onCancel={() => {
+          setStuckTasksModalVisible(false);
+          setSelectedStuckTaskIds([]);
+        }}
+        width={1200}
+        footer={[
+          <Button key="cancel" onClick={() => {
+            setStuckTasksModalVisible(false);
+            setSelectedStuckTaskIds([]);
+          }}>
+            取消
+          </Button>,
+          <Button
+            key="terminate"
+            type="primary"
+            danger
+            loading={terminatingTasks}
+            disabled={selectedStuckTaskIds.length === 0}
+            onClick={handleTerminateSelectedTasks}
+          >
+            终止选中任务 ({selectedStuckTaskIds.length})
+          </Button>,
+        ]}
+      >
+        <div className="mb-4 text-slate-400 text-sm">
+          <div className="mb-2">检查条件：</div>
+          <ul className="list-disc list-inside space-y-1">
+            <li>创建时间超过 1 小时的任务</li>
+            <li>更新时间超过 30 分钟的任务（停滞）</li>
+          </ul>
+        </div>
+
+        <Table
+          dataSource={stuckTasks}
+          rowKey="id"
+          loading={loadingStuckTasks}
+          pagination={false}
+          scroll={{ x: 1000 }}
+          rowSelection={{
+            selectedRowKeys: selectedStuckTaskIds,
+            onChange: (selectedKeys) => setSelectedStuckTaskIds(selectedKeys as string[]),
+          }}
+          columns={[
+            {
+              title: '任务ID',
+              dataIndex: 'id',
+              key: 'id',
+              width: 100,
+              render: (id: string) => (
+                <Tooltip title={id}>
+                  <span className="font-mono text-xs">{id.slice(0, 8)}...</span>
+                </Tooltip>
+              ),
+            },
+            {
+              title: '用户',
+              dataIndex: 'username',
+              key: 'username',
+              width: 100,
+            },
+            {
+              title: '项目',
+              dataIndex: 'project_name',
+              key: 'project_name',
+              width: 150,
+              ellipsis: true,
+            },
+            {
+              title: '批次',
+              dataIndex: 'batch_number',
+              key: 'batch_number',
+              width: 80,
+              render: (num: number) => <span className="font-mono">#{num}</span>,
+            },
+            {
+              title: '状态',
+              dataIndex: 'status',
+              key: 'status',
+              width: 100,
+              render: (status: string) => getStatusTag(status),
+            },
+            {
+              title: '进度',
+              dataIndex: 'progress',
+              key: 'progress',
+              width: 100,
+              render: (progress: number) => (
+                <Progress
+                  percent={progress}
+                  size="small"
+                  status={progress < 100 ? 'active' : 'success'}
+                />
+              ),
+            },
+            {
+              title: '运行时间',
+              dataIndex: 'running_time',
+              key: 'running_time',
+              width: 100,
+              render: (time: number) => {
+                const style = getRunningTimeColor(time);
+                return (
+                  <span className={`font-mono text-xs ${style.text}`}>
+                    {formatDuration(time)}
+                  </span>
+                );
+              },
+            },
+            {
+              title: '停滞时间',
+              dataIndex: 'idle_time',
+              key: 'idle_time',
+              width: 100,
+              render: (time: number) => {
+                const style = getIdleTimeColor(time);
+                return (
+                  <Tooltip title="距离上次更新的时间">
+                    <span className={`font-mono text-xs ${style.text}`}>
+                      {formatDuration(time)}
+                    </span>
+                  </Tooltip>
+                );
+              },
+            },
+            {
+              title: '卡住原因',
+              dataIndex: 'reason',
+              key: 'reason',
+              width: 150,
+              render: (reason: string) => (
+                <span className="text-amber-500 text-xs">{reason}</span>
+              ),
+            },
+          ]}
+        />
+      </Modal>
     </div>
   );
 };

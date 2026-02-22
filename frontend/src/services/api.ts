@@ -401,6 +401,11 @@ export const breakdownApi = {
     return api.get(`/breakdown/results/${batchId}`);
   },
 
+  // 根据 breakdown_id 获取指定拆解记录的完整数据
+  getBreakdownById: async (breakdownId: string) => {
+    return api.get(`/breakdown/breakdown/${breakdownId}`);
+  },
+
   // 获取可用的配置列表
   getAvailableConfigs: async () => {
     if (USE_MOCK) {
@@ -846,13 +851,139 @@ export const adminApi = {
     return api.post(`/admin/tasks/${taskId}/stop`);
   },
 
-  // 检查卡住的任务
-  checkStuckTasks: async () => {
+  // 查询卡住的任务（不自动终止）
+  getStuckTasks: async () => {
     if (USE_MOCK) {
       await new Promise(r => setTimeout(r, 500));
-      return { data: { message: '检查完成，未发现卡住的任务' } };
+      return {
+        data: {
+          tasks: [
+            {
+              id: 'stuck-task-1',
+              task_type: 'breakdown',
+              status: 'running',
+              progress: 45,
+              current_step: '正在处理第3章...',
+              user_id: 'user-1',
+              username: 'testuser',
+              project_id: 'proj-1',
+              project_name: '测试项目',
+              batch_id: 'batch-1',
+              batch_number: 1,
+              created_at: new Date(Date.now() - 3700000).toISOString(),
+              updated_at: new Date(Date.now() - 2000000).toISOString(),
+              running_time: 3700,
+              idle_time: 2000,
+              reason: '停滞无响应（33 分钟）'
+            }
+          ],
+          count: 1
+        }
+      };
     }
-    return api.post('/admin/tasks/check-stuck');
+    return api.get('/admin/tasks/stuck');
+  },
+
+  // 拆分规则管理
+  getSplitRules: async (activeOnly = false) => {
+    if (USE_MOCK) {
+      await new Promise(r => setTimeout(r, 300));
+      return {
+        data: [
+          {
+            id: '1',
+            name: 'standard_chinese',
+            display_name: '中文标准 - 第N章',
+            pattern: '第[一二三四五六七八九十百千\\d]+章',
+            pattern_type: 'regex',
+            example: '第1章 初入江湖\n第二章 奇遇',
+            is_default: true,
+            is_active: true,
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z'
+          },
+          {
+            id: '2',
+            name: 'blank_line',
+            display_name: '空行分隔',
+            pattern: '',
+            pattern_type: 'blank_line',
+            example: '段落1\n\n段落2',
+            is_default: false,
+            is_active: true,
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z'
+          }
+        ]
+      };
+    }
+    return api.get('/admin/split-rules', { params: { active_only: activeOnly } });
+  },
+
+  createSplitRule: async (data: {
+    name: string;
+    display_name: string;
+    pattern: string;
+    pattern_type: string;
+    example?: string;
+    is_default: boolean;
+    is_active: boolean;
+  }) => {
+    if (USE_MOCK) {
+      await new Promise(r => setTimeout(r, 500));
+      return {
+        data: {
+          id: '3',
+          ...data,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }
+      };
+    }
+    return api.post('/admin/split-rules', data);
+  },
+
+  updateSplitRule: async (id: string, data: {
+    display_name?: string;
+    pattern?: string;
+    pattern_type?: string;
+    example?: string;
+    is_default?: boolean;
+    is_active?: boolean;
+  }) => {
+    if (USE_MOCK) {
+      await new Promise(r => setTimeout(r, 500));
+      return {
+        data: {
+          id,
+          ...data,
+          updated_at: new Date().toISOString()
+        }
+      };
+    }
+    return api.put(`/admin/split-rules/${id}`, data);
+  },
+
+  deleteSplitRule: async (id: string) => {
+    if (USE_MOCK) {
+      await new Promise(r => setTimeout(r, 500));
+      return { data: { message: '删除成功' } };
+    }
+    return api.delete(`/admin/split-rules/${id}`);
+  },
+
+  initDefaultSplitRules: async () => {
+    if (USE_MOCK) {
+      await new Promise(r => setTimeout(r, 800));
+      return {
+        data: {
+          message: '初始化完成：创建 4 条，更新 0 条',
+          created: 4,
+          updated: 0
+        }
+      };
+    }
+    return api.post('/admin/split-rules/init-defaults');
   }
 };
 

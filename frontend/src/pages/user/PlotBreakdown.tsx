@@ -66,7 +66,7 @@ const PlotBreakdown: React.FC = () => {
   const getStatusColor = (status: string) => {
     switch (status) {
       case BATCH_STATUS.COMPLETED: return 'success';
-      case BATCH_STATUS.PROCESSING: return 'processing';
+      case BATCH_STATUS.IN_PROGRESS: return 'processing';
       case BATCH_STATUS.FAILED: return 'error';
       default: return 'default';
     }
@@ -75,7 +75,7 @@ const PlotBreakdown: React.FC = () => {
   const getStatusIcon = (status: string) => {
     switch (status) {
       case BATCH_STATUS.COMPLETED: return <CheckCircleOutlined />;
-      case BATCH_STATUS.PROCESSING: return <SyncOutlined spin />;
+      case BATCH_STATUS.IN_PROGRESS: return <SyncOutlined spin />;
       default: return <ClockCircleOutlined />;
     }
   };
@@ -103,7 +103,7 @@ const PlotBreakdown: React.FC = () => {
                         onClick={() => startBreakdown(batch.id)}
                         disabled={batch.breakdown_status === BATCH_STATUS.COMPLETED || loading}
                       >
-                        {batch.breakdown_status === BATCH_STATUS.PROCESSING ? '处理中' : '开始拆解'}
+                        {batch.breakdown_status === BATCH_STATUS.IN_PROGRESS ? '处理中' : '开始拆解'}
                       </Button>
                     ]}
                   >

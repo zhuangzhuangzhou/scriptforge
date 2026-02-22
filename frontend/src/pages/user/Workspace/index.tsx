@@ -410,7 +410,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         setBreakdownResult(null);
 
         const status = selectedBatch.breakdown_status;
-        const isRunning = status === BATCH_STATUS.PROCESSING || status === BATCH_STATUS.QUEUED;
+        const isRunning = status === BATCH_STATUS.IN_PROGRESS || status === BATCH_STATUS.QUEUED;
 
         if (!isRunning) {
             setBreakdownTaskId(null);
@@ -461,7 +461,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     useEffect(() => {
         if (!selectedBatch) return;
         if (breakdownTaskId) return;
-        if (selectedBatch.breakdown_status !== BATCH_STATUS.PROCESSING && selectedBatch.breakdown_status !== BATCH_STATUS.QUEUED) return;
+        if (selectedBatch.breakdown_status !== BATCH_STATUS.IN_PROGRESS && selectedBatch.breakdown_status !== BATCH_STATUS.QUEUED) return;
 
         (async () => {
             try {
@@ -613,7 +613,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 // 自动检测正在处理的批次，连接 console
                 if (pageNum === 1 && !breakdownTaskId) {
                     const processingBatch = newItems.find(
-                        (b: Batch) => b.breakdown_status === BATCH_STATUS.PROCESSING || b.breakdown_status === BATCH_STATUS.QUEUED
+                        (b: Batch) => b.breakdown_status === BATCH_STATUS.IN_PROGRESS || b.breakdown_status === BATCH_STATUS.QUEUED
                     );
                     if (processingBatch) {
                         // 调用接口获取当前任务 ID
@@ -858,7 +858,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                         // 自动检测正在处理的批次
                         if (!breakdownTaskId) {
                             const processingBatch = newItems.find(
-                                (b: any) => b.breakdown_status === BATCH_STATUS.PROCESSING || b.breakdown_status === BATCH_STATUS.QUEUED
+                                (b: any) => b.breakdown_status === BATCH_STATUS.IN_PROGRESS || b.breakdown_status === BATCH_STATUS.QUEUED
                             );
                             if (processingBatch) {
                                 try {
@@ -1029,7 +1029,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             if (selectedBatch && selectedBatch.id === batchId) {
                 setSelectedBatch({
                     ...selectedBatch,
-                    breakdown_status: BATCH_STATUS.PROCESSING
+                    breakdown_status: BATCH_STATUS.IN_PROGRESS
                 });
             }
 
@@ -1195,7 +1195,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         // 先更新选中批次并设置状态为 processing
         setSelectedBatch({
             ...firstNeedBreakdown,
-            breakdown_status: BATCH_STATUS.PROCESSING
+            breakdown_status: BATCH_STATUS.IN_PROGRESS
         });
         try {
              setShowConsole(true);
