@@ -1057,3 +1057,411 @@ render: (val: number) => <span>{val.toLocaleString()}</span>
 
 **最后更新**: 2026-02-15
 **相关变更**: `/admin/users` 页面字段一致性修复
+
+---
+
+## 14. 模态框嵌套与状态管理
+
+> **2026-02-22 新增**：历史剧情点详情弹窗功能实现
+
+### 14.1 嵌套模态框的独立状态管理
+
+**问题**：多个模态框同时存在时，状态相互干扰导致显示异常
+
+**场景**：拆解历史弹窗（BreakdownDetailModal）中点击"查看"按钮，打开剧情点详情弹窗（PlotPointsViewModal）
+
+**错误示例**：
+```tsx
+// ❌ 错误：共用一个 AnimatePresence，导致状态冲突
+<AnimatePresence>
+  {detailModalOpen && <BreakdownDetailModal />}
+  {plotPointsViewModalOpen && <PlotPointsViewModal />}
+</AnimatePresence>
+```
+
+**正确示例**：
+```tsx
+// ✅ 正确：每个模态框使用独立的 AnimatePresence
+<AnimatePresence>
+  {detailModalOpen && <BreakdownDetailModal />}
+</AnimatePresence>
+
+<AnimatePresence>
+  {plotPointsViewModalOpen && <PlotPointsViewModal />}
+</AnimatePresence>
+```
+
+**为什么这样更好**：
+1. **状态隔离**：每个模态框有独立的生命周期，不会相互影响
+2. **动画独立**：进入/退出动画不会冲突
+3. **易于维护**：添加新模态框时不影响现有模态框
+
+### 14.2 历史记录导航模式
+
+**场景**：在模态框中实现"上一个/下一个"切换功能
+
+**状态管理模式**：
+```tsx
+// 在父组件中集中管理导航状态
+const [historyBreakdownIds, setHistoryBreakdownIds] = useState<string[]>([]);
+const [currentHistoryIndex, setCurrentHistoryIndex] = useState<number>(0);
+const [viewingBreakdownData, setViewingBreakdownData] = useState<PlotBreakdown | null>(null);
+const [loadingBreakdownData, setLoadingBreakdownData] = useState(false);
+
+// 处理查看历史记录
+const handleViewPlotPoints = async (breakdownId: string, allBreakdownIds?: string[]) => {
+  setLoadingBreakdownData(true);
+  setPlotPointsViewModalOpen(true);
+
+  // 保存历史记录列表和当前索引
+  if (allBreakdownIds && allBreakdownIds.length > 0) {
+    setHistoryBreakdownIds(allBreakdownIds);
+    const index = allBreakdownIds.indexOf(breakdownId);
+    setCurrentHistoryIndex(index >= 0 ? index : 0);
+  }
+
+  try {
+    const response = await breakdownApi.getBreakdownById(breakdownId);
+    setViewingBreakdownData(response.data);
+  } catch (error) {
+    console.error('获取拆解数据失败:', error);
+    alert('获取拆解数据失败，请重试');
+    setPlotPointsViewModalOpen(false);
+  } finally {
+    setLoadingBreakdownData(false);
+  }
+};
+
+// 切换到上一个
+const handlePreviousBreakdown = async () => {
+  if (currentHistoryIndex > 0) {
+    const prevIndex = currentHistoryIndex - 1;
+    const prevBreakdownId = historyBreakdownIds[prevIndex];
+    setCurrentHistoryIndex(prevIndex);
+    setLoadingBreakdownData(true);
+    try {
+      const response = await breakdownApi.getBreakdownById(prevBreakdownId);
+      setViewingBreakdownData(response.data);
+    } catch (error) {
+      console.error('获取拆解数据失败:', error);
+      alert('获取拆解数据失败，请重试');
+    } finally {
+      setLoadingBreakdownData(false);
+    }
+  }
+};
+
+// 切换到下一个
+const handleNextBreakdown = async () => {
+  if (currentHistoryIndex < historyBreakdownIds.length - 1) {
+    const nextIndex = currentHistoryIndex + 1;
+    const nextBreakdownId = historyBreakdownIds[nextIndex];
+    setCurrentHistoryIndex(nextIndex);
+    setLoadingBreakdownData(true);
+    try {
+      const response = await breakdownApi.getBreakdownById(nextBreakdownId);
+      setViewingBreakdownData(response.data);
+    } catch (error) {
+      console.error('获取拆解数据失败:', error);
+      alert('获取拆解数据失败，请重试');
+    } finally {
+      setLoadingBreakdownData(false);
+    }
+  }
+};
+```
+
+**子组件接收导航状态**：
+```tsx
+interface PlotPointsViewModalProps {
+  breakdown: PlotBreakdown | null;
+  loading: boolean;
+  onClose: () => void;
+  onPrevious?: () => void;
+  onNext?: () => void;
+  hasPrevious?: boolean;
+  hasNext?: boolean;
+  currentIndex?: number;
+  totalCount?: number;
+}
+
+// 在组件中使用
+<button
+  onClick={onPrevious}
+  disabled={!hasPrevious}
+  className="p-1.5 hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+>
+  <ChevronLeft className="w-4 h-4" />
+</button>
+```
+
+**边界检查**：
+```tsx
+// 传递给子组件的状态标志
+hasPrevious={currentHistoryIndex > 0}
+hasNext={currentHistoryIndex < historyBreakdownIds.length - 1}
+```
+
+**为什么这样设计**：
+1. **状态提升**：导航状态在父组件管理，避免子组件状态同步问题
+2. **边界安全**：通过 `hasPrevious` 和 `hasNext` 标志防止数组越界
+3. **用户反馈**：禁用状态有视觉反馈（`opacity-30`），加载状态清晰
+4. **可复用**：这个模式可以应用到任何需要历史记录导航的场景
+
+### 14.3 位置指示器设计
+
+**用户体验优化**：显示当前位置帮助用户定位
+
+```tsx
+// 在标题中显示位置
+<h3 className="text-base font-semibold text-white flex items-center gap-2">
+  <List className="w-4 h-4 text-cyan-400" />
+  历史剧情点详情
+  {currentIndex !== undefined && totalCount !== undefined && (
+    <span className="text-xs text-slate-500 font-normal">
+      ({totalCount - currentIndex}/{totalCount})
+    </span>
+  )}
+</h3>
+```
+
+**注意**：显示 `totalCount - currentIndex` 而不是 `currentIndex + 1`，因为历史记录是倒序排列（最新的在前）。
+
+---
+
+## 15. 条件渲染的数据类型陷阱
+
+> **2026-02-22 新增**：数值类型条件渲染的正确方式
+
+### 15.1 数值 0 的条件判断
+
+**问题**：使用 `!value` 或 `value` 判断数值类型时，0 会被误判为 false
+
+**场景**：质检评分可能是 0 分（有效值），但使用 `!score` 会导致 0 分不显示
+
+**错误示例**：
+```tsx
+// ❌ 错误：0 分会被判断为 false，不显示评分
+{breakdown.qa_score && (
+  <div className="flex items-center gap-1.5">
+    <span className="text-slate-400">评分:</span>
+    <span className="text-sm font-black">{breakdown.qa_score}</span>
+  </div>
+)}
+```
+
+**正确示例**：
+```tsx
+// ✅ 正确：使用 !== undefined 明确检查是否存在
+{breakdown.qa_score !== undefined && (
+  <div className="flex items-center gap-1.5">
+    <span className="text-slate-400">评分:</span>
+    <span className={`text-sm font-black ${
+      breakdown.qa_score >= 80 ? 'text-green-400' :
+      breakdown.qa_score >= 60 ? 'text-amber-400' :
+      'text-red-400'
+    }`}>
+      {breakdown.qa_score}
+    </span>
+  </div>
+)}
+```
+
+### 15.2 常见数值类型陷阱
+
+| 值 | `!value` | `!!value` | `value !== undefined` | `value !== null` |
+|----|----------|-----------|----------------------|------------------|
+| `0` | `true` ❌ | `false` ❌ | `true` ✅ | `true` ✅ |
+| `""` | `true` ❌ | `false` ❌ | `true` ✅ | `true` ✅ |
+| `false` | `true` ❌ | `false` ❌ | `true` ✅ | `true` ✅ |
+| `null` | `true` ✅ | `false` ✅ | `true` ✅ | `false` ✅ |
+| `undefined` | `true` ✅ | `false` ✅ | `false` ✅ | `true` ❌ |
+
+### 15.3 最佳实践
+
+**数值类型**：
+```tsx
+// ✅ 正确：明确检查 undefined
+{score !== undefined && <span>{score}</span>}
+
+// ✅ 正确：同时检查 null 和 undefined
+{score != null && <span>{score}</span>}  // 注意：使用 != 而不是 !==
+```
+
+**字符串类型**：
+```tsx
+// ✅ 正确：空字符串也是有效值时
+{text !== undefined && <span>{text}</span>}
+
+// ✅ 正确：空字符串不需要显示时
+{text && <span>{text}</span>}
+```
+
+**布尔类型**：
+```tsx
+// ✅ 正确：明确检查 undefined
+{isActive !== undefined && <span>{isActive ? '启用' : '禁用'}</span>}
+
+// ❌ 错误：false 会被误判
+{isActive && <span>启用</span>}
+```
+
+### 15.4 TypeScript 类型定义建议
+
+**使用可选属性而不是联合类型**：
+```typescript
+// ✅ 推荐：使用可选属性
+interface PlotBreakdown {
+  qa_score?: number;  // 可能不存在
+  qa_status?: 'pending' | 'PASS' | 'FAIL';
+}
+
+// ❌ 不推荐：使用 null 联合类型（增加判断复杂度）
+interface PlotBreakdown {
+  qa_score: number | null;
+  qa_status: 'pending' | 'PASS' | 'FAIL' | null;
+}
+```
+
+**为什么可选属性更好**：
+1. **简化判断**：只需检查 `!== undefined`，不需要同时检查 `null`
+2. **语义清晰**：`?` 明确表示"可能不存在"
+3. **减少错误**：避免忘记处理 `null` 的情况
+
+---
+
+## 16. 按钮组样式一致性
+
+> **2026-02-22 新增**：修复按钮高度不一致问题
+
+### 16.1 问题描述
+
+**症状**：同一组按钮中，部分按钮高度不一致，视觉上不对齐
+
+**原因**：按钮的 `padding`、`gap` 和 `border` 属性不统一
+
+### 16.2 按钮样式统一原则
+
+**核心规则**：同一组按钮必须使用完全相同的尺寸属性
+
+```tsx
+// ✅ 正确：所有按钮使用相同的尺寸属性
+<button className="flex items-center gap-1.5 px-3 py-1.5 border border-purple-500/30 ...">
+  <FastForward size={14} />
+  全部拆解
+</button>
+
+<button className="flex items-center gap-1.5 px-3 py-1.5 border border-teal-500/30 ...">
+  <PlayCircle size={14} />
+  继续拆解
+</button>
+
+<button className="flex items-center gap-1.5 px-3 py-1.5 border border-blue-500/30 ...">
+  <RotateCcw size={14} />
+  重新拆解
+</button>
+```
+
+```tsx
+// ❌ 错误：尺寸属性不一致
+<button className="flex items-center gap-1.5 px-3 py-1.5 border border-purple-500/30 ...">
+  全部拆解
+</button>
+
+<button className="flex items-center gap-1.5 px-3 py-1.5 border border-teal-500/30 ...">
+  继续拆解
+</button>
+
+<button className="flex items-center gap-2 px-4 py-1.5 ...">  {/* ❌ gap 和 px 不同 */}
+  重新拆解
+</button>
+```
+
+### 16.3 影响按钮高度的属性
+
+| 属性 | 说明 | 注意事项 |
+|------|------|---------|
+| `py-*` | 垂直内边距 | 直接影响按钮高度 |
+| `border` | 边框 | 有边框会增加 2px 高度（上下各 1px） |
+| `px-*` | 水平内边距 | 影响视觉平衡，间接影响高度感知 |
+| `gap-*` | 图标与文字间距 | 影响视觉平衡 |
+
+### 16.4 常见错误模式
+
+#### 错误 1：边框缺失
+
+```tsx
+// ❌ 错误：部分按钮有边框，部分没有
+<button className="... border border-purple-500/30">按钮 A</button>
+<button className="...">按钮 B</button>  {/* 缺少 border */}
+```
+
+**修复**：为所有按钮添加对应颜色的边框
+
+```tsx
+// ✅ 正确：所有按钮都有边框
+<button className="... border border-purple-500/30">按钮 A</button>
+<button className="... border border-blue-500/30">按钮 B</button>
+```
+
+#### 错误 2：内边距不统一
+
+```tsx
+// ❌ 错误：px 和 gap 值不一致
+<button className="gap-1.5 px-3 py-1.5">按钮 A</button>
+<button className="gap-2 px-4 py-1.5">按钮 B</button>  {/* gap 和 px 不同 */}
+```
+
+**修复**：统一所有尺寸属性
+
+```tsx
+// ✅ 正确：完全一致的尺寸
+<button className="gap-1.5 px-3 py-1.5">按钮 A</button>
+<button className="gap-1.5 px-3 py-1.5">按钮 B</button>
+```
+
+### 16.5 按钮组标准模板
+
+**小尺寸按钮组**（用于工具栏、操作栏）：
+```tsx
+className="flex items-center gap-1.5 px-3 py-1.5 border border-{color}-500/30 rounded-lg text-xs font-bold"
+```
+
+**中尺寸按钮组**（用于表单、对话框）：
+```tsx
+className="flex items-center gap-2 px-4 py-2 border border-{color}-500/30 rounded-lg text-sm font-medium"
+```
+
+**大尺寸按钮组**（用于主要操作）：
+```tsx
+className="flex items-center gap-2 px-6 py-3 border border-{color}-500/30 rounded-xl text-base font-semibold"
+```
+
+### 16.6 检查清单
+
+在添加或修改按钮组时，检查以下项目：
+
+- [ ] 所有按钮的 `py-*` 值相同
+- [ ] 所有按钮的 `px-*` 值相同
+- [ ] 所有按钮的 `gap-*` 值相同
+- [ ] 所有按钮都有 `border` 或都没有 `border`
+- [ ] 图标尺寸一致（如都使用 `size={14}`）
+- [ ] `rounded-*` 值相同
+
+### 16.7 参考实现
+
+**位置**：`frontend/src/pages/user/Workspace/index.tsx` (第 1628-1694 行)
+
+**按钮组**：全部拆解、继续拆解、停止拆解、开始拆解、重试拆解、重新拆解
+
+**统一样式**：
+- 内边距：`px-3 py-1.5`
+- 图标间距：`gap-1.5`
+- 边框：`border border-{color}-500/30`
+- 圆角：`rounded-lg`
+- 字体：`text-xs font-bold`
+
+---
+
+**最后更新**: 2026-02-22
+**相关变更**: 按钮样式一致性规范 + 历史剧情点详情弹窗增强功能

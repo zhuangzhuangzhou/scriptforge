@@ -62,16 +62,20 @@ const initialSkills = [
 
 // --- Subcomponents ---
 
-const SidebarItem = ({ icon: Icon, label, active, onClick }: { icon: any, label: string, active: boolean, onClick: () => void }) => (
+const SidebarItem = ({ icon: Icon, label, active, onClick, disabled, title }: { icon: any, label: string, active: boolean, onClick: () => void, disabled?: boolean, title?: string }) => (
   <button
     onClick={onClick}
+    disabled={disabled}
+    title={title}
     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 border ${
-      active 
-        ? 'bg-gradient-to-r from-blue-600/20 to-cyan-600/20 text-cyan-400 border-cyan-500/20' 
-        : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+      active
+        ? 'bg-gradient-to-r from-blue-600/20 to-cyan-600/20 text-cyan-400 border-cyan-500/20'
+        : disabled
+          ? 'border-transparent text-slate-600 cursor-not-allowed'
+          : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800'
     }`}
   >
-    <Icon size={18} className={active ? 'text-cyan-400' : 'text-slate-500'} />
+    <Icon size={18} className={active ? 'text-cyan-400' : disabled ? 'text-slate-600' : 'text-slate-500'} />
     <span className="truncate">{label}</span>
   </button>
 );
@@ -144,18 +148,16 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         overall_progress: number;
     } | null>(null);
     const [isBatchRunning, setIsBatchRunning] = useState(false);
+    const [taskCompleted, setTaskCompleted] = useState(false);
 
     useEffect(() => {
         // 只有在控制台打开且没有正在执行的任务时才重置进度
-        // 但如果已完成（进度为100），则保持显示完成状态
-        if (showConsole && !breakdownTaskId) {
-            // 如果进度已经是100（任务完成），不重置
-            if (breakdownProgress < 100) {
-                setBreakdownProgress(0);
-                setBreakdownCurrentStep('');
-            }
+        // 但如果任务已完成，则保持显示完成状态
+        if (showConsole && !breakdownTaskId && !taskCompleted) {
+            setBreakdownProgress(0);
+            setBreakdownCurrentStep('');
         }
-    }, [showConsole, breakdownTaskId, breakdownProgress]);
+    }, [showConsole, breakdownTaskId, taskCompleted]);
 
     // 停止任务状态
     const [isStopping, setIsStopping] = useState(false);
@@ -317,6 +319,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const handleBreakdownCompleted = (messageText?: string) => {
         if (breakdownCompleted) return;
         setBreakdownCompleted(true);
+        setTaskCompleted(true);  // 标记任务已完成
         setBreakdownTaskId(null);
         setExecutingBatchId(null);  // 清空当前执行批次
         setBreakdownProgress(100);
@@ -567,6 +570,8 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const createBatchesAndFetch = async () => {
         if (!projectId) return;
         setIsCreatingBatches(true);
+        // 显示全局 loading 提示
+        const hideLoading = message.loading('正在创建批次，请稍候...', 0);
         try {
             // 调用后端创建批次接口（幂等）
             await projectApi.createBatches(projectId);
@@ -576,6 +581,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             console.error('创建批次失败:', err);
             message.error('创建批次失败');
         } finally {
+            hideLoading();
             setIsCreatingBatches(false);
         }
     };
@@ -598,7 +604,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 if (newItems.length > 0 && !selectedBatch && pageNum === 1) {
                     setSelectedBatch(newItems[0]);
                 } else if (selectedBatch) {
-                    const latest = newItems.find(b => b.id === selectedBatch.id);
+                    const latest = newItems.find((b: any) => b.id === selectedBatch.id);
                     if (latest && latest.breakdown_status !== selectedBatch.breakdown_status) {
                         setSelectedBatch(latest);
                     }
@@ -815,8 +821,68 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             fetchChapters();
         }
         if (activeTab === 'PLOT') {
-            // 进入 PLOT 页面时，先创建批次（幂等），再获取批次列表
-            createBatchesAndFetch();
+            // 进入 PLOT 页面时，先检查项目状态
+            if (project?.status !== 'ready' && project?.status !== 'parsing') {
+                // 状态不正确，提示并跳转到 CONFIG 页面
+                if (project?.status === 'uploaded') {
+                    message.warning('请先完成章节拆分');
+                } else if (project?.status === 'draft') {
+                    message.warning('请先上传文件');
+                } else {
+                    message.warning('项目状态不允许进入此页面');
+                }
+                setActiveTab('CONFIG');
+                return;
+            }
+            // 优化：先获取批次列表，只有在列表为空时才创建批次
+            (async () => {
+                setLoadingBatches(true);
+                try {
+                    const res = await projectApi.getBatches(projectId!, 1, 20);
+                    const total = res.data?.total || 0;
+
+                    if (total === 0) {
+                        // 批次不存在，需要创建
+                        await createBatchesAndFetch();
+                    } else {
+                        // 批次已存在，直接加载
+                        const newItems = res.data?.items || [];
+                        setBatchTotal(total);
+                        setBatches(newItems);
+                        setBatchHasMore((1 * 20) < total);
+
+                        if (newItems.length > 0 && !selectedBatch) {
+                            setSelectedBatch(newItems[0]);
+                        }
+
+                        // 自动检测正在处理的批次
+                        if (!breakdownTaskId) {
+                            const processingBatch = newItems.find(
+                                (b: any) => b.breakdown_status === BATCH_STATUS.PROCESSING || b.breakdown_status === BATCH_STATUS.QUEUED
+                            );
+                            if (processingBatch) {
+                                try {
+                                    const taskRes = await breakdownApi.getBatchCurrentTask(processingBatch.id);
+                                    const taskId = taskRes.data?.task_id;
+                                    if (taskId) {
+                                        console.log('[Workspace] 检测到正在处理的批次，自动连接 console:', processingBatch.batch_number, taskId);
+                                        setSelectedBatch(processingBatch);
+                                        setBreakdownTaskId(taskId);
+                                        addLog('info', `检测到批次 ${processingBatch.batch_number} 正在拆解中，已自动连接...`);
+                                    }
+                                } catch (err) {
+                                    console.warn('[Workspace] 获取批次任务 ID 失败:', err);
+                                }
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.error('获取批次列表失败:', err);
+                    message.error('获取批次列表失败');
+                } finally {
+                    setLoadingBatches(false);
+                }
+            })();
         }
     }, [activeTab, projectId]);
 
@@ -942,6 +1008,8 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             setShowConsole(true);
             clearLogs();
             lastStepRef.current = ''; // 重置步骤记录
+            setTaskCompleted(false);  // 重置任务完成标志
+            setBreakdownCompleted(false);  // 重置拆解完成标志
             addLog('info', `配置已加载，执行模式: ${mode}，开始拆解批次 ${selectedBatch?.batch_number || ''}...`);
 
             const res = await breakdownApi.startBreakdown(batchId, {
@@ -1195,12 +1263,39 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         fileInputRef.current?.click();
     };
 
+    // 处理项目文件上传
+    const handleProjectFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file || !projectId) return;
+
+        setUploading(true);
+        try {
+            await projectApi.uploadFile(projectId, file);
+            message.success('文件上传成功！');
+
+            // 刷新项目数据以更新文件信息
+            const p = await projectApi.getProject(projectId);
+            if (p.data) setProject(p.data);
+        } catch (error: any) {
+            console.error('文件上传失败:', error);
+            const errorMsg = error.response?.data?.detail || '文件上传失败，请重试';
+            message.error(errorMsg);
+        } finally {
+            setUploading(false);
+            // 清空 input 值，允许重复上传同一文件
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
+        }
+    };
+
     // 智能拆分章节
     const handleSplit = async () => {
         if (!projectId) return;
         setSplitting(true);
         setIsProcessing(true);
-        setShowConsole(true); // 开启控制台查看日志
+        // 显示全局 loading 提示
+        const hideLoading = message.loading('正在拆分章节，请稍候...', 0);
         try {
             const res = await projectApi.splitChapters(projectId);
             if (res.data) {
@@ -1213,6 +1308,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             console.error('拆分失败:', error);
             message.error('拆分失败，请检查文件格式或拆分规则');
         } finally {
+            hideLoading();
             setSplitting(false);
             setIsProcessing(false);
         }
@@ -1351,6 +1447,15 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
     return (
         <div className="flex h-full bg-slate-950 overflow-hidden">
+            {/* 隐藏的项目文件上传 input */}
+            <input
+                ref={fileInputRef}
+                type="file"
+                accept=".txt,.docx,.pdf"
+                onChange={handleProjectFileUpload}
+                className="hidden"
+            />
+
             {/* Sidebar */}
             <div className="w-16 md:w-64 bg-slate-900 border-r border-slate-800 flex flex-col justify-between py-4 z-20">
                 <div className="space-y-6">
@@ -1363,7 +1468,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                              <SidebarItem icon={Users} label="智能体编排 (Agent)" active={activeTab === 'AGENTS'} onClick={() => setActiveTab('AGENTS')} />
                              <SidebarItem icon={Layers} label="技能库 (Skill)" active={activeTab === 'SKILLS'} onClick={() => setActiveTab('SKILLS')} />
                              <div className="my-2 border-t border-slate-800 mx-2 hidden md:block" />
-                             <SidebarItem icon={LayoutTemplate} label="剧集拆解 (Plot)" active={activeTab === 'PLOT'} onClick={() => setActiveTab('PLOT')} />
+                             <SidebarItem icon={LayoutTemplate} label="剧集拆解 (Plot)" active={activeTab === 'PLOT'} onClick={() => setActiveTab('PLOT')} disabled={project.status !== 'ready' && project.status !== 'parsing'} title={project.status === 'uploaded' ? '请先完成章节拆分' : project.status === 'draft' ? '请先上传文件' : ''} />
                              <SidebarItem icon={FileEdit} label="剧本生成 (Script)" active={activeTab === 'SCRIPT'} onClick={() => setActiveTab('SCRIPT')} />
                          </div>
                     </div>
@@ -1546,7 +1651,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                         <button
                                             onClick={handleStopCurrentBreakdown}
                                             disabled={isStopping}
-                                            className="flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-red-900/20 transition-all hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed"
+                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white border border-red-500/30 rounded-lg text-xs font-bold shadow-lg shadow-red-900/20 transition-all hover:scale-[1.02] disabled:opacity-70 disabled:cursor-not-allowed"
                                         >
                                             {isStopping ? (
                                                 <>
@@ -1564,16 +1669,16 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                         <button
                                             onClick={() => handleStartBreakdownClick(selectedBatch.id)}
                                             disabled={!!breakdownTaskId || isAllBreakdownRunning || isBatchRunning}
-                                            className="flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-emerald-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
+                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white border border-emerald-500/30 rounded-lg text-xs font-bold shadow-lg shadow-emerald-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
                                             <Play size={14} />
                                             开始拆解
-                                        </button>
+                               </button>
                                     ) : selectedBatch && selectedBatch.breakdown_status === BATCH_STATUS.FAILED ? (
                                         <button
                                             onClick={() => handleStartBreakdownClick(selectedBatch.id)}
                                             disabled={!!breakdownTaskId || isAllBreakdownRunning || isBatchRunning}
-                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-orange-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
+                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 text-white border border-orange-500/30 rounded-lg text-xs font-bold shadow-lg shadow-orange-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
                                             <RotateCcw size={14} />
                                             重试拆解
@@ -1582,7 +1687,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                         <button
                                             onClick={() => handleStartBreakdownClick(selectedBatch.id)}
                                             disabled={!!breakdownTaskId || isAllBreakdownRunning || isBatchRunning}
-                                            className="flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white rounded-lg text-xs font-bold shadow-lg transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
+                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white border border-blue-500/30 rounded-lg text-xs font-bold shadow-lg transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
                                         >
                                             <RotateCcw size={14} />
                                             重新拆解

@@ -574,55 +574,55 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
           </div>
 
           {/* 质检信息卡片 */}
-          {breakdownResult.qa_status && (
+          {displayBreakdownResult?.qa_status && (
             <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-purple-400 flex items-center gap-2">
                   <BarChart3 className="w-4 h-4" />
                   质检结果
                   {/* 自动修正次数标签 */}
-                  {breakdownResult.qa_report?.auto_fix_attempts !== undefined &&
-                   breakdownResult.qa_report.auto_fix_attempts > 0 && (
+                  {displayBreakdownResult.qa_report?.auto_fix_attempts !== undefined &&
+                   displayBreakdownResult.qa_report.auto_fix_attempts > 0 && (
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                      breakdownResult.qa_report.auto_fix_success
+                      displayBreakdownResult.qa_report.auto_fix_success
                         ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
                         : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
                     }`}>
-                      已修正 {breakdownResult.qa_report.auto_fix_attempts} 次
+                      已修正 {displayBreakdownResult.qa_report.auto_fix_attempts} 次
                     </span>
                   )}
                 </h3>
                 <div className="flex items-center gap-3">
                   {/* 质检分数 */}
-                  {breakdownResult.qa_score !== undefined && (
+                  {displayBreakdownResult.qa_score !== undefined && (
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs text-slate-400">分数:</span>
                       <span className={`text-sm font-black ${
-                        breakdownResult.qa_score >= 80
+                        displayBreakdownResult.qa_score >= 80
                           ? 'text-green-400'
-                          : breakdownResult.qa_score >= 60
+                          : displayBreakdownResult.qa_score >= 60
                           ? 'text-yellow-400'
                           : 'text-red-400'
                       }`}>
-                        {breakdownResult.qa_score}
+                        {displayBreakdownResult.qa_score}
                       </span>
                     </div>
                   )}
                   {/* 质检状态 */}
                   <div className={`px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1 ${
-                    breakdownResult.qa_status === 'PASS'
+                    displayBreakdownResult.qa_status === 'PASS'
                       ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                      : breakdownResult.qa_status === 'FAIL'
+                      : displayBreakdownResult.qa_status === 'FAIL'
                       ? 'bg-red-500/20 text-red-400 border border-red-500/30'
                       : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
                   }`}>
-                    {breakdownResult.qa_status === 'PASS' && <CheckCircle className="w-3 h-3" />}
-                    {breakdownResult.qa_status === 'FAIL' && <XCircle className="w-3 h-3" />}
-                    {breakdownResult.qa_status === 'pending' && <Clock className="w-3 h-3" />}
-                    {breakdownResult.qa_status === 'PASS' ? '通过' : breakdownResult.qa_status === 'FAIL' ? '未通过' : '待质检'}
+                    {displayBreakdownResult.qa_status === 'PASS' && <CheckCircle className="w-3 h-3" />}
+                    {displayBreakdownResult.qa_status === 'FAIL' && <XCircle className="w-3 h-3" />}
+                    {displayBreakdownResult.qa_status === 'pending' && <Clock className="w-3 h-3" />}
+                    {displayBreakdownResult.qa_status === 'PASS' ? '通过' : displayBreakdownResult.qa_status === 'FAIL' ? '未通过' : '待质检'}
                   </div>
                   {/* 查看报告按钮 */}
-                  {breakdownResult.qa_report && (
+                  {displayBreakdownResult.qa_report && (
                     <button
                       onClick={() => setQaReportModalOpen(true)}
                       className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded-lg border border-slate-600 transition-colors"
@@ -631,10 +631,10 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
                     </button>
                   )}
                   {/* 手动重新生成按钮 - 当自动修正失败后显示 */}
-                  {breakdownResult.qa_status === 'FAIL' &&
-                   breakdownResult.qa_report?.auto_fix_attempts !== undefined &&
-                   breakdownResult.qa_report.auto_fix_attempts >= 3 &&
-                   !breakdownResult.qa_report.auto_fix_success &&
+                  {displayBreakdownResult.qa_status === 'FAIL' &&
+                   displayBreakdownResult.qa_report?.auto_fix_attempts !== undefined &&
+                   displayBreakdownResult.qa_report.auto_fix_attempts >= 3 &&
+                   !displayBreakdownResult.qa_report.auto_fix_success &&
                    onStartBreakdown && (
                     <button
                       onClick={() => onStartBreakdown(selectedBatch!.id)}
@@ -677,7 +677,7 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
                     {displayBreakdownResult.plot_points.filter(p => p.status === 'used').length}
                   </span>
                 </span>
-                <span claame="text-slate-600">|</span>
+                <span className="text-slate-600">|</span>
                 <span className="text-slate-400">
                   未用 <span className="text-slate-400 font-semibold">
                     {displayBreakdownResult.plot_points.filter(p => p.status === 'unused').length}
@@ -731,7 +731,7 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
         <AnimatePresence>
           {qaReportModalOpen && (
             <QAReportModal
-              report={breakdownResult.qa_report || null}
+              report={displayBreakdownResult?.qa_report || null}
               onClose={() => setQaReportModalOpen(false)}
             />
           )}
