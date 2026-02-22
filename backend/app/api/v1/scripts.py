@@ -139,13 +139,16 @@ async def start_episode_script(
     project_result = await db.execute(select(Project).where(Project.id == breakdown.project_id))
     project = project_result.scalar_one_or_none()
 
-    # 检查积分（纯积分制）- 只是在任务启动前检查，Celery 任务成功完成后才实际扣除
+    # 检查积分（纯积分制）
     quota_service = QuotaService(db)
     credits_check = await quota_service.check_credits(current_user, "script")
     if not credits_check["allowed"]:
         raise HTTPException(status_code=403, detail=f"积分不足: 需要 {credits_check['cost']}，余额 {credits_check['balance']}")
 
-    # 注意：积分在实际扣除在 Celery 任务完成后执行 (script_tasks.py)
+    # 预扣积分（与剧集拆解一致）
+    consume_result = await quota_service.consume_credits(current_user, "script", "剧本生成")
+    if not consume_result:
+        raise HTTPException(status_code=403, detail="积分预扣失败，请重试")
 
     # 创建任务
     task_config = {
@@ -302,21 +305,25 @@ async def start_batch_scripts(
     project_result = await db.execute(select(Project).where(Project.id == breakdown.project_id))
     project = project_result.scalar_one_or_none()
 
-    # 检查积分（纯积分制）- 只是检查，Celery 任务成功完成后才实际扣除
+    # 检查积分（纯积分制）
     quota_service = QuotaService(db)
-    required = len(request.episode_numbers)
-    required_credits = required * 50  # script 每次 50 积分
     credits_check = await quota_service.check_credits(current_user, "script")
+    required = len(request.episode_numbers)
+    required_credits = required * credits_check["cost"]  # 使用统一定价
 
     if credits_check["balance"] < required_credits:
         raise HTTPException(status_code=403, detail=f"积分不足: 需要 {required_credits}，余额 {credits_check['balance']}")
+
+    # 预扣积分（与剧集拆解一致）
+    for _ in range(required):
+        consume_result = await quota_service.consume_credits(current_user, "script", "剧本生成")
+        if not consume_result:
+            raise HTTPException(status_code=403, detail="积分预扣失败，请重试")
 
     task_ids = []
     from app.tasks.script_tasks import run_episode_script_task
 
     for ep_num in request.episode_numbers:
-        # 注意：积分在实际扣除在 Celery 任务完成后执行 (script_tasks.py)
-
         task = AITask(
             project_id=breakdown.project_id,
             batch_id=breakdown.batch_id,

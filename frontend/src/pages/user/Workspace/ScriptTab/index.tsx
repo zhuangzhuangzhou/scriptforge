@@ -8,7 +8,7 @@ import { message } from 'antd';
 import ConfirmModal from '../../../../components/modals/ConfirmModal';
 import ConsoleLogger, { LogEntry } from '../../../../components/ConsoleLogger';
 import { useBreakdownLogs } from '../../../../hooks/useBreakdownLogs';
-import { scriptApi, breakdownApi, exportApi } from '../../../../services/api';
+import { scriptApi, breakdownApi, exportApi, projectApi } from '../../../../services/api';
 import type { EpisodeScript, PlotPoint, ScriptStructure } from '../../../../types';
 import { TASK_STATUS } from '../../../../constants/status';
 
@@ -28,6 +28,7 @@ const STRUCTURE_LABELS = {
 } as const;
 
 const ScriptTab: React.FC<ScriptTabProps> = ({
+  projectId,
   batchId,
   breakdownId,
   novelType
@@ -41,6 +42,9 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
   const [viewMode, setViewMode] = useState<'structure' | 'full'>('structure');
   const [exporting, setExporting] = useState(false);
   const [approving, setApproving] = useState(false);
+
+  // 缓存：episode → breakdownId 映射，避免重复查询
+  const episodeToBreakdownMapRef = useRef<Map<number, string>>(new Map());
 
   // 编辑模式状态
   const [editMode, setEditMode] = useState(false);
@@ -138,34 +142,87 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     }
   );
 
-  // 加载剧集列表（从拆解结果的 plot_points 中提取）
+  // 加载剧集列表（从项目的所有已完成批次中聚合剧集）
   const loadEpisodes = useCallback(async () => {
-    if (!batchId) return;
+    if (!projectId) return;
 
     try {
       setLoading(true);
-      const response = await breakdownApi.getBreakdownResults(batchId);
-      const data = response.data;
 
-      if (data.plot_points) {
-        // 从 plot_points 中提取集数
-        const episodeSet = new Set<number>();
-        (data.plot_points as PlotPoint[]).forEach(pp => {
-          if (pp.episode) episodeSet.add(pp.episode);
-        });
+      // 1. 获取项目的所有批次
+      const batchesResponse = await projectApi.getBatches(projectId);
+      const batches = batchesResponse.data.items || [];
 
-        const episodeList = Array.from(episodeSet).sort((a, b) => a - b).map(ep => ({
-          episode: ep,
-          status: 'pending'
-        }));
+      // 2. 筛选已完成拆解的批次
+      const completedBatches = batches.filter((b: any) => b.breakdown_status === 'completed');
 
-        setEpisodes(episodeList);
-        // 只有在没有选中任何集数时才设置默认选中第一集
-        // 使用 ref 来追踪是否需要设置默认值，避免循环触发
-        if (!selectedEpisodeRef.current && episodeList.length > 0) {
-          selectedEpisodeRef.current = true; // 标记已设置
-          setSelectedEpisode(episodeList[0].episode);
+      if (completedBatches.length === 0) {
+        setEpisodes([]);
+        episodeToBreakdownMapRef.current.clear();
+        return;
+      }
+
+      // 3. 从所有已完成批次的拆解结果中提取剧集
+      const episodeSet = new Set<number>();
+      const breakdownIdMap = new Map<number, string>(); // episode -> breakdownId
+
+      for (const batch of completedBatches) {
+        try {
+          const breakdownResponse = await breakdownApi.getBreakdownResults(batch.id);
+          const data = breakdownResponse.data;
+
+          if (data.plot_points) {
+            (data.plot_points as PlotPoint[]).forEach(pp => {
+              if (pp.episode) {
+                episodeSet.add(pp.episode);
+                // 记录该剧集对应的 breakdownId（用于后续加载剧本）
+                if (!breakdownIdMap.has(pp.episode)) {
+                  breakdownIdMap.set(pp.episode, data.id);
+                }
+              }
+            });
+          }
+        } catch (err) {
+          console.warn(`获取批次 ${batch.id} 的拆解结果失败:`, err);
         }
+      }
+
+      // 缓存映射关系，避免后续重复查询
+      episodeToBreakdownMapRef.current = breakdownIdMap;
+
+      const episodeNumbers = Array.from(episodeSet).sort((a, b) => a - b);
+
+      // 4. 获取所有已生成的剧本（从所有 breakdownId）
+      const generatedScripts: Map<number, EpisodeScript> = new Map();
+      const uniqueBreakdownIds = new Set(breakdownIdMap.values());
+
+      for (const bdId of uniqueBreakdownIds) {
+        try {
+          const scriptsResponse = await scriptApi.getEpisodeScripts(bdId);
+          scriptsResponse.data.items.forEach((script: EpisodeScript) => {
+            generatedScripts.set(script.episode_number, script);
+          });
+        } catch (err) {
+          console.warn(`获取 breakdown ${bdId} 的剧本列表失败:`, err);
+        }
+      }
+
+      // 5. 合并数据：剧集列表 + 已生成的剧本状态
+      const episodeList = episodeNumbers.map(ep => {
+        const script = generatedScripts.get(ep);
+        return {
+          episode: ep,
+          status: script ? 'completed' : 'pending',
+          script: script || undefined
+        };
+      });
+
+      setEpisodes(episodeList);
+
+      // 只有在没有选中任何集数时才设置默认选中第一集
+      if (!selectedEpisodeRef.current && episodeList.length > 0) {
+        selectedEpisodeRef.current = true;
+        setSelectedEpisode(episodeList[0].episode);
       }
     } catch (err) {
       console.error('加载剧集列表失败:', err);
@@ -173,30 +230,41 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [batchId]);
+  }, [projectId]);
 
   // 使用 ref 来追踪是否需要设置默认集数
   const selectedEpisodeRef = React.useRef(false);
 
-  // 监听 batchId 变化，重置 ref
+  // 监听 projectId 变化，重置 ref
   React.useEffect(() => {
     selectedEpisodeRef.current = false;
-  }, [batchId]);
+  }, [projectId]);
 
   useEffect(() => {
-    // 只在 batchId 变化时加载，不需要依赖 loadEpisodes
-    if (batchId) {
+    // 在 projectId 存在时加载
+    if (projectId) {
       loadEpisodes();
     }
-  }, [batchId, loadEpisodes]);
+  }, [projectId, loadEpisodes]);
 
-  // 加载单集剧本
+  // 加载单集剧本（使用缓存的 breakdownId 映射，避免重复查询）
   const loadEpisodeScript = useCallback(async (episodeNumber: number) => {
-    if (!breakdownId) return;
+    if (!projectId) return;
 
     try {
-      const response = await scriptApi.getEpisodeScript(breakdownId, episodeNumber);
+      // 1. 从缓存中获取该剧集对应的 breakdownId
+      const targetBreakdownId = episodeToBreakdownMapRef.current.get(episodeNumber);
+
+      if (!targetBreakdownId) {
+        console.warn(`未找到第 ${episodeNumber} 集对应的拆解结果（缓存中不存在）`);
+        setCurrentScript(null);
+        return;
+      }
+
+      // 2. 加载该剧集的剧本
+      const response = await scriptApi.getEpisodeScript(targetBreakdownId, episodeNumber);
       setCurrentScript(response.data);
+
       // 更新列表中的状态
       setEpisodes(prev => prev.map(ep =>
         ep.episode === episodeNumber
@@ -207,13 +275,13 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
       // 剧本不存在，保持 pending 状态
       setCurrentScript(null);
     }
-  }, [breakdownId]);
+  }, [projectId]);
 
   useEffect(() => {
-    if (selectedEpisode && breakdownId) {
+    if (selectedEpisode && projectId) {
       loadEpisodeScript(selectedEpisode);
     }
-  }, [selectedEpisode, breakdownId, loadEpisodeScript]);
+  }, [selectedEpisode, projectId, loadEpisodeScript]);
 
   // 防误触退出
   useEffect(() => {
@@ -234,7 +302,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
 
   // 批量生成剧本
   const handleBatchGenerate = async () => {
-    if (!breakdownId || episodes.length === 0) {
+    if (!projectId || episodes.length === 0) {
       message.error('没有可生成的剧集');
       setError('没有可生成的剧集');
       return;
@@ -252,11 +320,28 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
       setBatchGenerating(true);
       setBatchProgress({ completed: 0, total: pendingEpisodes.length });
 
-      const response = await scriptApi.startBatchScripts(breakdownId, pendingEpisodes, {
-        novelType
-      });
+      // 按 breakdownId 分组启动批量任务（使用缓存的映射）
+      const breakdownGroups = new Map<string, number[]>();
+      for (const ep of pendingEpisodes) {
+        const bdId = episodeToBreakdownMapRef.current.get(ep);
+        if (bdId) {
+          if (!breakdownGroups.has(bdId)) {
+            breakdownGroups.set(bdId, []);
+          }
+          breakdownGroups.get(bdId)!.push(ep);
+        }
+      }
 
-      message.success(`已启动 ${response.data.total} 个剧本生成任务`);
+      const allTaskIds: string[] = [];
+
+      for (const [bdId, episodeNums] of breakdownGroups) {
+        const response = await scriptApi.startBatchScripts(bdId, episodeNums, {
+          novelType
+        });
+        allTaskIds.push(...response.data.task_ids);
+      }
+
+      message.success(`已启动 ${allTaskIds.length} 个剧本生成任务`);
 
       // 更新列表状态
       setEpisodes(prev => prev.map(ep =>
@@ -264,7 +349,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
       ));
 
       // 开始轮询所有任务状态
-      const taskIds = response.data.task_ids;
+      const taskIds = allTaskIds;
       const completedTasks = new Set<string>();
 
       const batchPollInterval = setInterval(async () => {
@@ -314,11 +399,11 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     }
   };
 
-  // 生成单集剧本
+  // 生成单集剧本（使用缓存的映射，避免重复查询）
   const handleGenerateScript = async (episodeNumber: number) => {
-    if (!breakdownId) {
-      message.error('请先完成剧情拆解');
-      setError('请先完成剧情拆解');
+    if (!projectId) {
+      message.error('项目信息缺失');
+      setError('项目信息缺失');
       return;
     }
 
@@ -331,7 +416,18 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
       setError(null);
       setGenerating(episodeNumber);
 
-      const response = await scriptApi.startEpisodeScript(breakdownId, episodeNumber, {
+      // 1. 从缓存中获取该剧集对应的 breakdownId
+      const targetBreakdownId = episodeToBreakdownMapRef.current.get(episodeNumber);
+
+      if (!targetBreakdownId) {
+        message.error(`未找到第 ${episodeNumber} 集的拆解结果`);
+        setError(`未找到第 ${episodeNumber} 集的拆解结果`);
+        setGenerating(null);
+        return;
+      }
+
+      // 2. 启动剧本生成任务
+      const response = await scriptApi.startEpisodeScript(targetBreakdownId, episodeNumber, {
         novelType
       });
 
@@ -599,14 +695,14 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     );
   };
 
-  // 无拆解结果时的提示
-  if (!batchId) {
+  // 无项目信息时的提示
+  if (!projectId) {
     return (
       <div className="h-full flex items-center justify-center bg-slate-950">
         <div className="text-center text-slate-500">
           <FileEdit size={64} className="mx-auto mb-4 opacity-30" />
-          <p className="text-lg font-medium">请先选择一个批次</p>
-          <p className="text-sm mt-2">完成剧情拆解后即可生成剧本</p>
+          <p className="text-lg font-medium">项目信息缺失</p>
+          <p className="text-sm mt-2">请返回项目列表重新进入</p>
         </div>
       </div>
     );
@@ -670,7 +766,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
 
           <button
             onClick={() => selectedEpisode && handleGenerateScript(selectedEpisode)}
-            disabled={!selectedEpisode || generating !== null || !breakdownId}
+            disabled={!selectedEpisode || generating !== null || !projectId}
             className="w-full py-2.5 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 disabled:from-slate-700 disabled:to-slate-700 text-white rounded-lg font-bold shadow-lg shadow-green-900/20 text-sm flex items-center justify-center gap-2 transition-all hover:scale-[1.02] disabled:hover:scale-100"
           >
             {generating ? (
@@ -686,7 +782,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
 
           <button
             onClick={handleBatchGenerate}
-            disabled={!breakdownId || generating !== null || batchGenerating}
+            disabled={!projectId || generating !== null || batchGenerating}
             className="w-full py-2 bg-slate-800 hover:bg-slate-700 disabled:bg-slate-800/50 text-slate-300 disabled:text-slate-600 border border-slate-700 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
           >
             {batchGenerating ? (

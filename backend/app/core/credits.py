@@ -3,16 +3,17 @@
 提供积分的消耗、充值、查询等功能。
 
 纯积分制定价（双重计费，可配置）：
-- 基础费：从数据库 system_configs 读取，默认 breakdown 100、script 50、qa 30
-- Token 费：可配置开关，从数据库读取
+- 基础费：从环境变量或代码常量读取，默认 breakdown 100、script 50、qa 30
+- Token 费：可配置开关，从环境变量读取
 - 充值比例: 1 元 = 100 积分
+
+注意：system_configs 表已被删除，配置统一使用环境变量和代码常量
 """
 from datetime import datetime, timezone
 from typing import Optional, List, Tuple
 from uuid import UUID
 from decimal import Decimal
 import os
-import time
 import logging
 
 from sqlalchemy import select, desc, and_, func, or_
@@ -26,36 +27,40 @@ from app.models.ai_model_pricing import AIModelPricing
 logger = logging.getLogger(__name__)
 
 
-# 默认基础费定价（可被数据库配置覆盖）
+# ============================================================================
+# 积分定价配置（从环境变量读取，提供默认值）
+# ============================================================================
+
+def _get_env_int(key: str, default: int) -> int:
+    """从环境变量读取整数，失败时返回默认值"""
+    try:
+        return int(os.getenv(key, str(default)))
+    except (ValueError, TypeError):
+        logger.warning(f"环境变量 {key} 无效，使用默认值 {default}")
+        return default
+
+
+# 基础费定价
 CREDITS_PRICING = {
-    "breakdown": 100,
-    "script": 50,
-    "qa": 30,
-    "retry": 50,
+    "breakdown": _get_env_int("CREDITS_BREAKDOWN", 100),
+    "script": _get_env_int("CREDITS_SCRIPT", 50),
+    "qa": _get_env_int("CREDITS_QA", 30),
+    "retry": _get_env_int("CREDITS_RETRY", 50),
 }
 
-# 默认 Token 计费配置（可被数据库配置覆盖）
+# Token 计费配置
 TOKEN_BILLING_ENABLED = os.getenv("TOKEN_BILLING_ENABLED", "false").lower() == "true"
-TOKEN_CREDITS_INPUT = int(os.getenv("TOKEN_CREDITS_INPUT", "1"))
-TOKEN_CREDITS_OUTPUT = int(os.getenv("TOKEN_CREDITS_OUTPUT", "2"))
+TOKEN_CREDITS_INPUT = _get_env_int("TOKEN_CREDITS_INPUT", 1)
+TOKEN_CREDITS_OUTPUT = _get_env_int("TOKEN_CREDITS_OUTPUT", 2)
 
 # 兼容旧常量
 CREDITS_PER_1K_TOKENS = TOKEN_CREDITS_INPUT
 BREAKDOWN_BASE_CREDITS = CREDITS_PRICING["breakdown"]
 SCRIPT_BASE_CREDITS = CREDITS_PRICING["script"]
 
-# 配置缓存（TTL 60 秒，减少数据库查询）
-_config_cache: Optional[dict] = None
-_config_cache_ts: float = 0
-_CONFIG_CACHE_TTL = 60  # 秒
-
-_DEFAULT_CONFIG = {
-    "base": {
-        "breakdown": CREDITS_PRICING["breakdown"],
-        "script": CREDITS_PRICING["script"],
-        "qa": CREDITS_PRICING["qa"],
-        "retry": CREDITS_PRICING["retry"],
-    },
+# 统一配置结构
+CREDITS_CONFIG = {
+    "base": CREDITS_PRICING,
     "token": {
         "enabled": TOKEN_BILLING_ENABLED,
         "input_per_1k": TOKEN_CREDITS_INPUT,
@@ -64,42 +69,24 @@ _DEFAULT_CONFIG = {
 }
 
 
-def _parse_config_rows(configs: dict) -> dict:
-    """将数据库配置行解析为结构化字典"""
-    return {
-        "base": {
-            "breakdown": int(configs.get("credits_breakdown", "100")),
-            "script": int(configs.get("credits_script", "50")),
-            "qa": int(configs.get("credits_qa", "30")),
-            "retry": int(configs.get("credits_retry", "50")),
-        },
-        "token": {
-            "enabled": configs.get("token_billing_enabled", "false").lower() == "true",
-            "input_per_1k": int(configs.get("token_input_per_1k", "1")),
-            "output_per_1k": int(configs.get("token_output_per_1k", "2")),
-        }
-    }
-
+# ============================================================================
+# 配置获取函数（统一接口，不再查询数据库）
+# ============================================================================
 
 async def get_credits_config(db: AsyncSession) -> dict:
-    """从数据库获取积分配置（带缓存，TTL 60 秒）"""
-    global _config_cache, _config_cache_ts
+    """获取积分配置（异步版本）
 
-    now = time.monotonic()
-    if _config_cache is not None and (now - _config_cache_ts) < _CONFIG_CACHE_TTL:
-        return _config_cache
+    注意：不再查询数据库，直接返回配置常量
+    """
+    return CREDITS_CONFIG
 
-    try:
-        from app.models.system_config import SystemConfig
-        result = await db.execute(select(SystemConfig))
-        configs = {c.key: c.value for c in result.scalars().all()}
-        parsed = _parse_config_rows(configs)
-        _config_cache = parsed
-        _config_cache_ts = now
-        return parsed
-    except Exception as e:
-        logger.warning(f"读取系统配置失败，使用默认值: {e}")
-        return _DEFAULT_CONFIG
+
+def get_credits_config_sync(db: "Session") -> dict:
+    """获取积分配置（同步版本）
+
+    注意：不再查询数据库，直接返回配置常量
+    """
+    return CREDITS_CONFIG
 
 
 def calculate_token_credits(token_count: int) -> int:
@@ -690,35 +677,6 @@ class CreditsService:
 
 
 # ============ 同步版本函数（用于 Celery worker）============
-
-def get_credits_config_sync(db: "Session") -> dict:
-    """从数据库获取积分配置（同步版本，带缓存）
-
-    用于 Celery worker 中的同步操作。
-
-    Args:
-        db: 同步数据库会话
-
-    Returns:
-        dict: 包含 base 和 token 配置的字典
-    """
-    global _config_cache, _config_cache_ts
-
-    now = time.monotonic()
-    if _config_cache is not None and (now - _config_cache_ts) < _CONFIG_CACHE_TTL:
-        return _config_cache
-
-    try:
-        from app.models.system_config import SystemConfig
-        result = db.query(SystemConfig).all()
-        configs = {c.key: c.value for c in result}
-        parsed = _parse_config_rows(configs)
-        _config_cache = parsed
-        _config_cache_ts = now
-        return parsed
-    except Exception as e:
-        logger.warning(f"读取系统配置失败，使用默认值: {e}")
-        return _DEFAULT_CONFIG
 
 
 def consume_credits_for_task_sync(db: "Session", user_id: str, task_type: str, reference_id: Optional[str] = None) -> dict:

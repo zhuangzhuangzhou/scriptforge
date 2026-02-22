@@ -1,6 +1,11 @@
 """单集剧本创作 Celery 任务
 
 基于 breakdown_id 和 episode_number 生成单集剧本。
+
+积分策略：
+- API 层预扣积分（scripts.py）
+- 任务成功完成：不退款（积分已预扣）
+- 任务失败：自动退款（保持公平）
 """
 import json
 from sqlalchemy.orm import Session
@@ -8,7 +13,6 @@ from app.core.celery_app import celery_app
 from app.core.database import SyncSessionLocal
 from app.core.progress import update_task_progress_sync
 from app.core.status import TaskStatus
-from app.core.credits import consume_credits_for_task_sync
 from app.core.exceptions import AITaskException, RetryableError, classify_exception
 from app.models.ai_task import AITask
 import logging
@@ -92,11 +96,7 @@ def run_episode_script_task(
                 message=f"✅ 第 {episode_number} 集剧本生成完成！"
             )
 
-        # 扣除积分（任务完成后扣费）
-        credits_result = consume_credits_for_task_sync(db, user_id, "script", task_id)
-        if not credits_result["success"]:
-            logger.error(f"积分扣费失败: user={user_id}, task={task_id}, reason={credits_result['message']}")
-        db.commit()
+        # 注意：积分已在 API 层预扣，无需在这里扣费
 
         return {"status": TaskStatus.COMPLETED, "task_id": task_id, **result}
 
@@ -104,6 +104,17 @@ def run_episode_script_task(
         classified_error = classify_exception(e)
         error_info = {"code": getattr(classified_error, "code", "UNKNOWN_ERROR"), "message": str(e)}
         update_task_progress_sync(db, task_id, status=TaskStatus.FAILED, error_message=json.dumps(error_info))
+
+        # 失败时退还预扣的积分
+        try:
+            from app.core.quota import refund_episode_quota_sync
+            refund_episode_quota_sync(db, user_id, 1, auto_commit=False)
+            db.commit()
+            logger.info(f"任务失败，已退还预扣积分: user_id={user_id}, task_id={task_id}")
+        except Exception as refund_error:
+            logger.error(f"退还积分失败: {refund_error}")
+            db.rollback()
+
         if log_publisher:
             log_publisher.publish_error(task_id, str(e), error_code=error_info["code"])
         raise
