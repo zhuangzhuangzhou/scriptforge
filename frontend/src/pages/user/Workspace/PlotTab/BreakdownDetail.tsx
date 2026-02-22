@@ -8,6 +8,7 @@ import { Batch, PlotBreakdown, PlotPoint, QAReport } from '../../../../types';
 import { BATCH_STATUS, TASK_STATUS } from '../../../../constants/status';
 import { breakdownApi } from '../../../../services/api';
 import BreakdownDetailModal from './BreakdownDetailModal';
+import PlotPointsViewModal from './PlotPointsViewModal';
 
 interface BreakdownDetailProps {
   selectedBatch: Batch | null;
@@ -293,6 +294,11 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   const [qaReportModalOpen, setQaReportModalOpen] = useState(false); // 质检报告弹窗
   const [detailModalOpen, setDetailModalOpen] = useState(false); // 拆解详情弹窗
   const [currentTaskStatus, setCurrentTaskStatus] = useState<string | null>(null); // 当前任务状态
+  const [plotPointsViewModalOpen, setPlotPointsViewModalOpen] = useState(false); // 剧情点查看弹窗
+  const [viewingBreakdownData, setViewingBreakdownData] = useState<PlotBreakdown | null>(null); // 正在查看的拆解数据
+  const [loadingBreakdownData, setLoadingBreakdownData] = useState(false); // 加载拆解数据
+  const [historyBreakdownIds, setHistoryBreakdownIds] = useState<string[]>([]); // 历史记录ID列表
+  const [currentHistoryIndex, setCurrentHistoryIndex] = useState<number>(0); // 当前查看的历史记录索引
 
   // 获取当前批次任务状态（仅在页面加载时调用一次，用于连接WebSocket）
   useEffect(() => {
@@ -330,6 +336,78 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
     fetchCurrentTask();
   }, [selectedBatch?.id]); // 只在batch变化时触发
 
+  // 处理查看历史拆解的剧情点详情
+  const handleViewPlotPoints = async (breakdownId: string, allBreakdownIds?: string[]) => {
+    setLoadingBreakdownData(true);
+    setPlotPointsViewModalOpen(true); // 打开新弹窗
+
+    // 如果传入了历史记录列表，保存它
+    if (allBreakdownIds && allBreakdownIds.length > 0) {
+      setHistoryBreakdownIds(allBreakdownIds);
+      const index = allBreakdownIds.indexOf(breakdownId);
+      setCurrentHistoryIndex(index >= 0 ? index : 0);
+    }
+
+    try {
+      // 使用新的 API 接口根据 breakdown_id 获取数据
+      const response = await breakdownApi.getBreakdownById(breakdownId);
+      setViewingBreakdownData(response.data);
+    } catch (error) {
+      console.error('获取拆解数据失败:', error);
+      // 如果失败，显示错误提示
+      alert('获取拆解数据失败，请重试');
+      setPlotPointsViewModalOpen(false);
+    } finally {
+      setLoadingBreakdownData(false);
+    }
+  };
+
+  // 切换到上一个历史记录
+  const handlePreviousBreakdown = async () => {
+    if (currentHistoryIndex > 0) {
+      const prevIndex = currentHistoryIndex - 1;
+      const prevBreakdownId = historyBreakdownIds[prevIndex];
+      setCurrentHistoryIndex(prevIndex);
+      setLoadingBreakdownData(true);
+      try {
+        const response = await breakdownApi.getBreakdownById(prevBreakdownId);
+        setViewingBreakdownData(response.data);
+      } catch (error) {
+        console.error('获取拆解数据失败:', error);
+        alert('获取拆解数据失败，请重试');
+      } finally {
+        setLoadingBreakdownData(false);
+      }
+    }
+  };
+
+  // 切换到下一个历史记录
+  const handleNextBreakdown = async () => {
+    if (currentHistoryIndex < historyBreakdownIds.length - 1) {
+      const nextIndex = currentHistoryIndex + 1;
+      const nextBreakdownId = historyBreakdownIds[nextIndex];
+      setCurrentHistoryIndex(nextIndex);
+      setLoadingBreakdownData(true);
+      try {
+        const response = await breakdownApi.getBreakdownById(nextBreakdownId);
+        setViewingBreakdownData(response.data);
+      } catch (error) {
+        console.error('获取拆解数据失败:', error);
+        alert('获取拆解数据失败，请重试');
+      } finally {
+        setLoadingBreakdownData(false);
+      }
+    }
+  };
+
+  // 关闭剧情点详情查看
+  const handleCloseViewingBreakdown = () => {
+    setPlotPointsViewModalOpen(false);
+    setViewingBreakdownData(null);
+    setHistoryBreakdownIds([]);
+    setCurrentHistoryIndex(0);
+  };
+
   // 更新剧情点状态
   const handlePlotPointStatusChange = async (pointId: number, status: 'used' | 'unused') => {
     // 先乐观更新本地状态
@@ -351,7 +429,10 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   };
 
   // 判断是否有拆解结果（plot_points）
-  const hasBreakdownResult = !!breakdownResult?.plot_points;
+  // 优先显示正在查看的历史数据，否则显示当前拆解结果
+  const displayBreakdownResult = viewingBreakdownData || breakdownResult;
+  const hasBreakdownResult = !!displayBreakdownResult?.plot_points;
+  const isViewingHistory = !!viewingBreakdownData;
 
   // 未选择批次
   if (!selectedBatch) {
@@ -475,7 +556,7 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
   }
 
   // 剧情点表格视图
-  if (hasBreakdownResult && breakdownResult?.plot_points) {
+  if (hasBreakdownResult && displayBreakdownResult?.plot_points) {
     return (
       <>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -571,24 +652,35 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
           {/* 剧情点统计 */}
           <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
-                <List className="w-4 h-4" />
-                剧情点列表
-              </h3>
+              <div className="flex items-center gap-3">
+                <h3 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
+                  <List className="w-4 h-4" />
+                  剧情点列表
+                </h3>
+                {isViewingHistory && (
+                  <button
+                    onClick={handleCloseViewingBreakdown}
+                    className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded border border-slate-600 transition-colors flex items-center gap-1"
+                  >
+                    <X className="w-3 h-3" />
+                    返回当前版本
+                  </button>
+                )}
+              </div>
               <div className="flex items-center gap-3 text-xs">
                 <span className="text-slate-400">
-                  共 <span className="text-cyan-400 font-semibold">{breakdownResult.plot_points.length}</span> 个
+                  共 <span className="text-cyan-400 font-semibold">{displayBreakdownResult.plot_points.length}</span> 个
                 </span>
                 <span className="text-slate-600">|</span>
                 <span className="text-slate-400">
                   已用 <span className="text-green-400 font-semibold">
-                    {breakdownResult.plot_points.filter(p => p.status === 'used').length}
+                    {displayBreakdownResult.plot_points.filter(p => p.status === 'used').length}
                   </span>
                 </span>
-                <span className="text-slate-600">|</span>
+                <span claame="text-slate-600">|</span>
                 <span className="text-slate-400">
                   未用 <span className="text-slate-400 font-semibold">
-                    {breakdownResult.plot_points.filter(p => p.status === 'unused').length}
+                    {displayBreakdownResult.plot_points.filter(p => p.status === 'unused').length}
                   </span>
                 </span>
               </div>
@@ -624,7 +716,7 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
                 </tr>
               </thead>
               <tbody>
-                {breakdownResult.plot_points.map((point) => (
+                {displayBreakdownResult.plot_points.map((point) => (
                   <PlotPointTableRow
                     key={point.id}
                     point={{ ...point, status: plotPointStatus[point.id] || point.status }}
@@ -652,6 +744,24 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
               batchId={selectedBatch.id}
               onClose={() => setDetailModalOpen(false)}
               onViewMethod={onViewMethod}
+              onViewPlotPoints={handleViewPlotPoints}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* 剧情点查看弹窗 */}
+        <AnimatePresence>
+          {plotPointsViewModalOpen && (
+            <PlotPointsViewModal
+              breakdown={viewingBreakdownData}
+              loading={loadingBreakdownData}
+              onClose={handleCloseViewingBreakdown}
+              onPrevious={handlePreviousBreakdown}
+              onNext={handleNextBreakdown}
+              hasPrevious={currentHistoryIndex > 0}
+              hasNext={currentHistoryIndex < historyBreakdownIds.length - 1}
+              currentIndex={currentHistoryIndex}
+              totalCount={historyBreakdownIds.length}
             />
           )}
         </AnimatePresence>

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   X, Clock, FileText, CheckCircle, XCircle, AlertTriangle,
-  RefreshCw, Loader2, History, ExternalLink
+  RefreshCw, Loader2, History, ExternalLink, Eye
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { breakdownApi } from '../../../../services/api';
@@ -10,6 +10,7 @@ interface BreakdownDetailModalProps {
   batchId: string;
   onClose: () => void;
   onViewMethod?: (methodId: string) => void;
+  onViewPlotPoints?: (breakdownId: string, allBreakdownIds?: string[]) => void;
 }
 
 interface BreakdownDetail {
@@ -44,7 +45,7 @@ interface BreakdownDetail {
   } | null;
 }
 
-const BreakdownDetailModal: React.FC<BreakdownDetailModalProps> = ({ batchId, onClose, onViewMethod }) => {
+const BreakdownDetailModal: React.FC<BreakdownDetailModalProps> = ({ batchId, onClose, onViewMethod, onViewPlotPoints }) => {
   const [loading, setLoading] = useState(true);
   const [details, setDetails] = useState<BreakdownDetail[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -143,6 +144,7 @@ const BreakdownDetailModal: React.FC<BreakdownDetailModalProps> = ({ batchId, on
                   <th className="px-4 py-3 text-center text-[10px] font-semibold text-slate-400 uppercase tracking-wider">质检</th>
                   <th className="px-4 py-3 text-center text-[10px] font-semibold text-slate-400 uppercase tracking-wider">修正</th>
                   <th className="px-4 py-3 text-center text-[10px] font-semibold text-slate-400 uppercase tracking-wider">耗时</th>
+                  <th className="px-4 py-3 text-center text-[10px] font-semibold text-slate-400 uppercase tracking-wider w-20">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -219,6 +221,19 @@ const BreakdownDetailModal: React.FC<BreakdownDetailModalProps> = ({ batchId, on
                       <span className="text-xs text-slate-400">
                         {formatDuration(detail.task_info?.duration_seconds ?? null)}
                       </span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <button
+                        onClick={() => {
+                          const allIds = details.map(d => d.breakdown_id);
+                          onViewPlotPoints?.(detail.breakdown_id, allIds);
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 text-xs rounded border border-cyan-500/30 hover:border-cyan-500/50 transition-all whitespace-nowrap"
+                        title="查看剧情点详情"
+                      >
+                        <Eye className="w-3 h-3 flex-shrink-0" />
+                        <span>查看</span>
+                      </button>
                     </td>
                   </tr>
                 ))}
