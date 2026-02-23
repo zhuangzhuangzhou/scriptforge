@@ -105,13 +105,19 @@ def _terminate_stuck_task(db: Session, task: AITask, now: datetime):
     task.error_message = f"系统自动终止: {reason}"
     task.updated_at = now
 
-    # 2. 更新关联批次状态
+    # 2. 安全更新关联批次状态（应用智能回滚机制）
     if task.batch_id:
         batch = db.query(Batch).filter(Batch.id == task.batch_id).first()
         if batch and batch.breakdown_status in [BatchStatus.IN_PROGRESS, BatchStatus.QUEUED]:
-            batch.breakdown_status = BatchStatus.FAILED
+            from app.tasks.breakdown_tasks import _update_batch_status_safely
+            _update_batch_status_safely(
+                batch=batch,
+                task=task,
+                new_status=BatchStatus.FAILED,
+                db=db,
+                logger=logger
+            )
             batch.updated_at = now
-            logger.info(f"更新批次 {batch.id} 状态为 failed")
 
     # 3. 尝试终止 Celery 任务（如果有 celery_task_id）
     if task.celery_task_id:

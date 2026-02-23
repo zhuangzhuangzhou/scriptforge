@@ -809,7 +809,19 @@ async def start_all_breakdowns(
                     "failed_at": datetime.now(timezone.utc).isoformat(),
                     "retry_count": 0
                 })
-                batch.breakdown_status = BatchStatus.FAILED
+                # 安全更新批次状态（应用智能回滚机制）
+                from app.core.database import SessionLocal
+                from app.tasks.breakdown_tasks import _update_batch_status_safely
+                import logging
+                breakdown_logger = logging.getLogger(__name__)
+                with SessionLocal() as sync_db:
+                    _update_batch_status_safely(
+                        batch=batch,
+                        task=task,
+                        new_status=BatchStatus.FAILED,
+                        db=sync_db,
+                        logger=breakdown_logger
+                    )
                 failed_batches.append(str(batch.id))
                 continue
 
@@ -1349,76 +1361,100 @@ async def start_batch_breakdown(
             detail=f"积分不足: 需要 {required_credits}，余额 {credits_check['balance']}"
         )
 
-    task_ids = []
-    failed_batches = []
+    # 提前提取所有 batch 的属性，避免后续访问已过期的对象
+    batch_data = [
+        {
+            "batch": batch,
+            "batch_id": batch.id,
+            "project_id": batch.project_id,
+            "batch_number": batch.batch_number
+        }
+        for batch in batches
+    ]
 
-    for batch in batches:
-        try:
-            # 消耗积分（预扣），检查返回值
-            consume_result = await quota_service.consume_credits(locked_user, "breakdown", "剧情拆解")
-            if not consume_result:
-                # 积分不足，标记该批次失败并继续处理下一个
-                failed_batches.append(str(batch.id))
-                continue
+    # 按批次号排序，确保顺序执行
+    batch_data.sort(key=lambda x: x["batch_number"])
 
-            # 创建AI任务
-            task = AITask(
-                project_id=batch.project_id,
-                batch_id=batch.id,
-                task_type="breakdown",
-                status=TaskStatus.QUEUED,
-                depends_on=[],
-                config={
-                    "model_config_id": str(project.breakdown_model_id),  # 从项目配置读取
-                    **task_config  # 包含 adapt_method_key 等
-                }
-            )
-            db.add(task)
-            await db.flush()  # 获取 task.id
-
-            # 启动Celery任务
-            try:
-                celery_task = run_breakdown_task.delay(
-                    str(task.id),
-                    str(batch.id),
-                    str(batch.project_id),
-                    str(current_user.id)
-                )
-                task.celery_task_id = celery_task.id
-            except Exception:
-                # Celery 提交失败，返还已扣积分
-                await quota_service.refund_episode_quota(locked_user, 1)
-                failed_batches.append(str(batch.id))
-                continue
-
-            # 更新批次状态
-            batch.breakdown_status = BatchStatus.QUEUED
-            task_ids.append(str(task.id))
-
-        except Exception:
-            failed_batches.append(str(batch.id))
-            continue
-
-    # 提交事务
-    await db.commit()
-
-    if failed_batches:
+    # 只创建并启动第一个批次的任务
+    if not batch_data:
         return {
-            "task_ids": task_ids,
-            "total": len(task_ids),
-            "failed": len(failed_batches),
-            "project_id": request.project_id,
-            "config": task_config,
-            "message": f"已启动 {len(task_ids)} 个任务，{len(failed_batches)} 个失败"
+            "task_ids": [],
+            "total": 0,
+            "message": "没有待拆解的批次",
+            "project_id": request.project_id
         }
 
-    return {
-        "task_ids": task_ids,
-        "total": len(task_ids),
-        "project_id": request.project_id,
-        "config": task_config,
-        "message": f"已启动 {len(task_ids)} 个拆解任务"
-    }
+    first_batch = batch_data[0]
+    batch_id_str = str(first_batch["batch_id"])
+    project_id = first_batch["project_id"]
+
+    try:
+        # 消耗积分（预扣）
+        consume_result = await quota_service.consume_credits(locked_user, "breakdown", "剧情拆解")
+        if not consume_result:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="积分不足，无法启动拆解任务"
+            )
+
+        # 创建AI任务
+        task = AITask(
+            project_id=project_id,
+            batch_id=first_batch["batch_id"],
+            task_type="breakdown",
+            status=TaskStatus.QUEUED,
+            depends_on=[],
+            config={
+                "model_config_id": str(project.breakdown_model_id),
+                **task_config,
+                "auto_continue": True,  # 标记为自动连续拆解模式
+                "total_batches": len(batch_data)  # 记录总批次数
+            }
+        )
+        db.add(task)
+        await db.flush()
+
+        # 启动Celery任务
+        try:
+            celery_task = run_breakdown_task.delay(
+                str(task.id),
+                batch_id_str,
+                str(project_id),
+                str(current_user.id)
+            )
+            task.celery_task_id = celery_task.id
+        except Exception as e:
+            # Celery 提交失败，返还已扣积分
+            await quota_service.refund_episode_quota(locked_user, 1)
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"启动任务失败: {str(e)}"
+            )
+
+        # 更新批次状态
+        first_batch["batch"].breakdown_status = BatchStatus.QUEUED
+
+        # 提交事务
+        await db.commit()
+
+        return {
+            "task_ids": [str(task.id)],
+            "total": 1,
+            "total_batches": len(batch_data),
+            "project_id": request.project_id,
+            "config": task_config,
+            "message": f"已启动第 {first_batch['batch_number']} 批次，共 {len(batch_data)} 个批次将按顺序自动拆解"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"启动任务失败: {str(e)}"
+        )
 
 
 @router.get("/batch-progress/{project_id}")
@@ -1452,86 +1488,71 @@ async def get_batch_progress(
             detail="项目不存在"
         )
 
-    # 获取所有批次
+    # 🔧 优化：只查询必要字段，减少数据传输
     batches_result = await db.execute(
-        select(Batch).where(Batch.project_id == project_id).order_by(Batch.batch_number)
+        select(Batch.id, Batch.batch_number, Batch.breakdown_status)
+        .where(Batch.project_id == project_id)
+        .order_by(Batch.batch_number)
     )
-    batches = batches_result.scalars().all()
+    batches = batches_result.all()
 
-    # 获取批次ID列表
-    batch_ids = [b.id for b in batches]
-
-    # 获取对应的任务
-    tasks_result = await db.execute(
-        select(AITask).where(
-            AITask.batch_id.in_(batch_ids),
-            AITask.task_type == "breakdown"
-        )
-    )
-    tasks = {str(t.batch_id): t for t in tasks_result.scalars().all()}
-
-    # 统计各状态数量
+    # 🔧 优化：统计各状态数量（精简版）
     status_counts = {
+        BatchStatus.COMPLETED: 0,
         BatchStatus.PENDING: 0,
         BatchStatus.QUEUED: 0,
-        TaskStatus.RUNNING: 0,
-        TaskStatus.RETRYING: 0,
-        BatchStatus.COMPLETED: 0,
-        BatchStatus.FAILED: 0
+        BatchStatus.FAILED: 0,
+        "in_progress": 0
     }
 
-    task_details = []
+    in_progress_batch = None
     for batch in batches:
-        task = tasks.get(str(batch.id))
         batch_status = batch.breakdown_status or BatchStatus.PENDING
-        status_counts[batch_status] = status_counts.get(batch_status, 0) + 1
+        # 将 running, retrying, in_progress, processing 统一归类为 in_progress
+        if batch_status in [TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS, "processing"]:
+            status_counts["in_progress"] += 1
+            if not in_progress_batch:  # 记录第一个正在处理的批次
+                in_progress_batch = batch
+        else:
+            status_counts[batch_status] = status_counts.get(batch_status, 0) + 1
 
-        task_detail = {
-            "batch_id": str(batch.id),
-            "batch_number": batch.batch_number,
-            "batch_status": batch_status,
-            "chapter_count": batch.total_chapters or 0
-        }
+    # 🔧 优化：只查询当前正在执行的任务（而不是所有任务）
+    current_task = None
+    if in_progress_batch:
+        task_result = await db.execute(
+            select(AITask.id, AITask.batch_id, AITask.status)
+            .where(
+                AITask.batch_id == in_progress_batch.id,
+                AITask.task_type == "breakdown",
+                AITask.status.in_([TaskStatus.RUNNING, TaskStatus.IN_PROGRESS, TaskStatus.QUEUED])
+            )
+            .order_by(AITask.created_at.desc())
+            .limit(1)
+        )
+        task = task_result.first()
 
         if task:
-            task_detail.update({
+            current_task = {
                 "task_id": str(task.id),
-                "task_status": _normalize_task_status(task.status),
-                "progress": task.progress or 0,
-                "current_step": task.current_step or "",
-                "retry_count": task.retry_count or 0,
-                "error_message": task.error_message
-            })
-
-            # 解析错误信息
-            if task.error_message:
-                try:
-                    import json
-                    error_data = json.loads(task.error_message) if task.error_message.startswith('{') else None
-                    if error_data and isinstance(error_data, dict):
-                        task_detail["error_code"] = error_data.get("code")
-                        task_detail["error_info"] = error_data
-                except (json.JSONDecodeError, TypeError):
-                    pass
-
-        task_details.append(task_detail)
+                "batch_id": str(task.batch_id),
+                "batch_number": in_progress_batch.batch_number,
+                "status": _normalize_task_status(task.status)
+            }
 
     # 计算整体进度
     total = len(batches)
     completed = status_counts.get(BatchStatus.COMPLETED, 0)
     overall_progress = round(completed / total * 100, 1) if total > 0 else 0
 
+    # 🔧 优化：精简返回数据，只返回必要字段
     return {
-        "project_id": project_id,
         "total_batches": total,
         "completed": status_counts.get(BatchStatus.COMPLETED, 0),
-        "in_progress": status_counts.get(TaskStatus.RUNNING, 0) + status_counts.get(TaskStatus.RETRYING, 0),
+        "in_progress": status_counts["in_progress"],
         "pending": status_counts.get(BatchStatus.PENDING, 0) + status_counts.get(BatchStatus.QUEUED, 0),
         "failed": status_counts.get(BatchStatus.FAILED, 0),
         "overall_progress": overall_progress,
-        "status_summary": status_counts,
-        "task_details": task_details,
-        "last_updated": datetime.now(timezone.utc).isoformat()
+        "current_task": current_task  # 只返回当前正在执行的任务
     }
 
 
@@ -1747,9 +1768,9 @@ async def get_breakdown_detail(
             model_config = model_result.scalar_one_or_none()
             if model_config:
                 model_info = {
-                    "provider": model_config.provider,
+                    "provider": model_config.model_provider,
                     "model_name": model_config.model_name,
-                    "display_name": model_config.display_name
+                    "display_name": model_config.model_name
                 }
 
     # 如果没有从任务配置获取到模型信息，尝试从 LLM 调用日志获取
@@ -1854,9 +1875,9 @@ async def get_breakdown_history(
             model_config = model_result.scalar_one_or_none()
             if model_config:
                 model_info = {
-                    "provider": model_config.provider,
+                    "provider": model_config.model_provider,
                     "model_name": model_config.model_name,
-                    "display_name": model_config.display_name
+                    "display_name": model_config.model_name
                 }
 
         # 获取资源信息（used_adapt_method_id 存储的是 AIResource.name，不是 id）
@@ -1892,6 +1913,84 @@ async def get_breakdown_history(
         })
 
     return {"items": items}
+
+
+@router.get("/breakdown/{breakdown_id}")
+async def get_breakdown_by_id(
+    breakdown_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """根据 breakdown_id 获取指定拆解记录的完整数据
+
+    返回：
+    - breakdown_id: 拆解记录 ID
+    - batch_id: 批次 ID
+    - plot_points: 剧情点列表
+    - qa_report: 质检报告
+    - created_at: 创建时间
+    - model_info: 模型信息
+    - resource_info: 资源信息
+    """
+    from app.models.plot_breakdown import PlotBreakdown
+    from app.models.model_config import ModelConfig
+
+    # 验证拆解记录属于当前用户
+    result = await db.execute(
+        select(PlotBreakdown).join(Batch).join(Project).where(
+            PlotBreakdown.id == breakdown_id,
+            Project.user_id == current_user.id
+        )
+    )
+    breakdown = result.scalar_one_or_none()
+
+    if not breakdown:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="拆解记录不存在"
+        )
+
+    # 获取模型信息
+    model_info = None
+    if breakdown.model_config_id:
+        model_result = await db.execute(
+            select(ModelConfig).where(ModelConfig.id == breakdown.model_config_id)
+        )
+        model_config = model_result.scalar_one_or_none()
+        if model_config:
+            model_info = {
+                "provider": model_config.model_provider,
+                "model_name": model_config.model_name,
+                "display_name": model_config.model_name
+            }
+
+    # 获取资源信息
+    resource_info = {}
+    if breakdown.used_adapt_method_id:
+        adapt_method_result = await db.execute(
+            select(AIResource).where(AIResource.name == breakdown.used_adapt_method_id)
+        )
+        adapt_method = adapt_method_result.scalar_one_or_none()
+        if adapt_method:
+            resource_info["adapt_method"] = {
+                "id": str(adapt_method.id),
+                "name": adapt_method.name,
+                "display_name": adapt_method.display_name
+            }
+
+    return {
+        "breakdown_id": str(breakdown.id),
+        "batch_id": str(breakdown.batch_id),
+        "project_id": str(breakdown.project_id),
+        "plot_points": breakdown.plot_points or [],
+        "qa_report": breakdown.qa_report,
+        "qa_status": breakdown.qa_status,
+        "qa_score": breakdown.qa_score,
+        "created_at": breakdown.created_at.isoformat() if breakdown.created_at else None,
+        "format_version": breakdown.format_version,
+        "model_info": model_info,
+        "resource_info": resource_info
+    }
 
 
 @router.post("/tasks/{task_id}/stop")

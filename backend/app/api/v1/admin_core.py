@@ -1244,7 +1244,7 @@ async def stop_task(
     task.error_message = f"管理员手动停止任务（操作人: {admin.username}）"
     task.updated_at = datetime.now(timezone.utc)
 
-    # 更新批次状态
+    # 安全更新批次状态（应用智能回滚机制）
     if task.batch_id:
         batch_result = await db.execute(
             select(Batch).where(Batch.id == task.batch_id)
@@ -1252,7 +1252,20 @@ async def stop_task(
         batch = batch_result.scalar_one_or_none()
         if batch:
             from app.core.status import BatchStatus
-            batch.breakdown_status = BatchStatus.FAILED
+            from app.core.database import SessionLocal
+            from app.tasks.breakdown_tasks import _update_batch_status_safely
+            import logging
+            admin_logger = logging.getLogger(__name__)
+
+            # 使用同步会话执行智能回滚检查
+            with SessionLocal() as sync_db:
+                _update_batch_status_safely(
+                    batch=batch,
+                    task=task,
+                    new_status=BatchStatus.FAILED,
+                    db=sync_db,
+                    logger=admin_logger
+                )
             batch.updated_at = datetime.now(timezone.utc)
 
     # 尝试终止 Celery 任务

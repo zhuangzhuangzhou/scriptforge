@@ -135,6 +135,24 @@ def _trigger_next_task_sync(db: Session, completed_task_id: str, project_id: str
             f"task_id={new_task.id}, celery_task_id={celery_task.id}"
         )
 
+        # 🔧 新增：通过 WebSocket 推送批次切换消息
+        try:
+            from app.core.redis_log_publisher import RedisLogPublisher
+            log_publisher = RedisLogPublisher()
+
+            # 向前一个任务的 WebSocket 连接推送批次切换消息
+            log_publisher.publish_batch_switch(
+                old_task_id=completed_task_id,
+                new_task_id=str(new_task.id),
+                new_batch_id=str(next_batch.id),
+                new_batch_number=next_batch.batch_number
+            )
+
+            logger.info(f"已推送批次切换消息: {current_batch_number} -> {next_batch.batch_number}")
+        except Exception as ws_error:
+            # WebSocket 推送失败不影响主流程
+            logger.warning(f"推送批次切换消息失败: {ws_error}")
+
     except Exception as e:
         logger.error(f"触发下一个批次失败: {e}", exc_info=True)
         db.rollback()
@@ -1545,6 +1563,106 @@ def _check_previous_breakdown_success(db: Session, batch_id: str, current_task_i
     except Exception as e:
         logger.error(f"检查之前的拆解结果失败: {e}")
         return False
+
+
+def _update_batch_status_safely(
+    batch,
+    task,
+    new_status: str,
+    db,
+    logger
+) -> None:
+    """
+    安全地更新批次状态，应用智能回滚机制
+
+    核心逻辑：
+    1. 根据任务类型确定要更新的状态字段（breakdown_status 或 script_status）
+    2. 如果要设置为 failed，检查是否有之前的成功结果
+    3. 有成功结果则恢复为 completed，保护用户已有成果
+
+    Args:
+        batch: 批次对象
+        task: 任务对象（用于获取 task_type）
+        new_status: 新状态（BatchStatus 常量）
+        db: 数据库会话
+        logger: 日志对象
+    """
+    from app.core.status import BatchStatus, TaskStatus
+
+    # 1. 根据任务类型确定要更新的字段
+    task_type = task.task_type
+
+    if task_type == "breakdown":
+        status_field = "breakdown_status"
+    elif task_type in ("script", "episode_script"):
+        status_field = "script_status"
+    else:
+        logger.warning(f"未知任务类型: {task_type}，默认更新 breakdown_status")
+        status_field = "breakdown_status"
+
+    # 2. 如果要设置为 failed，检查是否有之前的成功结果（仅对 breakdown 任务）
+    if new_status == BatchStatus.FAILED and task_type == "breakdown":
+        has_success = _check_previous_breakdown_success(db, batch.id, task.id)
+        if has_success:
+            new_status = BatchStatus.COMPLETED
+            logger.info(f"批次 {batch.id} 有之前的成功结果，{status_field} 恢复为 completed")
+        else:
+            logger.info(f"批次 {batch.id} 无之前的成功结果，{status_field} 更新为 failed")
+
+    # 3. 更新状态
+    old_status = getattr(batch, status_field)
+    setattr(batch, status_field, new_status)
+    logger.info(f"批次 {batch.id} 的 {status_field}: {old_status} → {new_status}")
+
+
+def _validate_status_consistency(batch, task, logger) -> None:
+    """
+    验证状态字段与任务类型的一致性
+
+    目的：在任务完成后检查批次状态是否正确更新，及时发现状态管理问题
+
+    Args:
+        batch: 批次对象
+        task: 任务对象
+        logger: 日志对象
+    """
+    from app.core.status import BatchStatus, TaskStatus
+
+    task_type = task.task_type
+    task_status = task.status
+
+    if task_type == "breakdown":
+        # 拆解任务应该更新 breakdown_status
+        if task_status == TaskStatus.COMPLETED:
+            if batch.breakdown_status == BatchStatus.COMPLETED:
+                logger.info(f"✅ 批次 {batch.id} 拆解状态正确: {batch.breakdown_status}")
+            else:
+                logger.warning(
+                    f"⚠️ 批次 {batch.id} 拆解任务已完成，但 breakdown_status 为 {batch.breakdown_status}"
+                )
+        elif task_status == TaskStatus.FAILED:
+            if batch.breakdown_status in [BatchStatus.FAILED, BatchStatus.COMPLETED]:
+                logger.info(f"✅ 批次 {batch.id} 拆解失败状态正确: {batch.breakdown_status}")
+            else:
+                logger.warning(
+                    f"⚠️ 批次 {batch.id} 拆解任务失败，但 breakdown_status 为 {batch.breakdown_status}"
+                )
+
+    elif task_type in ("script", "episode_script"):
+        # 剧本任务应该更新 script_status
+        if task_status == TaskStatus.COMPLETED:
+            if batch.script_status == BatchStatus.COMPLETED:
+                logger.info(f"✅ 批次 {batch.id} 剧本状态正确: {batch.script_status}")
+            else:
+                logger.warning(
+                    f"⚠️ 批次 {batch.id} 剧本任务已完成，但 script_status 为 {batch.script_status}"
+                )
+
+        # 关键检查：剧本任务不应该影响 breakdown_status
+        if batch.breakdown_status == BatchStatus.FAILED and task_status == TaskStatus.FAILED:
+            logger.error(
+                f"❌ 批次 {batch.id} 剧本任务失败，但错误地将 breakdown_status 设置为 failed！"
+            )
 
 
 def _extract_fix_instructions_from_qa_report(qa_report: dict) -> str:

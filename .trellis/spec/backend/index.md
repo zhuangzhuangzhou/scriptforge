@@ -151,6 +151,14 @@ python3 debug_api.py   # 调用实际接口，检查状态码和响应
 - 迁移文件命名和注释规范
 - 数据迁移脚本模式
 
+### 7.3 WebSocket 消息推送模式
+详见 [websocket-patterns.md](websocket-patterns.md)
+- 双频道架构设计 (progress vs logs)
+- 添加新消息类型的标准流程
+- 降级设计模式 (WebSocket + 轮询)
+- 消息发送时机和顺序
+- 常见陷阱: 频道命名、消息丢失、时序问题
+
 ---
 
 ## 8. 常见错误与陷阱 (Common Mistakes)
@@ -673,6 +681,53 @@ def _handle_task_failure_sync(db, task_id, batch_record, ...):
 1. **普通任务失败** (`_handle_task_failure_sync`)
 2. **任务超时** (`_handle_timeout_failure_sync`)
 3. **配额不足** (`_handle_quota_exceeded_sync`)
+4. **管理员手动停止** (`admin_core.py:stop_task`)
+5. **系统自动终止** (`task_monitor.py:_terminate_stuck_task`)
+6. **Celery 提交失败** (`breakdown.py:start_all_breakdowns`)
+
+**统一状态更新函数** (2026-02-23 新增):
+
+为确保所有场景都正确应用智能回滚，新增了统一的状态更新函数：
+
+```python
+def _update_batch_status_safely(
+    batch,
+    task,
+    new_status: str,
+    db,
+    logger
+) -> None:
+    """
+    安全地更新批次状态，应用智能回滚机制
+
+    核心逻辑：
+    1. 根据任务类型确定要更新的状态字段（breakdown_status 或 script_status）
+    2. 如果要设置为 failed，检查是否有之前的成功结果
+    3. 有成功结果则恢复为 completed，保护用户已有成果
+    """
+    # 1. 根据任务类型确定要更新的字段
+    if task.task_type == "breakdown":
+        status_field = "breakdown_status"
+    elif task.task_type in ("script", "episode_script"):
+        status_field = "script_status"
+
+    # 2. 如果要设置为 failed，检查是否有之前的成功结果（仅对 breakdown 任务）
+    if new_status == BatchStatus.FAILED and task.task_type == "breakdown":
+        has_success = _check_previous_breakdown_success(db, batch.id, task.id)
+        if has_success:
+            new_status = BatchStatus.COMPLETED
+            logger.info(f"批次 {batch.id} 有之前的成功结果，恢复为 completed")
+
+    # 3. 更新状态
+    setattr(batch, status_field, new_status)
+```
+
+**状态字段隔离原则**:
+
+| 任务类型 | 影响的状态字段 | 不应影响的字段 |
+|---------|--------------|---------------|
+| `breakdown` | `breakdown_status` | `script_status` |
+| `script` / `episode_script` | `script_status` | `breakdown_status` |
 
 **实现要点**:
 1. **排除当前任务**: 检查时必须排除当前失败的任务，只查找之前的成功任务
@@ -712,4 +767,4 @@ def _handle_task_failure_sync(db, task_id, batch_record, ...):
 
 ---
 
-**最后更新**: 2026-02-22
+**最后更新**: 2026-02-23
