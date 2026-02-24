@@ -16,6 +16,7 @@ class APILog(Base):
     method = Column(String(10), nullable=False)  # GET, POST, PUT, DELETE
     path = Column(String(500), nullable=False)   # 请求路径
     query_params = Column(Text)                  # 查询参数
+    request_body = Column(Text)                  # 请求体
 
     # 用户信息
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -24,6 +25,7 @@ class APILog(Base):
 
     # 响应信息
     status_code = Column(Integer, nullable=False)
+    response_body = Column(Text)                 # 响应体
     response_time = Column(Integer)              # 响应时间（毫秒）
     error_message = Column(Text)                 # 错误信息（如果有）
 

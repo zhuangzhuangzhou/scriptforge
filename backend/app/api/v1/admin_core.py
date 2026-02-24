@@ -1,13 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_, case
-from sqlalchemy.orm import selectinload
 from pydantic import BaseModel, Field
 from typing import Optional, List, Literal
 from datetime import datetime, timedelta, timezone
 from app.core.database import get_db
 from app.models.user import User
-from app.api.v1.auth import get_current_user
 from app.models.pipeline import Pipeline, PipelineExecution, PipelineExecutionLog
 from app.models.project import Project
 from app.models.ai_task import AITask
@@ -530,6 +528,99 @@ async def get_running_tasks(
     }
 
 
+@router.get("/tasks/stuck")
+async def get_stuck_tasks(
+    admin: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """管理员：查询卡住的任务（不自动终止）
+
+    检查条件：
+    - 状态为 running/processing/queued
+    - 创建时间超过 1 小时
+    - 或更新时间超过 30 分钟（停滞）
+    """
+    from app.tasks.task_monitor import TASK_TIMEOUT_THRESHOLD, TASK_STALE_THRESHOLD
+
+    try:
+        now = datetime.now(timezone.utc)
+        timeout_time = now - timedelta(seconds=TASK_TIMEOUT_THRESHOLD)
+        stale_time = now - timedelta(seconds=TASK_STALE_THRESHOLD)
+
+        # 查询超时或停滞的任务（通过 Project 关联 User）
+        query = (
+            select(AITask, User, Project, Batch)
+            .outerjoin(Project, AITask.project_id == Project.id)
+            .outerjoin(User, Project.user_id == User.id)
+            .outerjoin(Batch, AITask.batch_id == Batch.id)
+            .where(
+                and_(
+                    AITask.status.in_([
+                        TaskStatus.RUNNING,
+                        TaskStatus.IN_PROGRESS,
+                        TaskStatus.QUEUED
+                    ]),
+                    # 条件1: 创建时间超过1小时 或 条件2: 更新时间超过30分钟（停滞）
+                    or_(
+                        AITask.created_at < timeout_time,
+                        AITask.updated_at < stale_time
+                    )
+                )
+            )
+        )
+
+        result = await db.execute(query)
+        rows = result.all()
+
+        # 构建返回数据
+        tasks_data = []
+        for task, user, project, batch in rows:
+            created_at = task.created_at.replace(tzinfo=timezone.utc) if task.created_at else now
+            updated_at = task.updated_at.replace(tzinfo=timezone.utc) if task.updated_at else now
+            running_time = int((now - created_at).total_seconds())
+            idle_time = int((now - updated_at).total_seconds())
+
+            # 判断卡住原因
+            if running_time > TASK_TIMEOUT_THRESHOLD:
+                reason = f"运行超时（{int(running_time/60)} 分钟）"
+            else:
+                reason = f"停滞无响应（{int(idle_time/60)} 分钟）"
+
+            # user_id 从 Project 表获取
+            user_id = str(project.user_id) if project and project.user_id else None
+
+            tasks_data.append({
+                "id": str(task.id),
+                "task_type": task.task_type,
+                "status": task.status,
+                "progress": task.progress or 0,
+                "current_step": task.current_step or "",
+                "user_id": user_id,
+                "username": user.username if user else "未知",
+                "project_id": str(task.project_id) if task.project_id else None,
+                "project_name": project.name if project else "未知",
+                "batch_id": str(task.batch_id) if task.batch_id else None,
+                "batch_number": batch.batch_number if batch else 0,
+                "created_at": task.created_at.isoformat() if task.created_at else None,
+                "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+                "running_time": running_time,
+                "idle_time": idle_time,
+                "reason": reason
+            })
+
+        return {
+            "success": True,
+            "tasks": tasks_data,
+            "count": len(tasks_data)
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"查询卡住任务失败: {str(e)}"
+        )
+
+
 @router.get("/tasks/{task_id}")
 async def get_task_detail(
     task_id: str,
@@ -696,15 +787,16 @@ async def get_logs_stats(
 
     # 每日趋势（使用单次查询获取7天数据）
     seven_days_ago = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+    day_column = func.date_trunc('day', AITask.created_at)
     daily_query = (
         select(
-            func.date_trunc('day', AITask.created_at).label("day"),
+            day_column.label("day"),
             func.count(AITask.id).label("total"),
             func.count(case((AITask.status == TaskStatus.COMPLETED, 1))).label("success")
         )
         .where(AITask.created_at >= seven_days_ago)
-        .group_by(func.date_trunc('day', AITask.created_at))
-        .order_by(func.date_trunc('day', AITask.created_at))
+        .group_by(day_column)
+        .order_by(day_column)
     )
     daily_result = await db.execute(daily_query)
     daily_data = {row[0].strftime("%Y-%m-%d"): {"total": row[1], "success": row[2]} for row in daily_result.all()}
@@ -801,13 +893,13 @@ async def get_api_logs(
             "method": log.method,
             "path": log.path,
             "query_params": log.query_params,
-            "request_body": sanitize_log_data(getattr(log, 'request_body', None)),
+            "request_body": log.request_body,
             "user_id": str(log.user_id) if log.user_id else None,
             "username": user.username if user else None,
             "user_ip": log.user_ip,
             "user_agent": log.user_agent,
             "status_code": log.status_code,
-            "response_body": sanitize_log_data(getattr(log, 'response_body', None)),
+            "response_body": log.response_body,
             "response_time": log.response_time,
             "error_message": log.error_message,
             "created_at": log.created_at.isoformat() if log.created_at else None
@@ -1133,85 +1225,6 @@ async def get_llm_logs_stats(
     }
 
 
-@router.get("/tasks/stuck")
-async def get_stuck_tasks(
-    admin: User = Depends(check_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """管理员：查询卡住的任务（不自动终止）
-
-    检查条件：
-    - 状态为 running/processing/queued
-    - 创建时间超过 1 小时
-    - 或更新时间超过 30 分钟（停滞）
-    """
-    from app.tasks.task_monitor import TASK_TIMEOUT_THRESHOLD, TASK_STALE_THRESHOLD
-
-    try:
-        now = datetime.now(timezone.utc)
-        timeout_time = now - timedelta(seconds=TASK_TIMEOUT_THRESHOLD)
-        stale_time = now - timedelta(seconds=TASK_STALE_THRESHOLD)
-
-        # 查询超时或停滞的任务
-        query = (
-            select(AITask)
-            .options(selectinload(AITask.user), selectinload(AITask.project), selectinload(AITask.batch))
-            .where(
-                and_(
-                    AITask.status.in_([TaskStatus.RUNNING, TaskStatus.IN_PROGRESS, TaskStatus.QUEUED]),
-                # 条件1: 创建时间超过1小时 或 条件2: 更新时间超过30分钟（停滞）
-                    or_(AITask.created_at < timeout_time, AITask.updated_at < stale_time)
-                )
-            )
-        )
-
-        result = await db.execute(query)
-        stuck_tasks = result.scalars().all()
-
-        # 构建返回数据
-        tasks_data = []
-        for task in stuck_tasks:
-            created_at = task.created_at.replace(tzinfo=timezone.utc) if task.created_at else now
-            updated_at = task.updated_at.replace(tzinfo=timezone.utc) if task.updated_at else now
-            running_time = int((now - created_at).total_seconds())
-            idle_time = int((now - updated_at).total_seconds())
-
-            # 判断卡住原因
-            if running_time > TASK_TIMEOUT_THRESHOLD:
-                reason = f"运行超时（{int(running_time/60)} 分钟）"
-            else:
-                reason = f"停滞无响应（{int(idle_time/60)} 分钟）"
-
-            tasks_data.append({
-                "id": str(task.id),
-                "task_type": task.task_type,
-                "status": task.status,
-                "progress": task.progress or 0,
-                "current_step": task.current_step or "",
-                "user_id": str(task.user_id),
-                "username": task.user.username if task.user else "未知",
-                "project_id": str(task.project_id) if task.project_id else None,
-                "project_name": task.project.name if task.project else "未知",
-                "batch_id": str(task.batch_id) if task.batch_id else None,
-                "batch_number": task.batch.batch_number if task.batch else 0,
-                "created_at": task.created_at.isoformat() if task.created_at else None,
-                "updated_at": task.updated_at.isoformat() if task.updated_at else None,
-                "running_time": running_time,
-                "idle_time": idle_time,
-                "reason": reason
-            })
-
-        return {
-            "success": True,
-            "tasks": tasks_data,
-            "count": len(tasks_data)
-        }
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"查询卡住任务失败: {str(e)}"
-        )
 
 
 @router.post("/tasks/{task_id}/stop")
