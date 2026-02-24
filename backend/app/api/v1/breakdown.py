@@ -810,11 +810,11 @@ async def start_all_breakdowns(
                     "retry_count": 0
                 })
                 # 安全更新批次状态（应用智能回滚机制）
-                from app.core.database import SessionLocal
+                from app.core.database import SyncSessionLocal
                 from app.tasks.breakdown_tasks import _update_batch_status_safely
                 import logging
                 breakdown_logger = logging.getLogger(__name__)
-                with SessionLocal() as sync_db:
+                with SyncSessionLocal() as sync_db:
                     _update_batch_status_safely(
                         batch=batch,
                         task=task,
@@ -1993,6 +1993,41 @@ async def get_breakdown_by_id(
     }
 
 
+@router.get("/project-breakdowns")
+async def get_project_breakdowns(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取项目的所有拆解结果（只返回质检通过的）"""
+    from app.models.plot_breakdown import PlotBreakdown
+
+    result = await db.execute(
+        select(PlotBreakdown)
+        .join(Batch)
+        .join(Project)
+        .where(
+            Project.id == project_id,
+            Project.user_id == current_user.id,
+            PlotBreakdown.qa_status == 'PASS'  # 只返回质检通过的
+        )
+        .order_by(PlotBreakdown.created_at.desc())
+    )
+    breakdowns = result.scalars().all()
+
+    return [
+        {
+            "id": str(bd.id),
+            "batch_id": str(bd.batch_id),
+            "plot_points": bd.plot_points,
+            "qa_status": bd.qa_status,
+            "qa_score": bd.qa_score,
+            "created_at": bd.created_at.isoformat() if bd.created_at else None
+        }
+        for bd in breakdowns
+    ]
+
+
 @router.post("/tasks/{task_id}/stop")
 async def stop_breakdown_task(
     task_id: str,
@@ -2054,42 +2089,93 @@ async def stop_breakdown_task(
         batch = batch_result.scalar_one_or_none()
 
         if batch:
-            # 关键修复：立即更新当前批次状态为 PENDING，让前端可以重新提交
-            batch.breakdown_status = BatchStatus.PENDING
+            # 🔧 智能回滚：检查是否有之前的成功拆解结果
+            # 如果有，保持 completed 状态；否则才回滚到 pending
+            from app.core.database import SyncSessionLocal
+            from app.tasks.breakdown_tasks import _check_previous_breakdown_success
+            import logging
 
-            # 4. 取消该批次之后所有进行中的任务
-            subsequent_tasks_result = await db.execute(
-                select(AITask).join(Batch).where(
-                    Batch.project_id == batch.project_id,
-                    Batch.batch_number > batch.batch_number,
-                    AITask.status.in_([TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLING])
+            breakdown_logger = logging.getLogger(__name__)
+
+            # 创建同步会话用于智能回滚检查
+            check_db = SyncSessionLocal()
+            try:
+                # 检查当前批次
+                has_previous_success = _check_previous_breakdown_success(
+                    db=check_db,
+                    batch_id=str(batch.id),
+                    current_task_id=task_id
                 )
-            )
-            subsequent_tasks = subsequent_tasks_result.scalars().all()
 
-            for subsequent_task in subsequent_tasks:
-                # 撤销 Celery 任务
-                if subsequent_task.celery_task_id:
-                    celery_app.control.revoke(subsequent_task.celery_task_id, terminate=True)
-                    print(f"已撤销后续排队任务: {subsequent_task.celery_task_id}")
+                if has_previous_success:
+                    # 有之前的成功结果，保持 completed 状态
+                    batch.breakdown_status = BatchStatus.COMPLETED
+                    breakdown_logger.info(
+                        f"批次 {batch.id} 有之前的成功拆解结果，保持 completed 状态"
+                    )
+                else:
+                    # 无之前的成功结果，回滚到 pending
+                    batch.breakdown_status = BatchStatus.PENDING
+                    breakdown_logger.info(
+                        f"批次 {batch.id} 无之前的成功拆解结果，回滚到 pending 状态"
+                    )
 
-                # 更新任务状态
-                subsequent_task.status = TaskStatus.CANCELED
-                subsequent_task.current_step = "因前置任务停止而被取消"
-                subsequent_task.error_message = None
-
-                # 更新对应批次状态为 pending
-                subsequent_batch_result = await db.execute(
-                    select(Batch).where(Batch.id == subsequent_task.batch_id)
+                # 4. 取消该批次之后所有进行中的任务
+                subsequent_tasks_result = await db.execute(
+                    select(AITask).join(Batch).where(
+                        Batch.project_id == batch.project_id,
+                        Batch.batch_number > batch.batch_number,
+                        AITask.status.in_([TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLING])
+                    )
                 )
-                subsequent_batch = subsequent_batch_result.scalar_one_or_none()
-                if subsequent_batch:
-                    subsequent_batch.breakdown_status = BatchStatus.PENDING
+                subsequent_tasks = subsequent_tasks_result.scalars().all()
 
-                cancelled_count += 1
+                for subsequent_task in subsequent_tasks:
+                    # 撤销 Celery 任务
+                    if subsequent_task.celery_task_id:
+                        celery_app.control.revoke(subsequent_task.celery_task_id, terminate=True)
+                        print(f"已撤销后续排队任务: {subsequent_task.celery_task_id}")
 
-            if subsequent_tasks:
-                print(f"已取消 {len(subsequent_tasks)} 个后续排队任务")
+                    # 更新任务状态
+                    subsequent_task.status = TaskStatus.CANCELED
+                    subsequent_task.current_step = "因前置任务停止而被取消"
+                    subsequent_task.error_message = None
+
+                    # 🔧 智能回滚：检查后续批次是否有之前的成功拆解结果
+                    subsequent_batch_result = await db.execute(
+                        select(Batch).where(Batch.id == subsequent_task.batch_id)
+                    )
+                    subsequent_batch = subsequent_batch_result.scalar_one_or_none()
+                    if subsequent_batch:
+                        try:
+                            has_subsequent_success = _check_previous_breakdown_success(
+                                db=check_db,
+                                batch_id=str(subsequent_batch.id),
+                                current_task_id=str(subsequent_task.id)
+                            )
+
+                            if has_subsequent_success:
+                                subsequent_batch.breakdown_status = BatchStatus.COMPLETED
+                                breakdown_logger.info(
+                                    f"后续批次 {subsequent_batch.id} 有之前的成功结果，保持 completed"
+                                )
+                            else:
+                                subsequent_batch.breakdown_status = BatchStatus.PENDING
+                                breakdown_logger.info(
+                                    f"后续批次 {subsequent_batch.id} 无之前的成功结果，回滚到 pending"
+                                )
+                        except Exception as e:
+                            # 检查失败，默认回滚到 pending
+                            subsequent_batch.breakdown_status = BatchStatus.PENDING
+                            breakdown_logger.warning(f"检查后续批次失败: {e}")
+
+                    cancelled_count += 1
+
+                if subsequent_tasks:
+                    print(f"已取消 {len(subsequent_tasks)} 个后续排队任务")
+
+            finally:
+                check_db.close()
 
         # 5. 先提交任务状态变更（确保状态更新成功）
         await db.commit()
