@@ -16,7 +16,7 @@ export interface Batch {
   end_chapter: number;
   total_chapters: number;
   total_words: number;
-  breakdown_status: 'pending' | 'queued' | 'processing' | 'completed' | 'failed';
+  breakdown_status: 'pending' | 'queued' | 'in_progress' | 'completed' | 'failed';  // 修复: 使用 in_progress 而不是 processing
   script_status: string;
 }
 

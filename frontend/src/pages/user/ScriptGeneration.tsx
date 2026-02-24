@@ -17,10 +17,8 @@ interface Script {
 
 const ScriptGeneration: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>();
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [scripts, setScripts] = useState<Script[]>([]);
   const [selectedScript, setSelectedScript] = useState<Script | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
 
   useEffect(() => {

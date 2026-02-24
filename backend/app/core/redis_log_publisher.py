@@ -423,6 +423,37 @@ class RedisLogPublisher:
         )
         self.publish_log(task_id, msg)
 
+    def publish_batch_switch(
+        self,
+        old_task_id: str,
+        new_task_id: str,
+        new_batch_id: str,
+        new_batch_number: int
+    ) -> None:
+        """发布批次切换消息
+
+        用于通知前端自动切换到下一个批次。
+        消息会发送到旧任务的 WebSocket 连接。
+
+        Args:
+            old_task_id: 已完成的任务 ID
+            new_task_id: 新任务 ID
+            new_batch_id: 新批次 ID
+            new_batch_number: 新批次号
+        """
+        msg = self._build_message(
+            message_type="batch_switch",
+            task_id=old_task_id,
+            content=f"批次 {new_batch_number} 已开始拆解",
+            metadata={
+                "new_task_id": new_task_id,
+                "new_batch_id": new_batch_id,
+                "new_batch_number": new_batch_number,
+                "auto_switch": True
+            }
+        )
+        self.publish_log(old_task_id, msg)
+
     def close(self) -> None:
         """关闭 Redis 连接"""
         if self._client:

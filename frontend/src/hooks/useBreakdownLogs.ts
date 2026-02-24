@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { useWebSocket } from './useWebSocket';
 
 interface StreamMessage {
-  type: 'connected' | 'step_start' | 'stream_chunk' | 'formatted_chunk' | 'step_end' | 'error' | 'progress' | 'task_complete' | 'task_failed' | 'info' | 'warning' | 'success' | 'qa_check' | 'round_info';
+  type: 'connected' | 'step_start' | 'stream_chunk' | 'formatted_chunk' | 'step_end' | 'error' | 'progress' | 'task_complete' | 'task_failed' | 'info' | 'warning' | 'success' | 'qa_check' | 'round_info' | 'batch_switch';
   task_id: string;
   step_name?: string;
   content?: string;
@@ -15,6 +15,10 @@ interface StreamMessage {
     total_rounds?: number;
     final?: boolean;
     error_code?: string;
+    new_task_id?: string;
+    new_batch_id?: string;
+    new_batch_number?: number;
+    auto_switch?: boolean;
     [key: string]: any;
   };
   status?: string;
@@ -33,6 +37,11 @@ interface UseBreakdownLogsOptions {
   onInfo?: (info: string) => void;
   onSuccess?: (message: string) => void;
   onComplete?: () => void;
+  onBatchSwitch?: (info: {
+    newTaskId: string;
+    newBatchId: string;
+    newBatchNumber: number;
+  }) => void;
 }
 
 /**
@@ -59,7 +68,8 @@ export const useBreakdownLogs = (
     onWarning,
     onInfo,
     onSuccess,
-    onComplete
+    onComplete,
+    onBatchSwitch
   } = options;
 
   const [isConnected, setIsConnected] = useState(false);
@@ -180,10 +190,23 @@ export const useBreakdownLogs = (
         onError?.(data.message || '任务执行失败');
         break;
 
+      case 'batch_switch':
+        console.log('[BreakdownLogs] 收到批次切换消息:', data.metadata);
+        if (data.metadata?.new_task_id && data.metadata?.new_batch_id && data.metadata?.new_batch_number) {
+          onBatchSwitch?.({
+            newTaskId: data.metadata.new_task_id,
+            newBatchId: data.metadata.new_batch_id,
+            newBatchNumber: data.metadata.new_batch_number
+          });
+          // 显示批次切换信息
+          onInfo?.(`批次 ${data.metadata.new_batch_number} 已开始拆解，正在切换...`);
+        }
+        break;
+
       default:
         console.warn('[BreakdownLogs] 未知消息类型:', data.type);
     }
-  }, [onStepStart, onStreamChunk, onFormattedChunk, onStepEnd, onProgress, onRoundInfo, onError, onWarning, onInfo, onSuccess, onComplete]);
+  }, [onStepStart, onStreamChunk, onFormattedChunk, onStepEnd, onProgress, onRoundInfo, onError, onWarning, onInfo, onSuccess, onComplete, onBatchSwitch]);
 
   const { isConnected: wsConnected, lastMessage } = useWebSocket(wsUrl, {
     onMessage: (data) => handleMessage(data as StreamMessage),

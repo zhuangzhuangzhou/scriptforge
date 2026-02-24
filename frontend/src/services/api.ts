@@ -76,7 +76,6 @@ export const projectApi = {
         total_chapters: data.batch_size || 10,
         processed_chapters: 0
       };
-      // @ts-ignore - mock data type mismatch
       mockProjects.push(newProject);
       return { data: newProject };
     }
@@ -616,6 +615,17 @@ export const breakdownApi = {
       };
     }
     return api.get(`/breakdown/results/${batchId}/history`);
+  },
+
+  // 获取项目的所有拆解结果
+  getProjectBreakdowns: async (projectId: string, page: number = 1, pageSize: number = 20) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return { data: { items: [], total: 0, page: 1, page_size: 20 } };
+    }
+    return api.get('/breakdown/project-breakdowns', {
+      params: { project_id: projectId, page, page_size: pageSize }
+    });
   }
 };
 
@@ -652,6 +662,15 @@ export const aiResourceApi = {
 
 // 单集剧本 API
 export const scriptApi = {
+  // 按项目获取所有剧本列表
+  getProjectScripts: async (projectId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return { data: [] };
+    }
+    return api.get('/scripts', { params: { project_id: projectId } });
+  },
+
   // 启动单集剧本生成
   startEpisodeScript: async (breakdownId: string, episodeNumber: number, options?: {
     modelConfigId?: string;

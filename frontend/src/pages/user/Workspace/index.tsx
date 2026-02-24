@@ -92,7 +92,20 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const fileInputRef = React.useRef<HTMLInputElement>(null);
     const importPosition = 'after' as const;
 
-    const [activeTab, setActiveTab] = useState<Tab>('CONFIG');
+    // 🔧 优化：根据项目状态设置初始 Tab，避免短暂渲染 CONFIG Tab 导致额外 API 调用
+    const getInitialTab = (projectStatus?: string): Tab => {
+        const statusTabMap: Record<string, Tab> = {
+            'draft': 'CONFIG',
+            'uploaded': 'CONFIG',
+            'ready': 'CONFIG',
+            'parsing': 'PLOT',
+            'scripting': 'SCRIPT',
+            'completed': 'SCRIPT'
+        };
+        return statusTabMap[projectStatus || ''] || 'CONFIG';
+    };
+
+    const [activeTab, setActiveTab] = useState<Tab>(() => getInitialTab(project?.status));
     const [hasAutoNavigated, setHasAutoNavigated] = useState(false); // 标记是否已自动跳转
     const [showConsole, setShowConsole] = useState(false);
     const [showCopilot, setShowCopilot] = useState(false);
@@ -356,6 +369,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         {
             onStepStart: (stepName, metadata) => {
                 console.log('[StreamLogs] 步骤开始:', stepName, metadata);
+                setShowConsole(true);  // 🔧 关键修复：收到第一条日志时自动打开 Console
                 addLog('thinking', `🚀 ${stepName}`);
                 setBreakdownCurrentStep(stepName);
                 const header = buildFormattedSectionHeader(stepName);
@@ -435,48 +449,52 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
     // 监听 selectedBatch 变化，只处理状态同步和清理
     // 不触发 fetchBreakdownResults（避免重复调用）
+    // 🔧 优化：合并批次选择和状态变化的逻辑，避免重复调用
+    const prevBatchIdRef = React.useRef<string | null>(null);
+    const prevBatchStatusRef = React.useRef<string | null>(null);
+
     useEffect(() => {
         if (!selectedBatch) return;
 
-        // 切换批次时先清空旧结果，避免右侧残留上一个批次内容
-        setBreakdownResult(null);
+        const currentId = selectedBatch.id;
+        const currentStatus = selectedBatch.breakdown_status;
+        const prevId = prevBatchIdRef.current;
+        const prevStatus = prevBatchStatusRef.current;
 
-        const status = selectedBatch.breakdown_status;
-        const isRunning = status === BATCH_STATUS.IN_PROGRESS || status === BATCH_STATUS.QUEUED;
+        // 切换批次时先清空旧结果
+        if (currentId !== prevId) {
+            setBreakdownResult(null);
+        }
+
+        const isRunning = currentStatus === BATCH_STATUS.IN_PROGRESS || currentStatus === BATCH_STATUS.QUEUED;
 
         if (!isRunning) {
             setBreakdownTaskId(null);
-            setExecutingBatchId(null);  // 清空当前执行批次
+            setExecutingBatchId(null);
         }
 
-        // 如果批次已完成，立即加载拆解结果
-        if (status === BATCH_STATUS.COMPLETED) {
-            console.log('[Workspace] 选中已完成的批次，加载拆解结果:', selectedBatch.id);
-            setBreakdownLoading(true);
-            fetchBreakdownResults(selectedBatch.id);
-        }
-    }, [selectedBatch?.id]);
+        // 🔧 关键优化：只在以下情况加载拆解结果，避免重复
+        // 1. 切换到一个已完成的批次（id 变化 && 状态是 completed）
+        // 2. 当前批次状态变为完成（id 不变 && 状态从非 completed 变为 completed）
+        const shouldLoadResults =
+            currentStatus === BATCH_STATUS.COMPLETED && (
+                currentId !== prevId ||  // 切换批次
+                prevStatus !== BATCH_STATUS.COMPLETED  // 状态变化
+            );
 
-    // 追踪上一个状态，用 ref 避免 useEffect 循环触发
-    const prevBatchStatusRef = React.useRef<string | null>(null);
-
-    // 监听批次状态变化，当变成 COMPLETED 时加载拆解结果
-    useEffect(() => {
-        if (!selectedBatch) return;
-
-        const currentStatus = selectedBatch.breakdown_status;
-        const prevStatus = prevBatchStatusRef.current;
-
-        // 当状态变成 COMPLETED 时加载结果（包括首次加载和状态变化）
-        if (currentStatus === BATCH_STATUS.COMPLETED && prevStatus !== BATCH_STATUS.COMPLETED) {
-            console.log('[Workspace] 批次状态变为完成，加载拆解结果:', selectedBatch.id);
+        if (shouldLoadResults) {
+            console.log('[Workspace] 加载拆解结果:', {
+                batchId: selectedBatch.id,
+                reason: currentId !== prevId ? '切换批次' : '状态变为完成'
+            });
             setBreakdownLoading(true);
             fetchBreakdownResults(selectedBatch.id);
         }
 
         // 更新上一个状态
+        prevBatchIdRef.current = currentId;
         prevBatchStatusRef.current = currentStatus;
-    }, [selectedBatch?.breakdown_status]);
+    }, [selectedBatch?.id, selectedBatch?.breakdown_status]);
 
     // 批次列表更新时，同步选中批次状态（避免完成后仍显示停止按钮）
     useEffect(() => {
@@ -622,6 +640,76 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         }
     };
 
+    // 🔧 提取：根据 current_task 切换到目标批次（统一逻辑，解决分页问题）
+    const switchToTaskBatch = async (currentTask: any, options: { silent?: boolean } = {}) => {
+        if (!currentTask || !currentTask.task_id) return;
+
+        // 防重复：如果已经连接到该任务，跳过
+        if (breakdownTaskId === currentTask.task_id) {
+            if (!options.silent) {
+                console.log('[Workspace] 已连接到任务:', currentTask.task_id);
+            }
+            return;
+        }
+
+        console.log('[Workspace] 切换到任务批次:', currentTask);
+
+        // 检查批次是否在当前列表中
+        let targetBatch = batches.find((b: Batch) => b.id === currentTask.batch_id);
+
+        if (!targetBatch && currentTask.batch_number) {
+            // 批次不在当前列表，加载包含该批次的页面
+            const pageNum = Math.ceil(currentTask.batch_number / 20);
+            console.log(`[Workspace] 批次 ${currentTask.batch_number} 不在当前列表，加载第 ${pageNum} 页`);
+
+            try {
+                const batchRes = await projectApi.getBatches(projectId!, pageNum, 20);
+                const pageItems = batchRes.data?.items || [];
+
+                // 🔧 关键修复：更新批次列表和分页状态
+                setBatches(pageItems);
+                setBatchTotal(batchRes.data?.total || 0);
+                setBatchHasMore((pageNum * 20) < (batchRes.data?.total || 0));
+                setBatchPage(pageNum);  // ✅ 修复：同步更新当前页码
+
+                targetBatch = pageItems.find((b: Batch) => b.id === currentTask.batch_id);
+            } catch (err) {
+                console.error('[Workspace] 加载批次页面失败:', err);
+                return;
+            }
+        }
+
+        if (targetBatch) {
+            // 提示用户（只在批次切换时，且非静默模式）
+            if (!options.silent && (!selectedBatch || selectedBatch.id !== targetBatch.id)) {
+                message.info(`已自动跳转到正在拆解的批次：第 ${currentTask.batch_number} 批次`);
+            }
+
+            setSelectedBatch(targetBatch);
+            setBreakdownTaskId(currentTask.task_id);
+            setShowConsole(true);
+
+            if (!options.silent) {
+                addLog('info', `检测到批次 ${currentTask.batch_number} 正在拆解中，已自动连接...`);
+            }
+        } else {
+            console.warn('[Workspace] 未找到目标批次:', currentTask.batch_id);
+        }
+    };
+
+    // 🔧 优化：使用全局进度 API 检测正在处理的任务（解决分页问题）
+    const autoDetectProcessingTask = async (progressData?: any) => {
+        if (breakdownTaskId) return; // 已有任务连接，跳过检测
+
+        try {
+            // 🔧 优化：如果已有进度数据，直接使用，避免重复调用 API
+            const progress = progressData || (await breakdownApi.getBatchProgress(projectId!)).data;
+            await switchToTaskBatch(progress?.current_task);
+        } catch (err) {
+            console.warn('[Workspace] 检测正在处理的任务失败:', err);
+        }
+    };
+
     // 获取批次列表
     const fetchBatches = async (pageNum = 1, append = false) => {
         if (!projectId) return;
@@ -646,32 +734,9 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     }
                 }
 
-                // 🔧 修复2：自动检测正在处理的批次，连接 console
-                if (pageNum === 1 && !breakdownTaskId) {
-                    const processingBatch = newItems.find(
-                        (b: Batch) => b.breakdown_status === BATCH_STATUS.IN_PROGRESS || b.breakdown_status === BATCH_STATUS.QUEUED
-                    );
-                    if (processingBatch) {
-                        // 调用接口获取当前任务 ID
-                        try {
-                            const taskRes = await breakdownApi.getBatchCurrentTask(processingBatch.id);
-                            const taskId = taskRes.data?.task_id;
-                            if (taskId) {
-                                console.log('[Workspace] 检测到正在处理的批次，自动连接 console:', processingBatch.batch_number, taskId);
-                                if (!selectedBatch || selectedBatch.id !== processingBatch.id) {
-                                    message.info(`已自动跳转到正在拆解的批次：第 ${processingBatch.batch_number} 批次`);
-                                    setSelectedBatch(processingBatch);
-                                } else {
-                                    setSelectedBatch(processingBatch);
-                                }
-                                setBreakdownTaskId(taskId);
-                                setShowConsole(true);  // 🔧 自动打开控制台
-                                addLog('info', `检测到批次 ${processingBatch.batch_number} 正在拆解中，已自动连接...`);
-                            }
-                        } catch (err) {
-                            console.warn('[Workspace] 获取批次任务 ID 失败:', err);
-                        }
-                    }
+                // 🔧 优化：使用全局进度 API 检测任务（解决分页问题）
+                if (pageNum === 1) {
+                    await autoDetectProcessingTask();
                 }
             }
 
@@ -692,15 +757,17 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
     // 获取全局进度（从 API 获取准确的统计数据）
     const fetchGlobalProgress = async () => {
-        if (!projectId) return;
+        if (!projectId) return null;
         try {
             const res = await breakdownApi.getBatchProgress(projectId);
             console.log('[Workspace] 获取全局进度:', res.data);
             setBatchProgress(res.data);
+            return res.data;  // 🔧 返回数据，供其他函数复用
         } catch (err) {
             console.error('[Workspace] 获取全局进度失败:', err);
             // 失败时使用降级显示，不影响用户体验
             setBatchProgress(null);
+            return null;
         }
     };
 
@@ -890,7 +957,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 setActiveTab('CONFIG');
                 return;
             }
-            // 优化：先获取批次列表，只有在列表为空时才创建批次
+            // 🔧 优化：先获取批次列表，复用结果避免重复请求
             (async () => {
                 setLoadingBatches(true);
                 try {
@@ -901,8 +968,9 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                         // 批次不存在，需要创建
                         await createBatchesAndFetch();
                     } else {
-                        // 批次已存在，直接加载
+                        // 🔧 关键优化：复用第一次请求的结果，避免重复调用
                         const newItems = res.data?.items || [];
+
                         setBatchTotal(total);
                         setBatches(newItems);
                         setBatchHasMore((1 * 20) < total);
@@ -911,29 +979,11 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                             setSelectedBatch(newItems[0]);
                         }
 
-                        // 🔧 新增：获取全局进度
-                        await fetchGlobalProgress();
+                        // 🔧 优化：获取全局进度并复用结果，避免重复调用
+                        const progressData = await fetchGlobalProgress();
 
-                        // 自动检测正在处理的批次
-                        if (!breakdownTaskId) {
-                            const processingBatch = newItems.find(
-                                (b: any) => b.breakdown_status === BATCH_STATUS.IN_PROGRESS || b.breakdown_status === BATCH_STATUS.QUEUED
-                            );
-                            if (processingBatch) {
-                                try {
-                                    const taskRes = await breakdownApi.getBatchCurrentTask(processingBatch.id);
-                                    const taskId = taskRes.data?.task_id;
-                                    if (taskId) {
-                                        console.log('[Workspace] 检测到正在处理的批次，自动连接 console:', processingBatch.batch_number, taskId);
-                                        setSelectedBatch(processingBatch);
-                                        setBreakdownTaskId(taskId);
-                                        addLog('info', `检测到批次 ${processingBatch.batch_number} 正在拆解中，已自动连接...`);
-                                    }
-                                } catch (err) {
-                                    console.warn('[Workspace] 获取批次任务 ID 失败:', err);
-                                }
-                            }
-                        }
+                        // 自动检测正在处理的任务（复用进度数据）
+                        await autoDetectProcessingTask(progressData);
                     }
                 } catch (err) {
                     console.error('获取批次列表失败:', err);
@@ -1178,42 +1228,9 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     overall_progress: progress.overall_progress
                 });
 
-                // 🔧 修复1：检测正在处理的批次，自动跳转并连接 WebSocket
+                // 🔧 优化：使用统一的批次切换逻辑（静默模式，避免频繁提示）
                 if (progress.current_task) {
-                    const currentTask = progress.current_task;
-
-                    // 🔧 关键修复：使用 API 返回的 batch_number，而不是从 batches 数组查找
-                    const currentBatchNumber = currentTask.batch_number;
-
-                    // 如果当前选中的批次号不是正在处理的批次号，需要刷新批次列表并切换
-                    if (!selectedBatch || selectedBatch.batch_number !== currentBatchNumber) {
-                        console.log('[pollBatchProgress] 检测到新批次开始，刷新批次列表:', currentBatchNumber);
-
-                        // 🔧 立即刷新批次列表，获取最新状态
-                        try {
-                            const batchRes = await projectApi.getBatches(projectId, 1, 20);
-                            const freshBatches = batchRes.data.items;
-                            setBatches(freshBatches);
-
-                            // 从刷新后的列表中找到正在处理的批次
-                            const processingBatch = freshBatches.find((b: any) => b.id === currentTask.batch_id);
-
-                            if (processingBatch) {
-                                console.log('[pollBatchProgress] 切换到批次:', processingBatch.batch_number);
-                                setSelectedBatch(processingBatch);
-                                message.info(`批次 ${processingBatch.batch_number} 已开始拆解`);
-                            }
-                        } catch (err) {
-                            console.error('[pollBatchProgress] 刷新批次列表失败:', err);
-                        }
-                    }
-
-                    // 如果 WebSocket 未连接，尝试连接
-                    if (currentTask.task_id && breakdownTaskId !== currentTask.task_id) {
-                        console.log('[pollBatchProgress] 连接新任务 WebSocket:', currentTask.task_id);
-                        setBreakdownTaskId(currentTask.task_id);
-                        setShowConsole(true);
-                    }
+                    await switchToTaskBatch(progress.current_task, { silent: true });
                 }
 
                 // 检查是否全部完成

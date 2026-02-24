@@ -198,7 +198,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
           <p className="text-slate-400 text-sm">管理您的小说改编项目，查看进度与历史版本。</p>
         </div>
         
-        <motion.button 
+        <motion.button
           whileHover={{ scale: 1.02, translateY: -2 }}
           whileTap={{ scale: 0.98 }}
           onClick={() => setIsModalOpen(true)}
@@ -330,8 +330,8 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
       </footer>
 
       {isModalOpen && (
-        <CreateProjectModal 
-            onClose={() => setIsModalOpen(false)} 
+        <CreateProjectModal
+            onClose={() => setIsModalOpen(false)}
             onSubmit={handleCreateProject}
             userTier={userTier}
         />

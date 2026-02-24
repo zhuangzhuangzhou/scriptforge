@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 from typing import Optional, List
 from datetime import datetime, timezone
+from uuid import UUID
 from app.core.database import get_db
 from app.models.user import User
 from app.models.batch import Batch
@@ -54,7 +55,28 @@ class ScriptResponse(BaseModel):
     status: Optional[str] = None
     qa_status: Optional[str] = None
     qa_score: Optional[int] = None
+    qa_report: Optional[dict] = None
     created_at: Optional[str] = None
+
+    @field_serializer('id')
+    def serialize_uuid(self, value: UUID) -> str:
+        return str(value)
+
+    @field_serializer('project_id')
+    def serialize_project_id(self, value: UUID) -> str:
+        return str(value)
+
+    @field_serializer('batch_id')
+    def serialize_batch_id(self, value: UUID) -> str:
+        return str(value)
+
+    @field_serializer('plot_breakdown_id')
+    def serialize_plot_breakdown_id(self, value: Optional[UUID]) -> Optional[str]:
+        return str(value) if value else None
+
+    @field_serializer('created_at')
+    def serialize_datetime(self, value: Optional[datetime]) -> Optional[str]:
+        return value.isoformat() if value else None
 
     class Config:
         from_attributes = True

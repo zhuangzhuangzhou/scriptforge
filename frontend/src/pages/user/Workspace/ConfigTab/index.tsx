@@ -128,6 +128,14 @@ const ConfigTab: React.FC<ConfigTabProps> = ({
                 <option value="科幻末世">科幻末世</option>
                 <option value="历史军事">历史军事</option>
                 <option value="游戏竞技">游戏竞技</option>
+                <option value="灵异恐怖">灵异恐怖</option>
+                <option value="青春校园">青春校园</option>
+                <option value="古代言情">古代言情</option>
+                <option value="现代言情">现代言情</option>
+                <option value="幻想修真">幻想修真</option>
+                <option value="商战职场">商战职场</option>
+                <option value="轻小说">轻小说</option>
+                <option value="二次元">二次元</option>
               </select>
             </div>
           </div>

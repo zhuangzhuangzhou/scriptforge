@@ -40,7 +40,7 @@ const BatchList: React.FC<BatchListProps> = ({
 
   return (
     <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-2xl">
-      <div className="flex-1 overflow-y-auto divide-y divide-slate-800/30 no-scrollbar" onScroll={onScroll}>
+      <div className="flex-1 overflow-y-auto divide-y divide-slate-800/30" onScroll={onScroll}>
         {isCreatingBatches ? (
           // 创建批次中
           <div className="p-4 space-y-3">

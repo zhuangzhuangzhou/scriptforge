@@ -199,13 +199,16 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
 
           const [, dimensionNum, dimensionName, score, status] = match;
           const isPassed = status === '通过';
+          const scoreNum = parseInt(score, 10);
+          const scoreClass = scoreNum >= 80 ? 'text-emerald-400 font-semibold' : scoreNum >= 60 ? 'text-amber-400 font-semibold' : 'text-red-400 font-semibold';
+
           parts.push(
-            <span key={match.index} className="inline-flex items-center gap-1">
-              <span className="text-violet-300">【维度{dimensionNum}】</span>
-              <span className="text-slate-200">{dimensionName}</span>
-              <span className="text-slate-500">评分</span>
-              <span className="text-slate-200">{score}</span>
-              <span className={isPassed ? 'text-emerald-300' : 'text-red-300'}>
+            <span key={match.index} className="inline-flex items-center gap-1.5">
+              <span className="text-violet-400 font-semibold">【维度{dimensionNum}】</span>
+              <span className="text-slate-100">{dimensionName}</span>
+              <span className="text-slate-500 text-xs">评分</span>
+              <span className={scoreClass}>{score}</span>
+              <span className={isPassed ? 'text-emerald-400 font-medium' : 'text-red-400 font-medium'}>
                 {status}
               </span>
             </span>

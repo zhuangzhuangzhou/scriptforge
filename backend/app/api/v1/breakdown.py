@@ -2049,36 +2049,61 @@ async def get_breakdown_by_id(
 @router.get("/project-breakdowns")
 async def get_project_breakdowns(
     project_id: str,
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """获取项目的所有拆解结果（只返回质检通过的）"""
     from app.models.plot_breakdown import PlotBreakdown
+    from sqlalchemy import func
 
-    result = await db.execute(
-        select(PlotBreakdown)
+    # 计算总数（用于分页）
+    count_result = await db.execute(
+        select(func.count(PlotBreakdown.id))
         .join(Batch)
         .join(Project)
         .where(
             Project.id == project_id,
             Project.user_id == current_user.id,
-            PlotBreakdown.qa_status == 'PASS'  # 只返回质检通过的
+            PlotBreakdown.qa_status == 'PASS'
+        )
+    )
+    total = count_result.scalar() or 0
+
+    # 分页查询，只返回必要字段
+    result = await db.execute(
+        select(
+            PlotBreakdown.id,
+            PlotBreakdown.batch_id,
+            PlotBreakdown.plot_points
+        )
+        .join(Batch)
+        .join(Project)
+        .where(
+            Project.id == project_id,
+            Project.user_id == current_user.id,
+            PlotBreakdown.qa_status == 'PASS'
         )
         .order_by(PlotBreakdown.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
     )
-    breakdowns = result.scalars().all()
+    rows = result.all()
 
-    return [
-        {
-            "id": str(bd.id),
-            "batch_id": str(bd.batch_id),
-            "plot_points": bd.plot_points,
-            "qa_status": bd.qa_status,
-            "qa_score": bd.qa_score,
-            "created_at": bd.created_at.isoformat() if bd.created_at else None
-        }
-        for bd in breakdowns
-    ]
+    return {
+        "items": [
+            {
+                "id": str(row.id),
+                "batch_id": str(row.batch_id),
+                "plot_points": row.plot_points
+            }
+            for row in rows
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size
+    }
 
 
 @router.post("/tasks/{task_id}/stop")
