@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, Field, field_serializer, model_validator
 from typing import Optional, List
 from datetime import datetime, timezone
 from uuid import UUID
@@ -58,25 +58,49 @@ class ScriptResponse(BaseModel):
     qa_report: Optional[dict] = None
     created_at: Optional[str] = None
 
+    @model_validator(mode='before')
+    @classmethod
+    def convert_orm_fields(cls, data):
+        """将 ORM 对象转换为字典，处理 UUID 和 datetime 字段"""
+        if hasattr(data, '__dict__'):
+            # 这是一个 ORM 对象
+            return {
+                'id': str(data.id),
+                'project_id': str(data.project_id),
+                'batch_id': str(data.batch_id),
+                'plot_breakdown_id': str(data.plot_breakdown_id) if data.plot_breakdown_id else None,
+                'episode_number': data.episode_number,
+                'title': data.title,
+                'content': data.content,
+                'word_count': data.word_count,
+                'scene_count': data.scene_count,
+                'status': data.status,
+                'qa_status': data.qa_status,
+                'qa_score': data.qa_score,
+                'qa_report': data.qa_report,
+                'created_at': data.created_at.isoformat() if data.created_at else None,
+            }
+        return data
+
     @field_serializer('id')
-    def serialize_uuid(self, value: UUID) -> str:
-        return str(value)
+    def serialize_uuid(self, value: str) -> str:
+        return value
 
     @field_serializer('project_id')
-    def serialize_project_id(self, value: UUID) -> str:
-        return str(value)
+    def serialize_project_id(self, value: str) -> str:
+        return value
 
     @field_serializer('batch_id')
-    def serialize_batch_id(self, value: UUID) -> str:
-        return str(value)
+    def serialize_batch_id(self, value: str) -> str:
+        return value
 
     @field_serializer('plot_breakdown_id')
-    def serialize_plot_breakdown_id(self, value: Optional[UUID]) -> Optional[str]:
-        return str(value) if value else None
+    def serialize_plot_breakdown_id(self, value: Optional[str]) -> Optional[str]:
+        return value
 
     @field_serializer('created_at')
-    def serialize_datetime(self, value: Optional[datetime]) -> Optional[str]:
-        return value.isoformat() if value else None
+    def serialize_datetime(self, value: Optional[str]) -> Optional[str]:
+        return value
 
     class Config:
         from_attributes = True

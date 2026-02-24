@@ -1296,3 +1296,415 @@ const GlassAlert: React.FC<{
 
 ---
 
+
+## [20260222-221350] 历史剧情点详情弹窗增强
+
+**时间**: 2026-02-22 22:13:50
+
+**提交**:
+- `873e977` - feat: 历史剧情点详情弹窗增强
+
+
+## 功能概述
+
+为拆解历史记录增加了独立的剧情点详情查看弹窗，支持在历史记录之间快速切换浏览。
+
+## 实现内容
+
+| 功能模块 | 描述 |
+|---------|------|
+| 独立弹窗 | 创建 `PlotPointsViewModal` 组件，不再复用列表视图 |
+| 切换导航 | 添加上一个/下一个按钮，支持历史记录间无缝切换 |
+| 评分展示 | 顶部显示质检评分，根据分数着色（≥80绿/≥60琥珀/<60红） |
+| 布局优化 | 删除底部关闭按钮，节省空间 |
+| 位置指示 | 显示当前位置（如 "3/5"），帮助用户定位 |
+| 边界处理 | 第一条/最后一条时自动禁用对应按钮 |
+
+## 技术实现
+
+**状态管理**：
+- 在 `BreakdownDetail` 组件中集中管理历史记录状态
+- `historyBreakdownIds`: 存储所有历史记录ID列表
+- `currentHistoryIndex`: 跟踪当前查看的索引位置
+- `viewingBreakdownData`: 缓存当前查看的拆解数据
+
+**数据流**：
+```
+BreakdownDetailModal (点击查看)
+  ↓ 传递 breakdownId + allBreakdownIds[]
+BreakdownDetail (状态管理 + API调用)
+  ↓ 传递 breakdown + 切换回调 + 状态标志
+PlotPointsViewModal (展示 + 触发切换)
+```
+
+**API调用**：
+- 使用 `breakdownApi.getBreakdownById(breakdownId)` 获取历史数据
+- 切换时重新调用API获取新数据，显示加载状态
+
+## 修改文件
+
+- `frontend/src/pages/user/Workspace/PlotTab/PlotPointsViewModal.tsx` (新建)
+- `frontend/src/pages/user/Workspace/PlotTab/BreakdownDetailModal.tsx`
+- `frontend/src/pages/user/Workspace/PlotTab/BreakdownDetail.tsx`
+
+## 用户体验优化
+
+1. **视觉反馈**：禁用按钮透明度30%，清晰表明不可用状态
+2. **加载状态**：切换时显示加载动画，避免用户困惑
+3. **错误处理**：API失败时显示友好提示，不会导致弹窗卡死
+4. **位置感知**：标题显示 "(3/5)" 帮助用户了解当前位置
+5. **快捷操作**：无需关闭弹窗即可浏览所有历史记录
+
+## 代码质量
+
+- ✅ TypeScript 类型安全，所有props都有明确类型定义
+- ✅ 使用可选链操作符（`?.`）防止空值错误
+- ✅ 边界检查防止数组越界
+- ✅ 状态清理，关闭弹窗时重置所有相关状态
+- ✅ 无新增 lint 错误
+
+## 测试建议
+
+**基本功能**：
+- 点击历史记录"查看"按钮，打开剧情点详情弹窗
+- 验证评分显示和颜色正确
+- 验证底部无关闭按钮
+
+**切换功能**：
+- 点击"上一个"/"下一个"按钮切换记录
+- 验证第一条/最后一条时按钮禁用
+- 验证切换时显示加载状态
+
+**边界情况**：
+- 只有一条记录时，两个按钮都禁用
+- API失败时显示错误提示
+- 关闭按钮（X）正常工作
+
+---
+
+
+## [20260222-225715] 修复按钮组样式不一致问题
+
+**时间**: 2026-02-22 22:57:15
+
+**提交**:
+- `582e902` - fix: 统一按钮组样式并修复类型错误
+
+
+## 问题描述
+
+Plot 页面的"全部拆解"、"继续拆解"、"重新拆解"三个按钮高度不一致，最后一个按钮高度低于前两个。
+
+## 根本原因
+
+按钮样式属性不统一导致：
+1. **内边距不一致**：部分按钮使用 `px-4 gap-2`，部分使用 `px-3 gap-1.5`
+2. **边框缺失**：前两个按钮有 `border` 属性（增加 2px 高度），其他按钮没有
+
+## 修复内容
+
+### 1. 统一按钮样式
+- 全部拆解、继续拆解、停止拆解、开始拆解、重试拆解、重新拆解
+- 统一为：`px-3 py-1.5 gap-1.5`
+- 为所有按钮添加对应颜色的边框：`border border-{color}-500/30`
+
+### 2. 修复 TypeScript 类型错误
+- 使用 `displayBreakdownResult` 替代 `breakdownResult`（支持历史数据查看）
+- 修复拼写错误：`claame` → `className`
+
+### 3. 更新规范文档
+在 `.trellis/spec/frontend/index.md` 新增第 16 节：按钮组样式一致性规范
+- 问题描述与根本原因分析
+- 常见错误模式（边框缺失、内边距不统一）
+- 按钮组标准模板（小、中、大三种尺寸）
+- 检查清单（6 项检查点）
+- 参考实现位置
+
+## 修改文件
+
+| 文件 | 修改内容 |
+|------|---------|
+| `frontend/src/pages/user/Workspace/index.tsx` | 统一 6 个按钮的样式属性 |
+| `frontend/src/pages/user/Workspace/PlotTab/BreakdownDetail.tsx` | 修复类型错误和拼写错误 |
+| `.trellis/spec/frontend/index.md` | 新增按钮组样式一致性规范 |
+
+## 验证结果
+
+- ✅ TypeScript 编译通过
+- ✅ 构建成功（`npm run build`）
+- ✅ 所有按钮高度完全一致
+
+## 经验总结
+
+**影响按钮高度的属性**：
+1. `py-*` - 直接影响高度
+2. `border` - 有边框增加 2px 高度
+3. `px-*` 和 `gap-*` - 影响视觉平衡
+
+**最佳实践**：同一组按钮必须使用完全相同的 `padding`、`gap`、`border` 属性。
+
+---
+
+
+## [20260223-015406] 统一任务状态常量并优化卡住任务检查
+
+**时间**: 2026-02-23 01:54:06
+
+**提交**:
+- `b20aaad` - feat: 统一任务状态常量并优化卡住任务检查
+
+
+**摘要**: 统一前后端状态常量为 in_progress，优化管理员任务管理功能
+
+
+## 主要工作
+
+### 1. 状态常量统一
+- **问题**：`TaskStatus.IN_PROGRESS` 和 `BatchStatus.PROCESSING` 值不一致
+  - `TaskStatus.IN_PROGRESS = "in_progress"`
+  - `BatchStatus.PROCESSING = "processing"`
+- **解决**：统一为 `"in_progress"`
+  - 修改 `BatchStatus.IN_PROGRESS = "in_progress"`
+  - 更新所有引用（后端 4 个文件，前端 5 个文件）
+
+### 2. 优化"检查卡住任务"功能
+- **原功能**：点击按钮自动终止所有卡住任务
+- **新功能**：
+  1. 点击按钮查询卡住任务
+  2. 在 Modal 中展示任务列表（含卡住原因）
+  3. 管理员勾选要终止的任务
+  4. 批量终止选中任务
+
+### 3. API 变更
+- **新增**：`GET /admin/tasks/stuck` - 查询卡住任务
+- **删除**：`POST /admin/tasks/check-stuck` - 自动终止
+
+## 修改文件
+
+### 后端
+- `backend/app/core/status.py` - 状态常量定义
+- `backend/app/api/v1/admin_core.py` - 新增查询 API
+- `backend/app/tasks/breakdown_tasks.py` - 更新状态引用
+- `backend/app/tasks/task_monitor.py` - 更新状态引用
+
+### 前端
+- `frontend/src/constants/status.ts` - 状态常量定义
+- `frontend/src/services/api.ts` - API 服务
+- `frontend/src/pages/admin/TaskManagement/index.tsx` - 任务管理页面
+- `frontend/src/pages/user/Workspace/index.tsx` - 工作区页面
+- `frontend/src/pages/user/Workspace/PlotTab/BatchCard.tsx` - 批次卡片
+- `frontend/src/pages/user/Workspace/PlotTab/BreakdownDetail.tsx` - 拆解详情
+- `frontend/src/pages/user/PlotBreakdown.tsx` - 剧情拆解页面
+
+### 规范文档
+- `.trellis/spec/backend/index.md` - 更新状态规范 + 新增常见错误
+- `.trellis/spec/SPEC_UPDATE_LOG.md` - 添加更新日志
+
+## Breaking Change
+
+⚠️ **数据库迁移**：`breakdown_status` 值从 `"processing"` 改为 `"in_progress"`
+
+```sql
+UPDATE batches 
+SET breakdown_status = 'in_progress' 
+WHERE breakdown_status = 'processing';
+```
+
+## 验证结果
+
+✅ 后端状态常量统一  
+✅ 前端状态常量统一  
+✅ 状态映射逻辑正确  
+✅ 代码引用全部更新（11处后端 + 5个前端文件）  
+✅ 规范文档已更新  
+✅ 无遗漏的 PROCESSING 引用
+
+---
+
+
+## [20260223-015508] 积分系统重构与前端性能优化
+
+**时间**: 2026-02-23 01:55:08
+
+**提交**:
+- `a4239d4` - refactor: 重构积分系统和前端性能优化
+
+
+## 会话概述
+
+本次会话完成了三个核心改进：数据库事务管理、积分系统重构、前端性能优化。
+
+## 主要工作
+
+### 1. 后端系统重构
+
+| 改进项 | 描述 | 文件 |
+|--------|------|------|
+| **数据库事务管理** | 修复 PostgreSQL 事务失败问题，移除对已删除 system_configs 表的查询 | `backend/app/core/credits.py` |
+| **积分配置重构** | 从数据库查询改为环境变量配置，消除事务陷阱 | `backend/app/core/credits.py` |
+| **积分预扣模式** | 实现与剧集拆解一致的预扣模式，防止并发超支 | `backend/app/api/v1/scripts.py` |
+| **失败自动退款** | 任务失败时自动返还预扣的积分 | `backend/app/tasks/script_tasks.py` |
+
+### 2. 前端性能优化
+
+| 改进项 | 描述 | 效果 |
+|--------|------|------|
+| **接口调用优化** | 使用 useRef 缓存映射关系，避免重复查询 | 接口调用从 7 个减少到 5 个（-28.6%） |
+| **数据加载策略** | 一次性加载所有数据并缓存，后续操作直接使用 | 消除重复的批次和拆解结果查询 |
+
+### 3. 规范文档建设
+
+创建了完整的规范文档体系：
+
+- `.trellis/spec/backend/database-transactions.md` - 数据库事务管理规范
+- `.trellis/spec/backend/credits-system.md` - 积分系统设计模式规范
+- `.trellis/spec/frontend/performance-optimization.md` - 前端性能优化规范
+
+## 技术细节
+
+### 问题根源
+
+**PostgreSQL 事务失败：**
+```
+sqlalchemy.exc.DBAPIError: current transaction is aborted, 
+commands ignored until end of transaction block
+```
+
+**原因：** `get_credits_config()` 尝试查询已删除的 `system_configs` 表，导致事务进入 aborted 状态，后续所有 SQL 操作被拒绝。
+
+### 解决方案
+
+**1. 配置管理重构：**
+```python
+# 从环境变量读取配置
+CREDITS_PRICING = {
+    "breakdown": int(os.getenv("CREDITS_BREAKDOWN", "100")),
+    "script": int(os.getenv("CREDITS_SCRIPT", "50")),
+}
+
+async def get_credits_config(db: AsyncSession) -> dict:
+    # 直接返回配置，不查询数据库
+    return CREDITS_CONFIG
+```
+
+**2. 积分预扣模式：**
+```python
+# API 层：检查 + 预扣
+credits_check = await quota_service.check_credits(current_user, "script")
+consume_result = await quota_service.consume_credits(current_user, "script", "剧本生成")
+
+# Celery 层：失败退款
+try:
+    # 执行任务...
+except Exception:
+    refund_episode_quota_sync(db, user_id, 1, auto_comFalse)
+```
+
+**3. 前端缓存策略：**
+```typescript
+// 使用 useRef 缓存映射关系
+const episodeToBreakdownMapRef = useRef<Map<number, string>>(new Map());
+
+// 一次性加载并缓存
+const loadEpisodes = async () => {
+    const breakdownIdMap = new Map();
+    // 加载数据并建立映射...
+    episodeToBreakdownMapRef.current = breakdownIdMap;
+};
+
+// 直接使用缓存，不重复查询
+const loadEpisodeScript = async (episodeNumber) => {
+    const breakdownId = episodeToBreakdownMapRef.current.get(episodeNumber);
+    // 使用 breakdownId 加载剧本...
+};
+```
+
+## 修改的文件
+
+- `backend/app/core/credits.py` - 重构配置管理（126 行变更）
+- `backend/app/api/v1/scripts.py` - 添加积分预扣（21 行变更）
+- `backend/app/tasks/script_y` - 添加失败退款（23 行变更）
+- `frontend/src/pages/user/Workspace/ScriptTab/index.tsx` - 性能优化（200 行变更）
+
+## 测试建议
+
+1. 重启后端服务和 Celery worker
+2. 进入 Script Tab，检查接口调用次数（应该是 5 个）
+3. 生成剧本，检查积分是否正确预扣
+4. 模拟任务失败，检查积分是否自动返还
+
+## 知识沉淀
+
+本次会话的关键知识已记录在规范文档中：
+
+- **Common Mistake**: 事务中查询不存在的表
+- **Pattern**: 积分预扣模式（防止并发超支）
+- **Pattern**: 使用 useRef 缓存避免重复请求
+- **Gotcha**: PostgreSQL 事务失败后必须回滚
+
+## 环境变量配置
+
+```bash
+# .env 文件
+CREDITS_BREAKDOWN=100    # 剧情拆解费用
+CREDITS_SCRIPT=50        # 剧本生成费用
+CREDITS_QA=30            # 质检费用
+CREDITS_RETRY=50         # 重试费用
+```
+
+---
+
+
+## [20260224-153839] 剧集拆解进度显示和按钮状态修复
+
+**时间**: 2026-02-24 15:38:39
+
+**提交**:
+- `2d0d5db` - fix: 修复剧集拆解进度显示和按钮状态
+
+
+## 问题描述
+
+1. **进度显示不准确**: 页面顶部显示 "20/167"，但实际已拆解 90 个批次
+2. **按钮被错误禁用**: "全部拆解"和"继续拆解"按钮无法点击
+
+## 根本原因
+
+- 前端批次列表是分页加载的（每次 20 条）
+- 进度计算和按钮禁用逻辑直接从本地 `batches` 数组过滤，无法反映全部批次的真实状态
+
+## 解决方案
+
+| 修复项 | 实现方式 |
+|--------|---------|
+| 全局进度状态 | 添加 `batchProgress` 状态，从后端 API `/breakdown/batch-progress/{projectId}` 获取 |
+| 进度显示 | 使用 `batchProgress.completed / batchProgress.total_batches` 替代数组过滤 |
+| 按钮禁用逻辑 | 基于 `batchProgress.pending + batchProgress.failed` 判断，降级使用本地数组 |
+| 实时同步 | 在批次完成/失败/切换时调用 `fetchGlobalProgress()` 更新进度 |
+
+## 技术亮点
+
+- **类型安全**: 所有 `batchProgress` 访问使用可选链 `?.` 和默认值
+- **降级策略**: API 未加载时使用本地数组，保证功能可用性
+- **性能优化**: 只在必要时刷新全局进度，避免重复 API 调用
+- **WebSocket 集成**: 批次切换消息触发进度同步
+
+## 代码质量
+
+- ✅ TypeScript 类型检查通过
+- ✅ ESLint 检查通过（0 errors）
+- ✅ 遵循前端开发规范
+
+## 修改文件
+
+- `frontend/src/pages/user/Workspace/index.tsx` (+137, -48)
+
+## 验收标准
+
+- [x] 页面顶部显示准确的进度数字（90/167）
+- [x] 有待拆解批次时按钮可用
+- [x] 批次完成后进度自动更新
+- [x] WebSocket 批次切换时进度同步
+
+---
+

@@ -2,6 +2,235 @@
 
 记录所有规范文档的更新历史。
 
+## 2026-02-23 - 并行请求错误处理补充
+
+### 更新的规范
+
+1. **`frontend/performance-optimization.md`** - 更新
+   - 新增: 并行请求的错误处理模式
+   - 说明: 使用 `.catch()` 处理单个请求失败
+   - 对比: 有/无错误处理的性能和用户体验差异
+
+### 学到的关键知识
+
+#### 并行请求的错误处理
+
+**问题**: 使用 `Promise.all` 时,一个请求失败会导致所有数据丢失
+
+**错误示例**:
+```typescript
+// ❌ 一个请求失败,所有数据都丢失
+const promises = batches.map(b => api.get(b.id));
+const results = await Promise.all(promises);
+```
+
+**正确做法**:
+```typescript
+// ✅ 单个请求失败不影响其他请求
+const promises = batches.map(b =>
+  api.get(b.id).catch(err => {
+    console.warn(`请求失败:`, err);
+    return null;  // 返回 null 而不是抛出异常
+  })
+);
+const results = await Promise.all(promises);
+results.forEach(r => {
+  if (!r) return;  // 跳过失败的请求
+  // 处理成功的数据...
+});
+```
+
+**为什么重要**:
+- 单个批次失败不应该影响其他批次
+- 用户可以看到部分结果,而不是什么都看不到
+- 提供更好的容错性和用户体验
+
+**性能对比**:
+- 50 个批次,第 5 个失败
+- 无错误处理: 全部失败,0 个结果
+- 有错误处理: 部分成功,49 个结果
+
+---
+
+## 2026-02-23 - WebSocket 批次切换功能实现
+
+### 新增的规范
+
+1. **`backend/websocket-patterns.md`** - 新增
+   - WebSocket 双频道架构设计
+   - 添加新消息类型的标准流程
+   - 降级设计模式 (WebSocket + 轮询)
+   - 消息发送时机和顺序
+   - 常见陷阱和测试建议
+
+2. **`frontend/react-hooks-patterns.md`** - 新增
+   - 异步回调中的闭包陷阱
+   - Custom Hook 回调设计模式
+   - 依赖数组管理规则
+   - 避免过度渲染的技巧
+   - useEffect 清理函数
+
+3. **`guides/cross-layer-thinking-guide.md`** - 新增
+   - WebSocket 批次切换的完整数据流案例
+   - 5 层架构的数据流追踪方法
+   - 常见问题排查步骤
+   - 调试技巧和最佳实践
+
+### 学到的关键知识
+
+#### 1. WebSocket 频道选择
+
+**问题**: 新增 `batch_switch` 消息时,应该选择哪个频道?
+
+**分析**:
+- 项目有两个 WebSocket 频道:
+  - `breakdown:{task_id}` - 任务进度更新
+  - `breakdown:logs:{task_id}` - 流式日志和事件
+- `batch_switch` 是事件类消息,不是进度类消息
+
+**解决**: 使用 `breakdown:logs:{task_id}` 频道
+
+**规范**:
+- 进度类消息 → `breakdown:{task_id}`
+- 日志/事件类消息 → `breakdown:logs:{task_id}`
+
+#### 2. 异步回调中的闭包陷阱
+
+**问题**: WebSocket 回调中使用 `batches` 变量,总是获取到旧值
+
+```typescript
+// ❌ 错误: 闭包陷阱
+const [batches, setBatches] = useState([]);
+
+useBreakdownLogs(taskId, {
+    onBatchSwitch: async (switchInfo) => {
+        // 这里的 batches 是创建回调时的值,不是最新值
+        const newBatch = batches.find(b => b.id === switchInfo.newBatchId);
+    }
+});
+```
+
+**原因**: JavaScript 闭包机制,回调函数捕获的是创建时的变量值
+
+**解决**: 直接调用 API 获取最新数据
+
+```typescript
+// ✅ 正确: 直接调用 API
+onBatchSwitch: async (switchInfo) => {
+    const res = await projectApi.getBatches(projectId!, 1, 20);
+    const freshBatches = res.data?.items || [];
+    const newBatch = freshBatches.find(b => b.id === switchInfo.newBatchId);
+}
+```
+
+**规范**:
+1. 优先直接调用 API (最可靠)
+2. 或使用 useRef 保存最新值
+3. 或使用函数式 setState
+4. 避免在回调中直接使用 state 变量
+
+#### 3. 消息发送时机
+
+**问题**: 何时推送 WebSocket 消息?
+
+**错误做法**:
+```python
+# ❌ 在事务提交前推送
+log_publisher.publish_batch_switch(...)
+db.commit()  # 如果失败,前端已收到消息但数据未保存
+```
+
+**正确做法**:
+```python
+# ✅ 在事务提交后推送
+db.commit()  # 先确保数据已保存
+log_publisher.publish_batch_switch(...)  # 再推送消息
+```
+
+**规范**:
+- 数据一致性优先: 先提交事务,再推送消息
+- 推送失败不影响主流程: 使用 try-except 包裹
+- 降级机制兜底: 轮询仍能检测到变化
+
+#### 4. 降级设计模式
+
+**问题**: WebSocket 推送可能失败,如何保证功能可用?
+
+**解决**: 双保险机制
+
+```python
+# 主要机制: WebSocket 实时推送 (99% 情况)
+try:
+    log_publisher.publish_batch_switch(...)
+except Exception:
+    logger.warning("WebSocket 推送失败")
+    # 不抛出异常,让降级机制接管
+
+# 降级机制: 定时轮询 (1% 情况)
+setInterval(() => {
+    fetchBatchProgress();
+}, 30000);
+```
+
+**规范**:
+- 新功能失败不影响旧功能
+- WebSocket 推送 + 定时轮询双保险
+- 99% 享受实时更新,1% 降级也可接受
+
+#### 5. Custom Hook 回调设计
+
+**问题**: Hook 提供回调接口时,如何避免用户犯闭包错误?
+
+**不好的设计**:
+```typescript
+// ❌ 回调参数不足,强迫用户使用闭包变量
+interface Options {
+    onBatchSwitch?: (batchNumber: number) => void;
+}
+```
+
+**好的设计**:
+```typescript
+// ✅ 回调参数包含所有必要信息
+interface Options {
+    onBatchSwitch?: (info: {
+        newTaskId: string;
+        newBatchId: string;
+        newBatchNumber: number;
+    }) => void;
+}
+```
+
+**规范**:
+- 回调参数应自包含,不依赖外部状态
+- 提供所有必要信息,减少闭包依赖
+- 让用户更容易写出正确的代码
+
+### 更新的规范
+
+1. **`backend/index.md`** - 更新
+   - 新增 WebSocket 消息推送模式文档链接
+
+2. **`frontend/index.md`** - 更新
+   - 新增 React Hooks 最佳实践文档链接
+
+3. **`guides/index.md`** - 更新
+   - 新增跨层数据流思考指南链接
+
+### 影响范围
+
+- **后端**: WebSocket 消息推送逻辑
+- **前端**: React Hook 回调处理
+- **架构**: 跨层数据流设计
+
+### 相关实现
+
+- 完整实现文档: `websocket_batch_switch_implementation.md`
+- 后端文件: `backend/app/core/redis_log_publisher.py`, `backend/app/tasks/breakdown_tasks.py`
+- 前端文件: `frontend/src/hooks/useBreakdownLogs.ts`, `frontend/src/pages/user/Workspace/index.tsx`
+
+---
+
 ## 2026-02-22 - 任务状态常量统一
 
 ### 更新的规范
