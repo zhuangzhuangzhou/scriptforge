@@ -41,6 +41,8 @@ export const useConsoleLogger = (
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [llmStats, setLlmStats] = useState<LLMCallStats>({ total: 0, stages: [] });
   const [isConnected, setIsConnected] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [currentStep, setCurrentStep] = useState('');
   const wsRef = useRef<WebSocket | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queuedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -125,6 +127,8 @@ export const useConsoleLogger = (
   const clearLogs = useCallback(() => {
     setLogs([]);
     setLlmStats({ total: 0, stages: [] });
+    setProgress(0);
+    setCurrentStep('');
   }, []);
 
   // 结束当前流式日志（用于步骤结束时，确保下一步骤的内容不会追加到当前日志）
@@ -198,9 +202,43 @@ export const useConsoleLogger = (
         try {
           const data = JSON.parse(event.data);
 
-          // 处理进度更新
+          // 处理 logs 频道的消息（包含 content 字段）
+          if (data.content) {
+            // 根据消息类型显示不同的日志样式
+            const messageType = data.type || 'info';
+            if (messageType === 'info' || messageType === 'step_start') {
+              // 步骤开始时，结束之前的流式日志
+              finalizeStreamLog();
+              addLog('info', data.content);
+            } else if (messageType === 'success') {
+              finalizeStreamLog();
+              addLog('success', data.content);
+            } else if (messageType === 'warning') {
+              addLog('warning', data.content);
+            } else if (messageType === 'error') {
+              finalizeStreamLog();
+              addLog('error', data.content);
+            } else if (messageType === 'stream_chunk' || messageType === 'formatted_chunk') {
+              // 流式内容使用追加模式，累积到同一个日志条目
+              appendStreamLog(data.content);
+            } else if (messageType === 'round_info') {
+              finalizeStreamLog();
+              addLog('info', data.content);
+            } else if (messageType === 'step_end') {
+              // 步骤结束时，结束流式日志
+              finalizeStreamLog();
+            }
+          }
+
+          // 处理 progress 频道的消息（包含 current_step 字段）
           if (data.current_step) {
+            setCurrentStep(data.current_step);
             addLog('thinking', data.current_step);
+          }
+
+          // 提取进度百分比
+          if (typeof data.progress === 'number') {
+            setProgress(data.progress);
           }
 
           // 处理任务完成
@@ -265,7 +303,7 @@ export const useConsoleLogger = (
       console.error('WebSocket 连接错误:', error);
       addLog('warning', 'WebSocket 不可用，使用轮询模式');
     }
-  }, [taskId, enableWebSocket, addLog, fetchLLMCallLogs]);
+  }, [taskId, enableWebSocket, addLog, appendStreamLog, finalizeStreamLog, fetchLLMCallLogs]);
 
   // 轮询模式（WebSocket 失败时的降级方案）
   useEffect(() => {
@@ -358,6 +396,8 @@ export const useConsoleLogger = (
     logs,
     llmStats,
     isConnected,
+    progress,
+    currentStep,
     addLog,
     appendStreamLog,
     updateStreamLog,

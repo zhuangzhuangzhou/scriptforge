@@ -704,6 +704,8 @@ class SimpleSkillExecutor:
         # ----------------------------------------------------------------
         PLOT_POINTS_PARAMS = {"plot_points", "previous_plot_points"}
         QA_FEEDBACK_PARAMS = {"qa_issues", "qa_fix_instructions", "qa_feedback"}
+        # 剧本参数：如果是字典且包含 full_script，提取完整剧本文本
+        SCRIPT_PARAMS = {"script", "previous_script"}
 
         processed_inputs = {}
         for key, value in inputs.items():
@@ -740,6 +742,24 @@ class SimpleSkillExecutor:
             if isinstance(value, dict):
                 if key in QA_FEEDBACK_PARAMS:
                     processed_inputs[key] = format_qa_feedback_to_text(value)
+                elif key in SCRIPT_PARAMS:
+                    # 剧本参数：提取 full_script 字段作为质检输入
+                    full_script = value.get("full_script", "")
+                    if full_script:
+                        processed_inputs[key] = full_script
+                    else:
+                        # 如果没有 full_script，尝试从 structure 拼接
+                        structure = value.get("structure", {})
+                        if structure:
+                            parts = []
+                            for section in ["opening", "development", "climax", "hook"]:
+                                section_data = structure.get(section, {})
+                                content = section_data.get("content", "")
+                                if content:
+                                    parts.append(content)
+                            processed_inputs[key] = "\n\n".join(parts)
+                        else:
+                            processed_inputs[key] = json.dumps(value, ensure_ascii=False, indent=2)
                 else:
                     processed_inputs[key] = json.dumps(value, ensure_ascii=False, indent=2)
                 continue

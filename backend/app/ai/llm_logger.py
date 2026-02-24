@@ -134,10 +134,8 @@ def log_llm_call(
         return log
     except Exception as e:
         logger.error(f"❌ 记录 LLM 调用日志失败: {e}", exc_info=True)
-        try:
-            db.rollback()
-        except Exception:
-            pass
+        # 注意：不要在这里 rollback，因为可能会影响主业务事务
+        # 日志记录失败不应该影响主业务逻辑
         return None
 
 
@@ -202,10 +200,8 @@ async def log_llm_call_async(
         return log
     except Exception as e:
         logger.error(f"❌ 记录 LLM 调用日志失败（异步）: {e}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        # 注意：不要在这里 rollback，因为可能会影响主业务事务
+        # 日志记录失败不应该影响主业务逻辑
         return None
 
 

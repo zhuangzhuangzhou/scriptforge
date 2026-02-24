@@ -2,11 +2,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   RefreshCw, CheckCircle2, Loader2,
   ThumbsUp, Download, FileEdit, Save, FileCheck, Search, AlertCircle,
-  Eye, Edit3, Play, XCircle
+  Eye as EyeIcon, Edit3, Play, XCircle
 } from 'lucide-react';
 import { message, Modal } from 'antd';
+import { motion, AnimatePresence } from 'framer-motion';
 import ConfirmModal from '../../../../components/modals/ConfirmModal';
 import ConsoleLogger from '../../../../components/ConsoleLogger';
+import BreakdownDetail, { QAReportModal } from '../PlotTab/BreakdownDetail';
 import { useConsoleLogger } from '../../../../hooks/useConsoleLogger';
 import { scriptApi, exportApi, breakdownApi } from '../../../../services/api';
 import type { EpisodeScript, ScriptStructure } from '../../../../types';
@@ -48,6 +50,8 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
   const {
     logs,
     llmStats,
+    progress,
+    currentStep,
     addLog,
     clearLogs
   } = useConsoleLogger(currentTaskId, {
@@ -73,6 +77,9 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
   // 错误弹窗状态
   const [errorModalOpen, setErrorModalOpen] = useState(false);
   const [errorInfo, setErrorInfo] = useState<{ code: string; message: string; suggestion?: string } | null>(null);
+
+  // 质检报告弹窗状态
+  const [qaReportModalOpen, setQAReportModalOpen] = useState(false);
 
   // 解析错误信息（参考 Plot 页面逻辑）
   const parseError = (errorData: any): { code: string; message: string; suggestion?: string } => {
@@ -133,12 +140,43 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
       // 使用 Map 存储剧集信息（key: episode, value: 剧集数据）
       const episodeMap = new Map<number, any>();
 
+      // 🔧 修复：先建立 episode -> breakdown 的正确映射
+      // 这样即使剧本记录中的 breakdown_id 过时，也能使用正确的 breakdown
+      const episodeToBreakdown = new Map<number, { breakdownId: string; batchId: string }>();
+      breakdowns.forEach((breakdown: any) => {
+        if (breakdown.plot_points && Array.isArray(breakdown.plot_points)) {
+          breakdown.plot_points.forEach((pp: any) => {
+            if (pp.episode && pp.episode > 0) {
+              // 只保留第一个匹配的 breakdown（按 batch_number 升序，所以第一个是正确的）
+              if (!episodeToBreakdown.has(pp.episode)) {
+                episodeToBreakdown.set(pp.episode, {
+                  breakdownId: breakdown.id,
+                  batchId: breakdown.batch_id
+                });
+              }
+            }
+          });
+        }
+      });
+
       // 1. 从已生成的剧本中提取剧集
       scripts.forEach((script: any) => {
-        episodeMap.set(script.episode_number, {
-          episode: script.episode_number,
+        const ep = script.episode_number;
+        // 🔧 修复：优先使用 breakdowns 列表中的正确 breakdown_id
+        const correctBreakdown = episodeToBreakdown.get(ep);
+        const breakdownId = correctBreakdown?.breakdownId || script.plot_breakdown_id;
+        const batchId = correctBreakdown?.batchId || script.batch_id;
+
+        // 如果 breakdown_id 不一致，打印警告
+        if (correctBreakdown && correctBreakdown.breakdownId !== script.plot_breakdown_id) {
+          console.warn(`[ScriptTab] 第 ${ep} 集 breakdown_id 不一致！剧本记录: ${script.plot_breakdown_id?.slice(0, 8)}, 正确值: ${correctBreakdown.breakdownId?.slice(0, 8)}`);
+        }
+
+        episodeMap.set(ep, {
+          episode: ep,
           status: 'completed',
-          breakdownId: script.plot_breakdown_id,
+          breakdownId: breakdownId,  // 使用正确的 breakdown_id
+          batchId: batchId,
           script: {
             id: script.id,
             episode_number: script.episode_number,
@@ -675,7 +713,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
           <button
             key="close"
             onClick={() => setErrorModalOpen(false)}
-            className="px-4 py-2 bg-slate-700:bg-slate- hover600 text-white rounded-lg transition-colors"
+            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
           >
             关闭
           </button>
@@ -713,6 +751,16 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         </div>
       </Modal>
 
+      {/* 质检报告弹窗 - 使用 PlotTab 的 QAReportModal 组件保持 UI 一致 */}
+      <AnimatePresence>
+        {qaReportModalOpen && currentScript?.qa_report && (
+          <QAReportModal
+            report={currentScript.qa_report}
+            onClose={() => setQAReportModalOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+
       {/* LEFT COLUMN: Episodes List */}
       <div className="w-72 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-2xl">
         {/* 生成控制区域 */}
@@ -725,8 +773,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
             onClick={() => selectedEpisode && handleGenerateScript(selectedEpisode)}
             disabled={
               !selectedEpisode ||
-              generating !== null ||
-              episodes.find(ep => ep.episode === selectedEpisode)?.status !== 'pending'
+              generating !== null
             }
             className="w-full py-2.5 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 disabled:from-slate-700 disabled:to-slate-700 text-white rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-all"
           >
@@ -843,40 +890,31 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
             </h2>
           </div>
           <div className="flex items-center gap-2">
-            {/* 视图切换 */}
-            <div className="flex bg-slate-800 rounded-lg p-0.5 mr-2">
+            {/* 视图切换：四段式/完整剧本 + 预览/编辑 */}
+            <div className="flex bg-slate-800 rounded-lg p-0.5">
               <button
-                onClick={() => setViewMode('structure')}
-                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${viewMode === 'structure' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-400 hover:text-white'}`}
+                onClick={() => { setViewMode('structure'); setEditMode(false); }}
+                disabled={!currentScript}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${viewMode === 'structure' && !editMode ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-400 hover:text-white disabled:opacity-50'}`}
               >
                 四段式
               </button>
               <button
-                onClick={() => setViewMode('full')}
-                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${viewMode === 'full' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-400 hover:text-white'}`}
+                onClick={() => { setViewMode('full'); setEditMode(false); }}
+                disabled={!currentScript}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${viewMode === 'full' && !editMode ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-400 hover:text-white disabled:opacity-50'}`}
               >
                 完整剧本
               </button>
-            </div>
-            {/* 编辑/预览切换 */}
-            <div className="flex bg-slate-800 rounded-lg p-0.5 mr-2">
+              <div className="w-px bg-slate-700 mx-1"></div>
               <button
-                onClick={() => setEditMode(false)}
+                onClick={() => { setViewMode('structure'); setEditMode(true); }}
                 disabled={!currentScript}
-                className={`px-3 py-1 text-xs rounded-md ${!editMode ? 'bg-green-500/20 text-green-400' : 'text-slate-400 hover:text-white'} disabled:opacity-50`}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${editMode ? 'bg-green-500/20 text-green-400' : 'text-slate-400 hover:text-white disabled:opacity-50'}`}
               >
-                <Eye size={14} className="inline mr-1"/> 预览
-              </button>
-              <button
-                onClick={handleEnterEditMode}
-                disabled={!currentScript}
-                className={`px-3 py-1 text-xs rounded-md ${editMode ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-400 hover:text-white'} disabled:opacity-50`}
-              >
-                <Edit3 size={14} className="inline mr-1"/> 编辑
+                <Edit3 size={12} className="inline mr-1"/> 编辑
               </button>
             </div>
-            <button className="p-2 text-slate-500 hover:text-green-400 hover:bg-green-500/10 rounded-lg transition-all" title="Like"><ThumbsUp size={16} /></button>
-            <div className="w-px h-4 bg-slate-800 mx-1"></div>
             <button
               onClick={handleExport}
               disabled={!currentScript?.id || exporting}
@@ -884,7 +922,27 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
             >
               {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} 导出
             </button>
-            {currentScript && currentScript.status !== 'approved' && (
+            {/* 质检状态：合并查看报告和审核状态 */}
+            {currentScript?.qa_report && (
+              <button
+                onClick={() => setQAReportModalOpen(true)}
+                className={`flex items-center gap-2 px-3 py-1.5 text-[11px] font-bold rounded-lg transition-all ${
+                  currentScript.status === 'approved'
+                    ? 'text-green-400 bg-green-500/10 border border-green-500/30'
+                    : currentScript.qa_status?.toLowerCase() === 'pass'
+                    ? 'text-cyan-400 bg-cyan-500/10 border border-cyan-500/30'
+                    : 'text-amber-400 bg-amber-500/10 border border-amber-500/30'
+                }`}
+              >
+                <FileCheck size={14} />
+                {currentScript.status === 'approved' ? (
+                  <>已通过</>
+                ) : (
+                  <>质检 {currentScript.qa_score}分</>
+                )}
+              </button>
+            )}
+            {currentScript && !currentScript.qa_report && currentScript.status !== 'approved' && (
               <button
                 onClick={handleApprove}
                 disabled={approving}
@@ -892,11 +950,6 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
               >
                 {approving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} 审核通过
               </button>
-            )}
-            {currentScript?.status === 'approved' && (
-              <span className="ml-2 px-3 py-1.5 text-[11px] font-bold text-green-400 bg-green-500/10 border border-green-500/30 rounded-lg">
-                <CheckCircle2 size={14} className="inline mr-1" /> 已通过
-              </span>
             )}
           </div>
         </div>
@@ -933,11 +986,11 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
               </div>
             ) : (
               /* 完整剧本视图 */
-              <div className="max-w-3xl mx-auto bg-slate-900 border border-slate-800 shadow-2xl min-h-full p-8 md:p-12 rounded-xl md:rounded-2xl">
+              <div className="max-w-3xl mx-auto">
                 {editMode ? (
                   // 编辑模式 - 可编辑的 Textarea
                   <textarea
-                    className="w-full h-full min-h-[800px] bg-slate-900/50 border border-slate-700 rounded-lg p-4
+                    className="w-full min-h-[calc(100vh-300px)] bg-slate-900/50 border border-slate-700 rounded-lg p-4
                                text-slate-300 font-mono text-sm leading-relaxed resize-none
                                focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none whitespace-pre-wrap"
                     value={editedFullScript}
@@ -949,11 +1002,9 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
                   />
                 ) : (
                   // 预览模式 - 只读展示
-                  <textarea
-                    className="w-full h-full min-h-[800px] bg-transparent resize-none outline-none border-none focus:ring-0 text-slate-300 whitespace-pre-wrap selection:bg-cyan-500/30 scrollbar-hide font-mono text-sm leading-relaxed"
-                    value={currentScript.full_script}
-                    readOnly
-                  />
+                  <pre className="whitespace-pre-wrap text-slate-300 font-mono text-sm leading-relaxed bg-slate-900/30 p-4 rounded-lg border border-slate-800/50">
+                    {currentScript.full_script}
+                  </pre>
                 )}
               </div>
             )
@@ -1027,89 +1078,15 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         )}
       </div>
 
-      {/* RIGHT COLUMN: QC Report */}
-      <div className="w-80 bg-slate-900 border-l border-slate-800 flex flex-col z-10 shadow-2xl">
-        <div className="p-4 border-b border-slate-800 flex items-center gap-2 bg-slate-900/50 backdrop-blur">
-          <FileCheck size={16} className="text-green-400" />
-          <h3 className="font-bold text-white text-xs uppercase tracking-wider">质量检查报告</h3>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
-          {currentScript?.qa_report ? (
-            <>
-              {/* 总分 */}
-              <div className={`p-4 rounded-xl border ${currentScript.qa_report.status === 'PASS'
-                ? 'bg-green-500/5 border-green-500/20'
-                : 'bg-red-500/5 border-red-500/20'
-                }`}>
-                <div className="flex items-center gap-4">
-                  <div className={`w-12 h-12 rounded-full flex items-center justify-center font-black text-xl ${currentScript.qa_report.status === 'PASS'
-                    ? 'bg-green-500 text-white'
-                    : 'bg-red-500 text-white'
-                    }`}>
-                    {currentScript.qa_report.score}
-                  </div>
-                  <div>
-                    <div className={`text-sm font-bold ${currentScript.qa_report.status === 'PASS' ? 'text-green-400' : 'text-red-400'}`}>
-                      {currentScript.qa_report.status === 'PASS' ? '质检通过' : '质检未通过'}
-                    </div>
-                    <div className="text-xs text-slate-500 mt-1">{currentScript.qa_report.summary}</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* 各维度评分 */}
-              <div className="space-y-3">
-                <h4 className="text-xs font-bold text-slate-400 uppercase">维度评分</h4>
-                {Object.entries(currentScript.qa_report.dimensions).map(([key, dim]) => (
-                  <div key={key} className="flex items-center justify-between">
-                    <span className="text-xs text-slate-400">{key}</span>
-                    <div className="flex items-center gap-2">
-                      <div className="w-24 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full ${dim.score >= 8 ? 'bg-green-500' : dim.score >= 6 ? 'bg-yellow-500' : 'bg-red-500'}`}
-                          style={{ width: `${dim.score * 10}%` }}
-                        />
-                      </div>
-                      <span className="text-xs font-mono text-slate-300 w-6">{dim.score}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* 修正建议 */}
-              {currentScript.qa_report.fix_instructions?.length > 0 && (
-                <div className="space-y-2">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase">修正建议</h4>
-                  {currentScript.qa_report.fix_instructions.map((fix, idx) => (
-                    <div key={idx} className="p-3 bg-slate-800/50 rounded-lg border border-slate-700/50">
-                      <div className="text-xs text-amber-400 font-medium">{fix.target}</div>
-                      <div className="text-xs text-slate-400 mt-1">{fix.issue}</div>
-                      <div className="text-xs text-slate-300 mt-2">{fix.suggestion}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          ) : currentScript ? (
-            <div className="text-center text-slate-600 mt-20">
-              <CheckCircle2 size={48} className="mx-auto mb-4 opacity-20" />
-              <p className="text-xs uppercase font-bold">暂无质检报告</p>
-            </div>
-          ) : (
-            <div className="text-center text-slate-600 mt-20 opacity-20">
-              <Search size={48} className="mx-auto mb-4" />
-              <p className="text-xs uppercase font-bold">等待剧本生成...</p>
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* Console Logger */}
       <ConsoleLogger
         logs={logs}
         llmStats={llmStats}
         visible={consoleVisible}
         isProcessing={generating !== null}
+        progress={progress}
+        currentStep={currentStep || (generating ? `生成第 ${generating} 集剧本` : '')}
+        episodeNumber={generating || 0}
         onClose={() => setConsoleVisible(false)}
       />
     </div>

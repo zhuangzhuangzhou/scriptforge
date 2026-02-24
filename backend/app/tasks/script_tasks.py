@@ -158,7 +158,6 @@ def _execute_episode_script_sync(
     """执行单集剧本创作"""
     from app.models.plot_breakdown import PlotBreakdown
     from app.models.chapter import Chapter
-    from app.models.batch import Batch
     from app.ai.simple_executor import SimpleAgentExecutor
     from app.core.init_ai_resources import load_layered_resources_sync
 
@@ -172,7 +171,17 @@ def _execute_episode_script_sync(
         raise AITaskException(code="DATA_NOT_FOUND", message=f"剧情拆解 {breakdown_id} 不存在")
 
     if log_publisher:
-        log_publisher.publish_step_end(task_id, "load_breakdown", {"status": "completed", "plot_points_count": len(breakdown.plot_points or [])})
+        total_points = len(breakdown.plot_points or [])
+        episodes_info = {}
+        for pp in (breakdown.plot_points or []):
+            if isinstance(pp, dict):
+                ep = pp.get("episode")
+                episodes_info[ep] = episodes_info.get(ep, 0) + 1
+        episodes_summary = ", ".join([f"第{k}集{v}点" for k, v in sorted(episodes_info.items())])
+        log_publisher.publish_info(
+            task_id,
+            f"📋 breakdown_id={breakdown_id}, batch_id={breakdown.batch_id}, 包含 {total_points} 个剧情点，分布在: {episodes_summary}"
+        )
 
     # 2. 筛选本集剧情点
     update_task_progress_sync(db, task_id, progress=10, current_step=f"筛选第 {episode_number} 集剧情点... (10%)")
@@ -187,6 +196,14 @@ def _execute_episode_script_sync(
         raise AITaskException(code="NO_PLOT_POINTS", message=f"第 {episode_number} 集没有剧情点")
 
     if log_publisher:
+        # 输出剧情点详情，帮助调试
+        plot_summary = []
+        for pp in episode_plot_points[:5]:  # 最多显示前 5 个
+            plot_summary.append(f"  - {pp.get('scene', '?')}：{pp.get('event', '?')[:30]}...")
+        log_publisher.publish_info(
+            task_id,
+            f"📝 第 {episode_number} 集剧情点 ({len(episode_plot_points)} 个):\n" + "\n".join(plot_summary)
+        )
         log_publisher.publish_step_end(task_id, "filter_plot_points", {"status": "completed", "episode": episode_number, "count": len(episode_plot_points)})
 
     # 3. 加载章节原文
@@ -194,19 +211,24 @@ def _execute_episode_script_sync(
     if log_publisher:
         log_publisher.publish_step_start(task_id, "load_chapters", "加载章节原文")
 
-    # 从 Batch 配置读取章节数量
-    batch = db.query(Batch).filter(Batch.id == breakdown.batch_id).first()
-    context_size = batch.context_size if batch else 10  # 默认 10 章
-
-    source_chapters = {pp.get("source_chapter") for pp in episode_plot_points if pp.get("source_chapter")}
+    # 加载该批次的所有章节作为原文参考
     chapters = db.query(Chapter).filter(
-        Chapter.batch_id == breakdown.batch_id,
-        Chapter.chapter_number.in_(source_chapters) if source_chapters else True
-    ).order_by(Chapter.chapter_number).limit(context_size).all()
+        Chapter.batch_id == breakdown.batch_id
+    ).order_by(Chapter.chapter_number).all()
+
     chapters_text = "\n\n".join([f"## 第 {ch.chapter_number} 章\n{ch.content or ''}" for ch in chapters])
 
     if log_publisher:
-        log_publisher.publish_step_end(task_id, "load_chapters", {"status": "completed", "chapters_loaded": len(chapters), "context_size": context_size})
+        # 输出章节详情用于调试
+        chapter_info = []
+        for ch in chapters:
+            content_len = len(ch.content or '') if ch.content else 0
+            chapter_info.append(f"  - 第{ch.chapter_number}章: {content_len}字")
+        log_publisher.publish_info(
+            task_id,
+            f"📖 已加载 {len(chapters)} 章原文:\n" + "\n".join(chapter_info)
+        )
+        log_publisher.publish_step_end(task_id, "load_chapters", {"status": "completed", "chapters_loaded": len(chapters)})
 
     # 4. 加载 AI 资源
     update_task_progress_sync(db, task_id, progress=20, current_step="加载 AI 资源... (20%)")
@@ -382,6 +404,7 @@ def _execute_episode_script_sync(
             log_publisher.publish_success(task_id, f"✅ 剧本已保存 (ID: {script_id[:8]}...)")
 
     db.commit()
+    logger.info(f"剧本已保存到数据库: script_id={script_id}, episode={episode_number}, qa_status={qa_status}, qa_score={qa_score}")
 
     # 8. 更新剧情点状态为 used
     update_task_progress_sync(db, task_id, progress=95, current_step="更新剧情点状态... (95%)")

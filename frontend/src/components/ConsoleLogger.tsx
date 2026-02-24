@@ -32,6 +32,7 @@ interface ConsoleLoggerProps {
   currentRound?: number;
   totalRounds?: number;
   batchNumber?: number;
+  episodeNumber?: number;  // 当前生成的剧集编号
   onClose: () => void;
 }
 
@@ -45,6 +46,7 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
   currentRound = 0,
   totalRounds: _totalRounds = 0,
   batchNumber = 0,
+  episodeNumber = 0,
   onClose
 }) => {
   const [isMinimized, setIsMinimized] = useState(false);
@@ -334,7 +336,12 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
 
     return (
       <div className="flex flex-wrap items-center gap-2">
-        {batchNumber > 0 && (
+        {episodeNumber > 0 && (
+          <span className="px-2.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[11px]">
+            当前剧集：第 {episodeNumber} 集
+          </span>
+        )}
+        {batchNumber > 0 && !episodeNumber && (
           <span className="px-2.5 py-0.5 rounded bg-slate-800/80 text-slate-200 border border-slate-700 text-[11px]">
             拆解批次：{batchNumber}
           </span>
@@ -367,8 +374,7 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
     >
       {/* Header */}
       <div
-        className="flex items-center justify-between px-3 py-2 bg-slate-800 border-b border-slate-700 cursor-pointer"
-        onClick={() => setIsMinimized(!isMinimized)}
+        className="flex items-center justify-between px-3 py-2 bg-slate-800 border-b border-slate-700"
       >
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <Terminal size={14} className="text-cyan-400 flex-shrink-0" />
