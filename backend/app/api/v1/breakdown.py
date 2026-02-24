@@ -1305,7 +1305,60 @@ async def start_batch_breakdown(
             "project_id": request.project_id
         }
 
+    # ============================================================
+    # 修复方案1：自动清理超时的 cancelling 任务
+    # ============================================================
+    # 在检查现有任务之前，先清理超过 5 分钟的 cancelling 任务
+    # 避免用户因卡住的 cancelling 任务而无法启动新任务
+    CANCELLING_TIMEOUT = timedelta(minutes=5)
+    now = datetime.now(timezone.utc)
+
+    # 查找所有超时的 cancelling 任务
+    stuck_cancelling_result = await db.execute(
+        select(AITask).where(
+            AITask.status == TaskStatus.CANCELLING
+        )
+    )
+    stuck_cancelling_tasks = stuck_cancelling_result.scalars().all()
+
+    cleaned_count = 0
+    for stuck_task in stuck_cancelling_tasks:
+        # 检查任务是否超时
+        task_timestamp = getattr(stuck_task, 'updated_at', None) or stuck_task.created_at
+        if task_timestamp and task_timestamp.tzinfo is None:
+            task_timestamp = task_timestamp.replace(tzinfo=timezone.utc)
+        task_age = now - task_timestamp if task_timestamp else CANCELLING_TIMEOUT + timedelta(seconds=1)
+
+        if task_age > CANCELLING_TIMEOUT:
+            # 超时，清理任务状态
+            stuck_task.status = TaskStatus.CANCELED
+            stuck_task.error_message = "取消操作超时，已自动清理"
+            stuck_task.completed_at = datetime.now(timezone.utc)
+
+            # 同时清理关联的批次状态
+            if stuck_task.batch_id:
+                batch_result = await db.execute(
+                    select(Batch).where(Batch.id == stuck_task.batch_id)
+                )
+                batch = batch_result.scalar_one_or_none()
+                if batch:
+                    # 根据任务类型恢复批次状态
+                    if stuck_task.task_type == "breakdown":
+                        batch.breakdown_status = BatchStatus.PENDING
+                    elif stuck_task.task_type in ("script", "episode_script"):
+                        batch.script_status = BatchStatus.PENDING
+
+            cleaned_count += 1
+
+    if cleaned_count > 0:
+        await db.commit()
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"自动清理了 {cleaned_count} 个超时的 cancelling 任务")
+
+    # ============================================================
     # 检查每个批次是否已有任务在执行
+    # ============================================================
     batch_ids = [batch.id for batch in batches]
     existing_tasks_result = await db.execute(
         select(AITask).where(

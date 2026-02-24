@@ -513,6 +513,91 @@ def _handle_task_failure_sync(db, task_id, batch_record, ...):
 - `PendingRollbackError` (8.6)
 - `MissingGreenlet` (8.7)
 
+### 8.10 任务卡在 cancelling 状态
+
+**问题**: 任务卡在 `cancelling` 状态，无法转换为 `canceled`，导致新任务无法启动
+
+**根本原因**: 系统使用两阶段取消机制：
+1. API 端设置 `task.status = TaskStatus.CANCELLING`
+2. Celery 任务在检查点检测到状态变化，抛出 `TaskCancelledError`
+3. 异常处理器将状态更新为 `canceled`
+
+**卡住的场景**:
+- Celery 任务已完成，但状态还是 `cancelling`
+- Celery Worker 已停止
+- 任务在长时间 AI 调用中（检查点间隔过大）
+- `celery_app.control.revoke()` 调用失败
+
+**解决方案 1**: 在 `/batch-start` API 中添加超时清理逻辑
+
+```python
+# 在检查现有任务之前，清理超时的 cancelling 任务
+CANCELLING_TIMEOUT = timedelta(minutes=5)
+now = datetime.now(timezone.utc)
+
+stuck_tasks = await db.execute(
+    select(AITask).where(AITask.status == TaskStatus.CANCELLING)
+)
+
+for stuck_task in stuck_tasks:
+    task_age = now - (stuck_task.updated_at or stuck_task.created_at)
+    if task_age > CANCELLING_TIMEOUT:
+        # 超时，清理任务状态
+        stuck_task.status = TaskStatus.CANCELED
+        stuck_task.completed_at = datetime.now(timezone.utc)
+
+        # 恢复批次状态
+        if stuck_task.batch_id:
+            batch.breakdown_status = BatchStatus.PENDING
+
+await db.commit()
+```
+
+**解决方案 2**（推荐）: 添加后台定时任务清理
+
+```python
+@celery_app.task
+def cleanup_stuck_cancelling_tasks():
+    """清理卡在 cancelling 状态超过 5 分钟的任务"""
+    db = SyncSessionLocal()
+    try:
+        timeout = datetime.now(timezone.utc) - timedelta(minutes=5)
+        stuck_tasks = db.query(AITask).filter(
+            AITask.status == TaskStatus.CANCELLING,
+            AITask.updated_at < timeout
+        ).all()
+
+        for task in stuck_tasks:
+            task.status = TaskStatus.CANCELED
+            task.error_message = "取消操作超时，已自动清理"
+
+            # 应用智能回滚机制
+            if task.batch_id:
+                batch = db.query(Batch).filter(Batch.id == task.batch_id).first()
+                if batch:
+                    _update_batch_status_safely(
+                        batch=batch,
+                        task=task,
+                        new_status=BatchStatus.PENDING,
+                        db=db,
+                        logger=logger
+                    )
+
+        db.commit()
+    finally:
+        db.close()
+```
+
+**配置定时任务（Celery Beat）**:
+```python
+celery_app.conf.beat_schedule = {
+    'cleanup-stuck-cancelling-tasks': {
+        'task': 'app.tasks.cleanup_stuck_cancelling_tasks',
+        'schedule': 300.0,  # 5 分钟
+    },
+}
+```
+
 ---
 
 ## 9. 任务队列与顺序执行 (Task Queue & Sequential Execution)
