@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.models.skill import Skill
 from app.models.agent import SimpleAgent
 import uuid
+from datetime import datetime
 
 # 系统内置资源的固定 owner_id
 SYSTEM_OWNER_ID = uuid.UUID("00000000-0000-0000-0000-000000000000")
@@ -345,6 +346,16 @@ BUILTIN_SKILLS = [
 
 ---
 
+### 上一版剧本
+{previous_script}
+
+### 质检反馈
+{qa_feedback}
+
+**注意**：如有上一版剧本和质检反馈，请根据反馈意见修正问题，保留优点。
+
+---
+
 ### 创作步骤
 
 **第一步：理解剧情点**
@@ -373,43 +384,83 @@ BUILTIN_SKILLS = [
 
 ---
 
-### 输出格式
+### 输出要求
 
-【剧本信息】
-集数：第 {episode_number} 集
-标题：本集标题
-总字数：XXX字
+请以 JSON 格式输出，包含以下字段：
 
-【起】开场冲突（目标100-150字）
-※ 场景名称（时间）
-△ 动作描述
-角色名："对话内容"
-...
+```json
+{
+  "episode_number": 1,
+  "title": "第1集标题",
+  "word_count": 650,
+  "structure": {
+    "opening": {
+      "content": "※ 酒店大堂（日）\\n△ 林浩站在大堂中央，目光锐利地盯着陈总。\\n林浩：\\"陈总，您的账目有问题。\\"\\n陈总：\\"你在说什么？\\"\\n【特效：紧张气氛】",
+      "word_count": 120
+    },
+    "development": {
+      "content": "※ 公司会议室（日）\\n△ 林浩展示证据文件。\\n林浩：\\"这是您的转账记录。\\"\\n陈总：\\"这...这不可能！\\"\\n【特效：震惊】",
+      "word_count": 180
+    },
+    "climax": {
+      "content": "※ 酒店大堂（日）\\n△ 陈总跪地求饶。\\n陈总：\\"我错了，求你放过我！\\"\\n林浩：\\"晚了。\\"\\n△ 警察冲进来。\\n【特效：高潮音乐】",
+      "word_count": 220
+    },
+    "hook": {
+      "content": "※ 地下停车场（夜）\\n△ 神秘女子出现在林浩身后。\\n神秘女子：\\"你以为这就结束了？\\"\\n△ 林浩转身，震惊。\\n【卡黑】",
+      "word_count": 130
+    }
+  },
+  "full_script": "【起】开场冲突\\n※ 酒店大堂（日）\\n△ 林浩站在大堂中央，目光锐利地盯着陈总。\\n林浩：\\"陈总，您的账目有问题。\\"\\n陈总：\\"你在说什么？\\"\\n【特效：紧张气氛】\\n\\n【承】推进发展\\n※ 公司会议室（日）\\n△ 林浩展示证据文件。\\n林浩：\\"这是您的转账记录。\\"\\n陈总：\\"这...这不可能！\\"\\n【特效：震惊】\\n\\n【转】反转高潮\\n※ 酒店大堂（日）\\n△ 陈总跪地求饶。\\n陈总：\\"我错了，求你放过我！\\"\\n林浩：\\"晚了。\\"\\n△ 警察冲进来。\\n【特效：高潮音乐】\\n\\n【钩】悬念结尾\\n※ 地下停车场（夜）\\n△ 神秘女子出现在林浩身后。\\n神秘女子：\\"你以为这就结束了？\\"\\n△ 林浩转身，震惊。\\n【卡黑】",
+  "scenes": ["酒店大堂", "公司会议室", "地下停车场"],
+  "characters": ["林浩", "陈总", "神秘女子"],
+  "hook_type": "悬念开场"
+}
+```
 
-【承】推进发展（目标150-200字）
-※ 场景名称（时间）
-...
+**关键要求**：
 
-【转】反转高潮（目标200-250字）
-※ 场景名称（时间）
-...
+1. **structure 字段**：
+   - 使用英文键名：opening（起）、development（承）、climax（转）、hook（钩）
+   - 每个段落包含 content 和 word_count 两个字段
+   - content 必须保留所有格式标记（※、△、【】）
+   - word_count 为估算值，后端会重新计算
 
-【钩】悬念结尾（目标100-150字）
-※ 场景名称（时间）
-...
-【卡黑】
+2. **full_script 字段**：
+   - 必须包含段落标题：【起】【承】【转】【钩】
+   - 必须包含所有格式标记
+   - 必须以【卡黑】结尾
+   - 内容应与 structure 中的内容一致
 
-【场景列表】场景1、场景2、...
-【角色列表】角色1、角色2、...
-【结尾钩子类型】悬念类型
+3. **scenes 字段**：
+   - 提取所有场景名称（不包括时间标记）
+   - 按出现顺序排列
+   - 示例：["酒店大堂", "公司会议室", "地下停车场"]
 
-请直接输出剧本，不要输出 JSON。""",
+4. **characters 字段**：
+   - 提取所有角色名称
+   - 按出场顺序排列
+   - 示例：["林浩", "陈总", "神秘女子"]
+
+5. **hook_type 字段**：
+   - 描述本集的悬念类型
+   - 示例："打脸爽点"、"悬念开场"、"反转高潮"
+
+**格式标记说明**：
+- 场景标记：※ 场景名称（时间）
+- 动作标记：△ 动作描述
+- 对话格式：角色名："对话内容"
+- 特效标记：【特效类型】描述
+- 段落标记：【起】【承】【转】【钩】
+- 结尾标记：【卡黑】""",
         "input_schema": {
             "plot_points": {"type": "string", "description": "管道符分隔的本集剧情点（序号|场景|角色|剧情|钩子|集数）"},
             "chapters_text": {"type": "string", "description": "原文参考"},
             "adapt_method": {"type": "string", "description": "改编方法论"},
             "episode_number": {"type": "integer", "description": "集数"},
-            "genre_guidelines": {"type": "string", "description": "类型特性指南文档内容", "default": ""}
+            "genre_guidelines": {"type": "string", "description": "类型特性指南文档内容", "default": ""},
+            "previous_script": {"type": "string", "description": "上一版剧本（用于修正）", "default": ""},
+            "qa_feedback": {"type": "string", "description": "质检反馈意见（用于修正）", "default": ""}
         },
         "output_schema": {
             "type": "object",
@@ -417,10 +468,42 @@ BUILTIN_SKILLS = [
                 "episode_number": {"type": "integer"},
                 "title": {"type": "string"},
                 "word_count": {"type": "integer"},
-                "structure": {"type": "object"},
+                "structure": {
+                    "type": "object",
+                    "properties": {
+                        "opening": {
+                            "type": "object",
+                            "properties": {
+                                "content": {"type": "string"},
+                                "word_count": {"type": "integer"}
+                            }
+                        },
+                        "development": {
+                            "type": "object",
+                            "properties": {
+                                "content": {"type": "string"},
+                                "word_count": {"type": "integer"}
+                            }
+                        },
+                        "climax": {
+                            "type": "object",
+                            "properties": {
+                                "content": {"type": "string"},
+                                "word_count": {"type": "integer"}
+                            }
+                        },
+                        "hook": {
+                            "type": "object",
+                            "properties": {
+                                "content": {"type": "string"},
+                                "word_count": {"type": "integer"}
+                            }
+                        }
+                    }
+                },
                 "full_script": {"type": "string"},
-                "scenes": {"type": "array"},
-                "characters": {"type": "array"},
+                "scenes": {"type": "array", "items": {"type": "string"}},
+                "characters": {"type": "array", "items": {"type": "string"}},
                 "hook_type": {"type": "string"}
             }
         },
@@ -603,11 +686,12 @@ BUILTIN_AGENTS = [
         "workflow": {
             "type": "loop",
             "max_iterations": 2,
-            "exit_condition": "qa_result.status == 'PASS' and qa_result.score >= 80",
+            "exit_condition": "qa_result.qa_status == 'PASS' and qa_result.qa_score >= 80",
             "steps": [
                 {
                     "id": "script",
                     "skill": "webtoon_script",
+                    "condition": "_iteration == 1",
                     "inputs": {
                         "plot_points": "${context.plot_points}",
                         "chapters_text": "${context.chapters_text}",
@@ -619,10 +703,26 @@ BUILTIN_AGENTS = [
                     "max_retries": 1
                 },
                 {
+                    "id": "script_retry",
+                    "skill": "webtoon_script",
+                    "condition": "_iteration > 1",
+                    "inputs": {
+                        "plot_points": "${context.plot_points}",
+                        "chapters_text": "${context.chapters_text}",
+                        "adapt_method": "${context.adapt_method}",
+                        "episode_number": "${context.episode_number}",
+                        "previous_script": "${script_result}",
+                        "qa_feedback": "${qa_result}"
+                    },
+                    "output_key": "script_result",
+                    "on_fail": "stop",
+                    "max_retries": 1
+                },
+                {
                     "id": "qa",
                     "skill": "webtoon_aligner",
                     "inputs": {
-                        "script": "${script.script_result}",
+                        "script": "${script_result}",
                         "chapters_text": "${context.chapters_text}",
                         "adapt_method": "${context.adapt_method}"
                     },
@@ -685,6 +785,7 @@ async def init_simple_system(db: Session):
             existing_skill.input_schema = skill_data["input_schema"]
             existing_skill.output_schema = skill_data["output_schema"]
             existing_skill.model_config = skill_data["model_config"]
+            existing_skill.updated_at = datetime.utcnow()  # 使用 timezone-naive datetime
             print(f"  ↻ 更新 Skill: {skill_data['display_name']}")
 
     await db.commit()
@@ -720,6 +821,7 @@ async def init_simple_system(db: Session):
             existing_agent.display_name = agent_data["display_name"]
             existing_agent.description = agent_data["description"]
             existing_agent.workflow = agent_data["workflow"]
+            existing_agent.updated_at = datetime.utcnow()  # 使用 timezone-naive datetime
             print(f"  ↻ 更新 Agent: {agent_data['display_name']}")
 
     await db.commit()

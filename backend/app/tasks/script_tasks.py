@@ -8,6 +8,7 @@
 - 任务失败：自动退款（保持公平）
 """
 import json
+import re
 from sqlalchemy.orm import Session
 from app.core.celery_app import celery_app
 from app.core.database import SyncSessionLocal
@@ -18,6 +19,28 @@ from app.models.ai_task import AITask
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def calculate_word_count(text: str) -> int:
+    """计算剧本字数（去除格式标记）
+
+    Args:
+        text: 剧本文本
+
+    Returns:
+        字数（不包括格式标记）
+    """
+    if not text:
+        return 0
+
+    # 去除格式标记
+    clean_text = text
+    clean_text = re.sub(r'※.*?（.*?）', '', clean_text)  # 场景标记：※ 场景名称（时间）
+    clean_text = re.sub(r'△', '', clean_text)  # 动作标记
+    clean_text = re.sub(r'【.*?】', '', clean_text)  # 特效和段落标记：【起】【承】【转】【钩】【卡黑】等
+    clean_text = re.sub(r'\s+', '', clean_text)  # 空白字符
+
+    return len(clean_text)
 
 # Celery 任务配置
 CELERY_TASK_CONFIG = {
@@ -135,7 +158,8 @@ def _execute_episode_script_sync(
     """执行单集剧本创作"""
     from app.models.plot_breakdown import PlotBreakdown
     from app.models.chapter import Chapter
-    from app.ai.simple_executor import SimpleSkillExecutor
+    from app.models.batch import Batch
+    from app.ai.simple_executor import SimpleAgentExecutor
     from app.core.init_ai_resources import load_layered_resources_sync
 
     # 1. 加载剧情拆解
@@ -170,15 +194,19 @@ def _execute_episode_script_sync(
     if log_publisher:
         log_publisher.publish_step_start(task_id, "load_chapters", "加载章节原文")
 
+    # 从 Batch 配置读取章节数量
+    batch = db.query(Batch).filter(Batch.id == breakdown.batch_id).first()
+    context_size = batch.context_size if batch else 10  # 默认 10 章
+
     source_chapters = {pp.get("source_chapter") for pp in episode_plot_points if pp.get("source_chapter")}
     chapters = db.query(Chapter).filter(
         Chapter.batch_id == breakdown.batch_id,
         Chapter.chapter_number.in_(source_chapters) if source_chapters else True
-    ).order_by(Chapter.chapter_number).limit(10).all()
+    ).order_by(Chapter.chapter_number).limit(context_size).all()
     chapters_text = "\n\n".join([f"## 第 {ch.chapter_number} 章\n{ch.content or ''}" for ch in chapters])
 
     if log_publisher:
-        log_publisher.publish_step_end(task_id, "load_chapters", {"status": "completed", "chapters_loaded": len(chapters)})
+        log_publisher.publish_step_end(task_id, "load_chapters", {"status": "completed", "chapters_loaded": len(chapters), "context_size": context_size})
 
     # 4. 加载 AI 资源
     update_task_progress_sync(db, task_id, progress=20, current_step="加载 AI 资源... (20%)")
@@ -192,55 +220,113 @@ def _execute_episode_script_sync(
     if log_publisher:
         log_publisher.publish_step_end(task_id, "load_resources", {"status": "completed"})
 
-    # 5. 生成剧本
+    # 5. 使用 Agent 生成剧本（包含质检循环）
     update_task_progress_sync(db, task_id, progress=30, current_step=f"生成第 {episode_number} 集剧本... (30%)")
     if log_publisher:
-        log_publisher.publish_step_start(task_id, "generate_script", "生成剧本内容")
+        log_publisher.publish_info(task_id, f"🎬 启动剧本创作 Agent（包含质量检查）")
 
-    skill_executor = SimpleSkillExecutor(db, model_adapter, log_publisher)
+    agent_executor = SimpleAgentExecutor(db, model_adapter, log_publisher)
 
     try:
-        script_result = skill_executor.execute_skill(
-            skill_name="webtoon_script",
-            inputs={
-                "plot_points": json.dumps(episode_plot_points, ensure_ascii=False),
-                "chapters_text": chapters_text[:5000],
+        # 使用 script_agent，包含生成+质检循环（最多 2 轮）
+        results = agent_executor.execute_agent(
+            agent_name="script_agent",
+            context={
+                "plot_points": episode_plot_points,  # 直接传列表
+                "chapters_text": chapters_text,
                 "adapt_method": adapt_method,
-                "episode_number": str(episode_number)
+                "episode_number": episode_number
             },
             task_id=task_id
         )
+
+        # 提取结果
+        script_result = results.get("script_result")
+        qa_result = results.get("qa_result", {})
+
+        if not script_result:
+            raise AITaskException(code="AGENT_EXECUTION_ERROR", message="Agent 未返回剧本结果")
+
     except Exception as e:
-        raise AITaskException(code="SKILL_EXECUTION_ERROR", message=f"剧本生成失败: {str(e)}")
+        raise AITaskException(code="AGENT_EXECUTION_ERROR", message=f"剧本生成失败: {str(e)}")
 
     # 剧本生成完成
     if log_publisher:
-        log_publisher.publish_step_end(
+        qa_status = qa_result.get("qa_status", "unknown") if isinstance(qa_result, dict) else "unknown"
+        qa_score = qa_result.get("qa_score", 0) if isinstance(qa_result, dict) else 0
+        log_publisher.publish_success(
             task_id,
-            "generate_script",
-            {"status": "completed", "word_count": len(script_result.get("full_script", "") if isinstance(script_result, dict) else 0)}
+            f"✅ 剧本生成完成 (质检状态: {qa_status}, 分数: {qa_score})"
         )
 
     update_task_progress_sync(db, task_id, progress=70, current_step="剧本生成完成 (70%)")
 
-    # 6. 保存结果到数据库
+    # 6. 验证和修正剧本数据
+    update_task_progress_sync(db, task_id, progress=75, current_step="验证剧本数据... (75%)")
+
+    # 6.1 验证 structure 完整性
+    required_sections = ["opening", "development", "climax", "hook"]
+    structure = script_result.get("structure", {})
+    for section in required_sections:
+        if section not in structure:
+            raise AITaskException(
+                code="INVALID_STRUCTURE",
+                message=f"剧本结构缺少 {section} 段落"
+            )
+
+    # 6.2 重新计算字数
+    full_script = script_result.get("full_script", "")
+    if full_script:
+        word_count = calculate_word_count(full_script)
+
+        if log_publisher:
+            llm_word_count = script_result.get("word_count", 0)
+            log_publisher.publish_info(
+                task_id,
+                f"📊 字数统计：LLM 估算 {llm_word_count} 字，实际计算 {word_count} 字"
+            )
+    else:
+        word_count = 0
+
+    # 6.3 验证场景和角色
+    scenes = script_result.get("scenes", [])
+    characters = script_result.get("characters", [])
+
+    if not scenes:
+        logger.warning(f"剧本缺少场景列表，episode={episode_number}")
+    if not characters:
+        logger.warning(f"剧本缺少角色列表，episode={episode_number}")
+
+    # 6.4 验证结尾标记
+    if full_script and "【卡黑】" not in full_script:
+        logger.warning(f"剧本缺少【卡黑】标记，episode={episode_number}")
+
+    if log_publisher:
+        log_publisher.publish_success(
+            task_id,
+            f"✅ 数据验证完成：字数 {word_count}，场景 {len(scenes)}，角色 {len(characters)}"
+        )
+
+    # 7. 保存结果到数据库
     update_task_progress_sync(db, task_id, progress=90, current_step="保存剧本... (90%)")
     if log_publisher:
         log_publisher.publish_info(task_id, "💾 保存剧本到数据库...")
 
     from app.models.script import Script
 
-    # 提取剧本数据
-    full_script = script_result.get("full_script", "") if isinstance(script_result, dict) else str(script_result)
+    # 提取剧本数据（使用验证后的数据）
     title = script_result.get("title", f"第 {episode_number} 集") if isinstance(script_result, dict) else f"第 {episode_number} 集"
-    structure = script_result.get("structure", {}) if isinstance(script_result, dict) else {}
-    scenes = script_result.get("scenes", []) if isinstance(script_result, dict) else []
-    characters = script_result.get("characters", []) if isinstance(script_result, dict) else []
     hook_type = script_result.get("hook_type", "") if isinstance(script_result, dict) else ""
 
-    # 计算字数和场景数
-    word_count = len(full_script)
+    # 使用验证阶段计算的字数和场景数
+    # word_count 已在验证阶段通过 calculate_word_count() 计算
+    # scenes, characters, structure, full_script 已在验证阶段提取
     scene_count = len(scenes)
+
+    # 提取 QA 结果
+    qa_status = qa_result.get("qa_status") if isinstance(qa_result, dict) else None
+    qa_score = qa_result.get("qa_score") if isinstance(qa_result, dict) else None
+    qa_report = qa_result if isinstance(qa_result, dict) else None
 
     # 检查是否已存在该集剧本
     existing_script = db.query(Script).filter(
@@ -261,6 +347,9 @@ def _execute_episode_script_sync(
         existing_script.word_count = word_count
         existing_script.scene_count = scene_count
         existing_script.status = "draft"
+        existing_script.qa_status = qa_status
+        existing_script.qa_score = qa_score
+        existing_script.qa_report = qa_report
         script_id = str(existing_script.id)
         if log_publisher:
             log_publisher.publish_info(task_id, f"✏️ 更新已存在的剧本 (ID: {script_id[:8]}...)")
@@ -281,7 +370,10 @@ def _execute_episode_script_sync(
             },
             word_count=word_count,
             scene_count=scene_count,
-            status="draft"
+            status="draft",
+            qa_status=qa_status,
+            qa_score=qa_score,
+            qa_report=qa_report
         )
         db.add(new_script)
         db.flush()
@@ -291,6 +383,20 @@ def _execute_episode_script_sync(
 
     db.commit()
 
+    # 8. 更新剧情点状态为 used
+    update_task_progress_sync(db, task_id, progress=95, current_step="更新剧情点状态... (95%)")
+    if log_publisher:
+        log_publisher.publish_info(task_id, "🔄 更新剧情点状态为已使用...")
+
+    try:
+        _update_plot_points_status_sync(db, breakdown_id, episode_number)
+        if log_publisher:
+            log_publisher.publish_success(task_id, f"✅ 已将第 {episode_number} 集的剧情点标记为已使用")
+    except Exception as e:
+        logger.warning(f"更新剧情点状态失败: {e}")
+        if log_publisher:
+            log_publisher.publish_warning(task_id, f"⚠️ 更新剧情点状态失败: {str(e)}")
+
     return {
         "episode_number": episode_number,
         "title": title,
@@ -299,3 +405,37 @@ def _execute_episode_script_sync(
         "script_id": script_id,
         "script": script_result
     }
+
+
+def _update_plot_points_status_sync(db: Session, breakdown_id: str, episode_number: int):
+    """将指定剧集的剧情点标记为已使用
+
+    Args:
+        db: 数据库会话
+        breakdown_id: 拆解记录 ID
+        episode_number: 剧集编号
+    """
+    from app.models.plot_breakdown import PlotBreakdown
+
+    breakdown = db.query(PlotBreakdown).filter(PlotBreakdown.id == breakdown_id).first()
+
+    if not breakdown or not breakdown.plot_points:
+        logger.warning(f"拆解记录 {breakdown_id} 不存在或没有剧情点")
+        return
+
+    updated_points = []
+    updated_count = 0
+
+    for point in breakdown.plot_points:
+        if isinstance(point, dict) and point.get('episode') == episode_number:
+            # 将该剧集的剧情点状态改为 used
+            point['status'] = 'used'
+            updated_count += 1
+        updated_points.append(point)
+
+    if updated_count > 0:
+        breakdown.plot_points = updated_points
+        db.commit()
+        logger.info(f"已将第 {episode_number} 集的 {updated_count} 个剧情点标记为已使用")
+    else:
+        logger.warning(f"第 {episode_number} 集没有找到需要更新的剧情点")
