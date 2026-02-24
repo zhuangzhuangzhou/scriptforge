@@ -1265,13 +1265,13 @@ async def stop_task(
         batch = batch_result.scalar_one_or_none()
         if batch:
             from app.core.status import BatchStatus
-            from app.core.database import SessionLocal
+            from app.core.database import SyncSessionLocal
             from app.tasks.breakdown_tasks import _update_batch_status_safely
             import logging
             admin_logger = logging.getLogger(__name__)
 
             # 使用同步会话执行智能回滚检查
-            with SessionLocal() as sync_db:
+            with SyncSessionLocal() as sync_db:
                 _update_batch_status_safely(
                     batch=batch,
                     task=task,

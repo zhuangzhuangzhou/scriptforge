@@ -6,7 +6,7 @@ celery_app = Celery(
     "novel_script",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=['app.tasks.breakdown_tasks', 'app.tasks.task_monitor']
+    include=['app.tasks.breakdown_tasks', 'app.tasks.script_tasks', 'app.tasks.task_monitor']
 )
 
 celery_app.conf.update(
