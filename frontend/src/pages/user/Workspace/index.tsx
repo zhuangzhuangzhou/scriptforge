@@ -138,9 +138,9 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const [isCreatingBatches, setIsCreatingBatches] = useState(false);
     const [isAllBreakdownRunning, setIsAllBreakdownRunning] = useState(false);
 
-    // 批量拆解状态
+    // 批量拆解状态（全局进度，从 API 获取）
     const [batchProgress, setBatchProgress] = useState<{
-        total: number;
+        total_batches: number;
         completed: number;
         in_progress: number;
         pending: number;
@@ -289,12 +289,16 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 message.success('拆解完成');
                 // 由 useEffect 统一触发 fetchBreakdownResults
                 fetchBatches();
+                // 🔧 新增：批次完成后更新全局进度
+                fetchGlobalProgress();
             },
             onError: (error) => {
                 setBreakdownTaskId(null);
                 setExecutingBatchId(null);  // 清空当前执行批次
                 const parsedError = parseErrorMessage(error);
                 showError(parsedError);
+                // 🔧 新增：批次失败后更新全局进度
+                fetchGlobalProgress();
             },
             fallbackToPolling: false  // 🔧 调试模式：禁用降级轮询
         }
@@ -337,6 +341,8 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             });
         }
         fetchBatches();
+        // 🔧 新增：批次完成后更新全局进度
+        fetchGlobalProgress();
     };
 
     // 流式日志 WebSocket（接收大模型返回的实时流式数据）
@@ -397,6 +403,32 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             onComplete: () => {
                 console.log('[StreamLogs] 任务完成');
                 handleBreakdownCompleted();
+            },
+            onBatchSwitch: async (switchInfo) => {
+                console.log('[Workspace] 收到批次切换消息:', switchInfo);
+
+                try {
+                    // 刷新批次列表，获取最新状态
+                    const res = await projectApi.getBatches(projectId!, 1, 20);
+                    const freshBatches = res.data?.items || [];
+                    setBatches(freshBatches);
+
+                    // 切换到新批次
+                    const newBatch = freshBatches.find((b: any) => b.id === switchInfo.newBatchId);
+                    if (newBatch) {
+                        setSelectedBatch(newBatch);
+                        setBreakdownTaskId(switchInfo.newTaskId);
+                        message.info(`已自动切换到批次 ${switchInfo.newBatchNumber}`);
+                    } else {
+                        console.warn('[Workspace] 未找到新批次:', switchInfo.newBatchId);
+                    }
+
+                    // 🔧 新增：批次切换后更新全局进度
+                    await fetchGlobalProgress();
+                } catch (err) {
+                    console.error('[Workspace] 批次切换失败:', err);
+                    message.error('批次切换失败');
+                }
             }
         }
     );
@@ -533,6 +565,8 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     message.success('拆解完成');
                     // 由 useEffect 统一触发 fetchBreakdownResults
                     fetchBatches();
+                    // 🔧 新增：任务完成后更新全局进度
+                    fetchGlobalProgress();
                     return;
                 }
 
@@ -548,6 +582,8 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     const errorMsg = res.data.error_message || '拆解失败';
                     const parsedError = parseErrorMessage(errorMsg);
                     showError(parsedError);
+                    // 🔧 新增：任务失败后更新全局进度
+                    fetchGlobalProgress();
                     return;
                 }
 
@@ -610,7 +646,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     }
                 }
 
-                // 自动检测正在处理的批次，连接 console
+                // 🔧 修复2：自动检测正在处理的批次，连接 console
                 if (pageNum === 1 && !breakdownTaskId) {
                     const processingBatch = newItems.find(
                         (b: Batch) => b.breakdown_status === BATCH_STATUS.IN_PROGRESS || b.breakdown_status === BATCH_STATUS.QUEUED
@@ -629,6 +665,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                     setSelectedBatch(processingBatch);
                                 }
                                 setBreakdownTaskId(taskId);
+                                setShowConsole(true);  // 🔧 自动打开控制台
                                 addLog('info', `检测到批次 ${processingBatch.batch_number} 正在拆解中，已自动连接...`);
                             }
                         } catch (err) {
@@ -640,11 +677,30 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
             setBatchHasMore((pageNum * 20) < total);
 
+            // 🔧 新增：刷新批次列表后同步更新全局进度
+            if (pageNum === 1) {
+                await fetchGlobalProgress();
+            }
+
         } catch (err) {
             console.error('获取批次失败:', err);
             message.error('获取批次列表失败');
         } finally {
             setLoadingBatches(false);
+        }
+    };
+
+    // 获取全局进度（从 API 获取准确的统计数据）
+    const fetchGlobalProgress = async () => {
+        if (!projectId) return;
+        try {
+            const res = await breakdownApi.getBatchProgress(projectId);
+            console.log('[Workspace] 获取全局进度:', res.data);
+            setBatchProgress(res.data);
+        } catch (err) {
+            console.error('[Workspace] 获取全局进度失败:', err);
+            // 失败时使用降级显示，不影响用户体验
+            setBatchProgress(null);
         }
     };
 
@@ -855,6 +911,9 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                             setSelectedBatch(newItems[0]);
                         }
 
+                        // 🔧 新增：获取全局进度
+                        await fetchGlobalProgress();
+
                         // 自动检测正在处理的批次
                         if (!breakdownTaskId) {
                             const processingBatch = newItems.find(
@@ -1024,6 +1083,8 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
             // 刷新批次列表，显示当前正在拆解的批次
             fetchBatches();
+            // 🔧 新增：启动拆解后更新全局进度
+            fetchGlobalProgress();
 
             // 更新 selectedBatch 状态为 processing/queued，使按钮显示"停止拆解"
             if (selectedBatch && selectedBatch.id === batchId) {
@@ -1052,23 +1113,18 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     // 全部拆解：一次性启动所有 pending 和 failed 批次（增强版）
     const handleAllBreakdown = async () => {
         if (!projectId) return;
-        const pendingBatches = batches.filter(b => b.breakdown_status === BATCH_STATUS.PENDING || b.breakdown_status === BATCH_STATUS.FAILED);
-        if (pendingBatches.length === 0) {
+
+        // 🔧 修改：使用全局进度判断是否有待拆解批次
+        const hasPendingBatches = batchProgress
+            ? (batchProgress.pending + batchProgress.failed) > 0
+            : batches.filter(b => b.breakdown_status === BATCH_STATUS.PENDING || b.breakdown_status === BATCH_STATUS.FAILED).length > 0;
+
+        if (!hasPendingBatches) {
             message.info('没有待拆解的批次');
             return;
         }
         setShowConsole(true);
         setIsBatchRunning(true);
-
-        // 初始化批量进度
-        setBatchProgress({
-            total: pendingBatches.length,
-            completed: 0,
-            in_progress: 0,
-            pending: pendingBatches.length,
-            failed: 0,
-            overall_progress: 0
-        });
 
         try {
             const config = loadBreakdownConfig();
@@ -1081,6 +1137,8 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 message.info(`已启动 ${res.data.total} 个拆解任务`);
                 // 刷新批次列表，显示当前正在拆解的批次
                 fetchBatches();
+                // 🔧 新增：立即获取一次全局进度
+                await fetchGlobalProgress();
                 // 开始轮询批量进度
                 pollBatchProgress();
             } else {
@@ -1101,16 +1159,18 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         }
     };
 
-    // 轮询批量进度
+    // 轮询批量进度（30秒间隔）
     const pollBatchProgress = () => {
         if (!projectId) return;
-        const interval = setInterval(async () => {
+
+        // 🔧 修复：定义轮询函数
+        const fetchProgress = async () => {
             try {
                 const res = await breakdownApi.getBatchProgress(projectId);
                 const progress = res.data;
 
                 setBatchProgress({
-                    total: progress.total_batches,
+                    total_batches: progress.total_batches,
                     completed: progress.completed,
                     in_progress: progress.in_progress,
                     pending: progress.pending,
@@ -1118,24 +1178,47 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     overall_progress: progress.overall_progress
                 });
 
-                // 检查是否有 QA 重试 3 次仍失败的任务（自动停止）
-                if (progress.task_details && progress.task_details.length > 0) {
-                    const qaFailedTask = progress.task_details.find(
-                        (task: any) => task.status === 'failed' && task.qa_retry_count >= 3
-                    );
-                    if (qaFailedTask) {
-                        clearInterval(interval);
-                        setIsBatchRunning(false);
-                        message.warning(`批次 ${qaFailedTask.batch_number || ''} QA 重试 3 次仍失败，已自动停止批量拆解`);
-                        fetchBatches();
-                        return;
+                // 🔧 修复1：检测正在处理的批次，自动跳转并连接 WebSocket
+                if (progress.current_task) {
+                    const currentTask = progress.current_task;
+
+                    // 🔧 关键修复：使用 API 返回的 batch_number，而不是从 batches 数组查找
+                    const currentBatchNumber = currentTask.batch_number;
+
+                    // 如果当前选中的批次号不是正在处理的批次号，需要刷新批次列表并切换
+                    if (!selectedBatch || selectedBatch.batch_number !== currentBatchNumber) {
+                        console.log('[pollBatchProgress] 检测到新批次开始，刷新批次列表:', currentBatchNumber);
+
+                        // 🔧 立即刷新批次列表，获取最新状态
+                        try {
+                            const batchRes = await projectApi.getBatches(projectId, 1, 20);
+                            const freshBatches = batchRes.data.items;
+                            setBatches(freshBatches);
+
+                            // 从刷新后的列表中找到正在处理的批次
+                            const processingBatch = freshBatches.find((b: any) => b.id === currentTask.batch_id);
+
+                            if (processingBatch) {
+                                console.log('[pollBatchProgress] 切换到批次:', processingBatch.batch_number);
+                                setSelectedBatch(processingBatch);
+                                message.info(`批次 ${processingBatch.batch_number} 已开始拆解`);
+                            }
+                        } catch (err) {
+                            console.error('[pollBatchProgress] 刷新批次列表失败:', err);
+                        }
+                    }
+
+                    // 如果 WebSocket 未连接，尝试连接
+                    if (currentTask.task_id && breakdownTaskId !== currentTask.task_id) {
+                        console.log('[pollBatchProgress] 连接新任务 WebSocket:', currentTask.task_id);
+                        setBreakdownTaskId(currentTask.task_id);
+                        setShowConsole(true);
                     }
                 }
 
                 // 检查是否全部完成
                 const allDone = progress.completed + progress.failed === progress.total_batches;
                 if (allDone) {
-                    clearInterval(interval);
                     setIsBatchRunning(false);
 
                     if (progress.failed > 0) {
@@ -1143,12 +1226,17 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     } else {
                         message.success(`全部 ${progress.completed} 个批次拆解完成`);
                     }
-                    fetchBatches();
+                    // 🔧 修复：避免重复调用 fetchBatches
+                    // fetchBatches();
                 }
             } catch (err) {
                 console.error('获取批量进度失败:', err);
             }
-        }, 3000);
+        };
+
+        // 🔧 修复：立即执行一次，然后每30秒执行一次
+        fetchProgress();
+        const interval = setInterval(fetchProgress, 30000);
 
         // 保存 interval ID 以便取消
         return interval;
@@ -1213,6 +1301,8 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
              setBreakdownTaskId(res.data.task_id);
              // 刷新批次列表，显示当前正在拆解的批次
              fetchBatches();
+             // 🔧 新增：启动继续拆解后更新全局进度
+             fetchGlobalProgress();
              // WebSocket 会自动连接
         } catch (err: any) {
              // 失败时恢复状态
@@ -1528,7 +1618,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                                 {isAllBreakdownRunning ? '处理中' : '拆解进度'}
                                             </span>
                                             <span className={`text-[10px] font-mono font-bold ${isAllBreakdownRunning ? 'text-cyan-400' : 'text-emerald-500'}`}>
-                                                {batches.filter(b => b.breakdown_status === BATCH_STATUS.COMPLETED).length}/{batchTotal}
+                                                {batchProgress?.completed || 0}/{batchProgress?.total_batches || batchTotal}
                                             </span>
                                         </div>
                                         <div className="h-1.5 w-full bg-slate-800/80 rounded-full overflow-hidden border border-slate-700/30 p-[1px]">
@@ -1538,7 +1628,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                                     ? 'bg-gradient-to-r from-cyan-500 to-blue-500'
                                                     : 'bg-gradient-to-r from-emerald-600 to-teal-400'
                                                 }`}
-                                                style={{width: `${batchTotal > 0 ? (batches.filter(b => b.breakdown_status === BATCH_STATUS.COMPLETED).length / batchTotal) * 100 : 0}%`}}
+                                                style={{width: `${batchProgress?.total_batches ? (batchProgress.completed / batchProgress.total_batches) * 100 : 0}%`}}
                                             >
                                                 {/* 流光特效 */}
                                                 {isAllBreakdownRunning && (
@@ -1601,19 +1691,19 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                                     <circle
                                                         cx="16" cy="16" r="12"
                                                         stroke="#06b6d4" strokeWidth="3" fill="none"
-                                                        strokeDasharray={`${batchProgress.overall_progress * 0.75} 75`}
+                                                        strokeDasharray={`${(batchProgress?.overall_progress || 0) * 0.75} 75`}
                                                         className="transition-all duration-500"
                                                     />
                                                 </svg>
                                             </div>
                                             <div className="flex flex-col">
                                                 <span className="text-xs text-blue-300 font-medium">
-                                                    批量拆解中 {batchProgress.completed}/{batchProgress.total}
+                                                    批量拆解中 {batchProgress?.completed || 0}/{batchProgress?.total_batches || 0}
                                                 </span>
                                                 <div className="flex gap-2 text-[10px]">
-                                                    <span className="text-green-400">{batchProgress.completed} 成功</span>
-                                                    <span className="text-yellow-400">{batchProgress.in_progress} 进行</span>
-                                                    <span className="text-red-400">{batchProgress.failed} 失败</span>
+                                                    <span className="text-green-400">{batchProgress?.completed || 0} 成功</span>
+                                                    <span className="text-yellow-400">{batchProgress?.in_progress || 0} 进行</span>
+                                                    <span className="text-red-400">{batchProgress?.failed || 0} 失败</span>
                                                 </div>
                                             </div>
                                             <button
@@ -1627,7 +1717,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
                                     <button
                                         onClick={handleAllBreakdown}
-                                        disabled={!!breakdownTaskId || isAllBreakdownRunning || isBatchRunning || batches.filter(b => b.breakdown_status === BATCH_STATUS.PENDING || b.breakdown_status === BATCH_STATUS.FAILED).length === 0}
+                                        disabled={!!breakdownTaskId || isAllBreakdownRunning || isBatchRunning || (batchProgress ? (batchProgress.pending + batchProgress.failed) === 0 : batches.filter(b => b.breakdown_status === BATCH_STATUS.PENDING || b.breakdown_status === BATCH_STATUS.FAILED).length === 0)}
                                         className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white border border-purple-500/30 rounded-lg text-xs font-bold shadow-lg shadow-purple-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
                                         title="一次性启动所有待处理批次"
                                     >
@@ -1636,7 +1726,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                     </button>
                                     <button
                                         onClick={handleContinueBreakdown}
-                                        disabled={!!breakdownTaskId || isAllBreakdownRunning || isBatchRunning || batches.filter(b => b.breakdown_status === BATCH_STATUS.PENDING || b.breakdown_status === BATCH_STATUS.FAILED).length === 0}
+                                        disabled={!!breakdownTaskId || isAllBreakdownRunning || isBatchRunning || (batchProgress ? (batchProgress.pending + batchProgress.failed) === 0 : batches.filter(b => b.breakdown_status === BATCH_STATUS.PENDING || b.breakdown_status === BATCH_STATUS.FAILED).length === 0)}
                                         className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-teal-600 to-cyan-600 hover:from-teal-500 hover:to-cyan-500 text-white border border-teal-500/30 rounded-lg text-xs font-bold shadow-lg shadow-teal-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
                                         title="跳转到第一个待处理批次并开始拆解"
                                     >
@@ -1752,12 +1842,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     currentStep={breakdownCurrentStep}
                     currentRound={currentRound}
                     totalRounds={totalRounds}
-                    batchNumber={(() => {
-                        // 优先使用正在执行的批次 ID，如果没有则使用选中的批次
-                        const activeBatchId = executingBatchId || selectedBatch?.id;
-                        const activeBatch = batches.find(b => b.id === activeBatchId);
-                        return activeBatch?.batch_number || 0;
-                    })()}
+                    batchNumber={selectedBatch?.batch_number || 0}
                     onClose={() => setShowConsole(false)}
                 />
 
@@ -2022,7 +2107,11 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 content={
                     <div className="text-left">
                         <p className="text-slate-300 mb-4">
-                            确定要停止当前拆解任务吗？
+                            {selectedBatch ? (
+                                <>确定要停止批次 <span className="text-blue-400 font-semibold">{selectedBatch.batch_number}</span> 的拆解任务吗？</>
+                            ) : (
+                                '确定要停止当前拆解任务吗？'
+                            )}
                         </p>
                         <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4">
                             <div className="flex gap-3 items-start">
