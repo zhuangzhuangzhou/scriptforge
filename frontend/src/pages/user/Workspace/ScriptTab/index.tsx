@@ -36,7 +36,6 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
   const [selectedEpisode, setSelectedEpisode] = useState<number | null>(null);
   const [currentScript, setCurrentScript] = useState<EpisodeScript | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'structure' | 'full'>('structure');
   const [exporting, setExporting] = useState(false);
   const [approving, setApproving] = useState(false);
@@ -49,7 +48,6 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
   const {
     logs,
     llmStats,
-    isConnected,
     addLog,
     clearLogs
   } = useConsoleLogger(currentTaskId, {
@@ -106,7 +104,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
   };
 
   // 显示错误弹窗
-  const showErrorModal = (error: any, defaultMessage: string = '操作失败') => {
+  const showErrorModal = useCallback((error: any, defaultMessage: string = '操作失败') => {
     const parsed = parseError(error.response?.data || error || {});
     setErrorInfo({
       code: parsed.code,
@@ -114,7 +112,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
       suggestion: parsed.suggestion
     });
     setErrorModalOpen(true);
-  };
+  }, []);
 
   // 加载剧集列表（合并已生成的剧本和待生成的拆解结果）
   const loadEpisodes = useCallback(async () => {
@@ -130,7 +128,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
       ]);
 
       const scripts = scriptsResponse.data || [];
-      const breakdowns = breakdownsResponse.data || [];
+      const breakdowns = breakdownsResponse.data?.items || breakdownsResponse.data || [];
 
       // 使用 Map 存储剧集信息（key: episode, value: 剧集数据）
       const episodeMap = new Map<number, any>();
@@ -201,7 +199,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, showErrorModal]);
 
   // 监听日志变化，检测任务完成
   useEffect(() => {
