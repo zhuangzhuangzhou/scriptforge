@@ -78,12 +78,22 @@ async def get_adapter(
     if use_provider == "anthropic":
         api_key = settings.ANTHROPIC_API_KEY
         model_name = settings.ANTHROPIC_MODEL
-        return AnthropicAdapter(api_key=api_key, model_name=model_name, log_enabled=log_enabled)
+        return AnthropicAdapter(
+            api_key=api_key,
+            model_name=model_name,
+            db=db,
+            log_enabled=log_enabled
+        )
     else:
         # 默认使用 OpenAI
         api_key = settings.OPENAI_API_KEY
         model_name = settings.OPENAI_MODEL
-        return OpenAIAdapter(api_key=api_key, model_name=model_name, log_enabled=log_enabled)
+        return OpenAIAdapter(
+            api_key=api_key,
+            model_name=model_name,
+            db=db,
+            log_enabled=log_enabled
+        )
 
 
 # ============================================================================

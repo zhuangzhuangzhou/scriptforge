@@ -183,7 +183,7 @@ class AnthropicAdapter(BaseModelAdapter):
 
         finally:
             latency_ms = int((time.time() - start_time) * 1000)
-            self._log_call(
+            self._log_call_sync(
                 prompt=prompt,
                 response=response_content if response_content else None,
                 prompt_tokens=prompt_tokens,
@@ -345,7 +345,7 @@ class AnthropicAdapter(BaseModelAdapter):
         finally:
             latency_ms = int((time.time() - start_time) * 1000)
             full_response = "".join(collected_content)
-            self._log_call(
+            self._log_call_sync(
                 prompt=prompt,
                 response=full_response if full_response else None,
                 temperature=temperature,

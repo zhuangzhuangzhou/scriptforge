@@ -121,7 +121,8 @@ class OpenAIAdapter(BaseModelAdapter):
 
         finally:
             latency_ms = int((time.time() - start_time) * 1000)
-            self._log_call(
+            # 使用同步方式记录日志（即使传入的是 AsyncSession）
+            self._log_call_sync(
                 prompt=prompt,
                 response=response_content if response_content else None,
                 prompt_tokens=prompt_tokens,
@@ -201,7 +202,7 @@ class OpenAIAdapter(BaseModelAdapter):
         finally:
             latency_ms = int((time.time() - start_time) * 1000)
             full_response = "".join(collected_content)
-            self._log_call(
+            self._log_call_sync(
                 prompt=prompt,
                 response=full_response if full_response else None,
                 temperature=temperature,
