@@ -25,6 +25,11 @@ export interface LLMCallStats {
 interface UseConsoleLoggerOptions {
   enableWebSocket?: boolean;
   pollInterval?: number;
+  onBatchSwitch?: (info: {
+    newTaskId: string;
+    newBatchId: string;
+    newBatchNumber: number;
+  }) => void;
 }
 
 export const useConsoleLogger = (
@@ -58,6 +63,7 @@ export const useConsoleLogger = (
   }, []);
 
   // 更新最后一个流式日志（追加模式，用于累积流式内容）
+  // 注意：后端发送的是增量内容，所以这里使用追加模式
   const appendStreamLog = useCallback((chunk: string) => {
     setLogs(prev => {
       // 查找最后一个未完成的 stream 类型的日志（不要求在数组末尾）
@@ -73,7 +79,7 @@ export const useConsoleLogger = (
         const updated = [...prev];
         updated[lastStreamIndex] = {
           ...updated[lastStreamIndex],
-          message: updated[lastStreamIndex].message + chunk
+          message: updated[lastStreamIndex].message + chunk  // 追加增量内容
         };
         return updated;
       }
@@ -208,12 +214,35 @@ export const useConsoleLogger = (
 
           // 处理任务失败
           if (data.status === TASK_STATUS.FAILED) {
-            addLog('error', data.error_message || '任务失败');
+            // 传递详细错误信息
+            addLog('error', data.error_message || '任务失败', {
+              error_message: data.error_message,
+              error_display: data.error_display
+            });
           }
 
-          // 处理最终状态
+          // 🔧 修复: 处理批次切换消息
+          if (data.type === 'batch_switch') {
+            const { new_task_id, new_batch_id, new_batch_number } = data.metadata || {};
+            addLog('info', `批次 ${new_batch_number} 已开始拆解，正在切换...`);
+
+            // 触发回调通知父组件
+            if (options.onBatchSwitch) {
+              options.onBatchSwitch({
+                newTaskId: new_task_id,
+                newBatchId: new_batch_id,
+                newBatchNumber: new_batch_number
+              });
+            }
+            // 不关闭连接,让父组件处理切换
+            return;
+          }
+
+          // 处理最终状态 - 延迟关闭,等待可能的 batch_switch 消息
           if (data.final_status) {
-            ws.close();
+            setTimeout(() => {
+              ws.close();
+            }, 2000);  // 延迟 2 秒关闭
           }
         } catch (error) {
           console.error('解析 WebSocket 消息失败:', error);
@@ -299,7 +328,10 @@ export const useConsoleLogger = (
               errorMsg = data.error_message;
             }
           }
-          addLog('error', errorMsg);
+          addLog('error', errorMsg, {
+            error_message: data.error_message,
+            error_display: data.error_display
+          });
           if (pollTimerRef.current) {
             clearInterval(pollTimerRef.current);
           }
