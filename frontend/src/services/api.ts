@@ -782,6 +782,15 @@ export const scriptApi = {
       return { data: null };
     }
     return api.get(`/scripts/${scriptId}/detail`);
+  },
+
+  // 停止剧本生成任务
+  stopTask: async (taskId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return { data: { task_id: taskId, status: 'cancelled', message: '任务已停止' } };
+    }
+    return api.post(`/scripts/tasks/${taskId}/stop`);
   }
 };
 

@@ -13,6 +13,7 @@ from app.models.ai_task import AITask
 from app.models.plot_breakdown import PlotBreakdown
 from app.models.script import Script
 from app.api.v1.auth import get_current_user
+from app.api.v1.breakdown import _humanize_error_message
 from app.core.quota import QuotaService
 from app.core.status import TaskStatus
 
@@ -347,14 +348,98 @@ async def get_script_task_status(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
 
+    # 动态生成人性化错误信息（参考 breakdown.py）
+    error_display = None
+    if task.error_message:
+        error_display = _humanize_error_message(task.error_message)
+
     return {
         "task_id": str(task.id),
         "status": task.status,
         "progress": task.progress or 0,
         "current_step": task.current_step,
         "error_message": task.error_message,
+        "error_display": error_display,
         "result": task.result
     }
+
+
+@router.post("/tasks/{task_id}/stop")
+async def stop_script_task(
+    task_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """停止剧本生成任务
+
+    功能：
+    - 使用 Celery revoke 停止正在执行的任务
+    - 更新任务状态为 canceled
+    - 返还已扣除的积分
+    """
+    from app.core.celery_app import celery_app
+    from app.models.billing import BillingRecord
+    from app.core.quota import DEFAULT_CREDITS_PRICING
+
+    # 验证任务归属
+    result = await db.execute(
+        select(AITask).join(Project).where(
+            AITask.id == task_id,
+            Project.user_id == current_user.id
+        )
+    )
+    task = result.scalar_one_or_none()
+
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    # 只有正在执行的任务可以停止
+    if task.status not in [TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLING]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"只有正在执行的任务可以停止，当前状态: {task.status}"
+        )
+
+    try:
+        # 1. 使用 Celery revoke 停止任务
+        if task.celery_task_id:
+            celery_app.control.revoke(task.celery_task_id, terminate=True)
+
+        # 2. 更新任务状态
+        task.status = TaskStatus.CANCELED
+        task.current_step = "已停止"
+        task.result = {"api_handled_credits": True}
+
+        # 3. 返还积分
+        refund_amount = DEFAULT_CREDITS_PRICING.get("script", 50)
+        current_user.credits += refund_amount
+
+        # 记录账单
+        record = BillingRecord(
+            user_id=current_user.id,
+            type="refund",
+            credits=refund_amount,
+            balance_after=current_user.credits,
+            description="剧本生成任务取消返还",
+            created_at=datetime.now(timezone.utc)
+        )
+        db.add(record)
+
+        await db.commit()
+
+        return {
+            "task_id": str(task.id),
+            "status": TaskStatus.CANCELED,
+            "message": "任务已停止",
+            "refunded_credits": refund_amount
+        }
+
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"停止任务失败: {str(e)}"
+        )
 
 
 @router.get("/episode/{breakdown_id}/{episode_number}")

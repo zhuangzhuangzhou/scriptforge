@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { TASK_STATUS } from '../constants/status';
-import { breakdownApi } from '../services/api';
+import { breakdownApi, scriptApi } from '../services/api';
 
 export interface LogEntry {
   id: string;
@@ -22,9 +22,13 @@ export interface LLMCallStats {
   }>;
 }
 
+// 任务类型
+export type TaskType = 'breakdown' | 'script';
+
 interface UseConsoleLoggerOptions {
   enableWebSocket?: boolean;
   pollInterval?: number;
+  taskType?: TaskType;  // 新增：任务类型，默认为 breakdown
   onBatchSwitch?: (info: {
     newTaskId: string;
     newBatchId: string;
@@ -36,7 +40,11 @@ export const useConsoleLogger = (
   taskId: string | null,
   options: UseConsoleLoggerOptions = {}
 ) => {
-  const { enableWebSocket = true, pollInterval = 2000 } = options;
+  const {
+    enableWebSocket = true,
+    pollInterval = 2000,
+    taskType = 'breakdown'  // 默认为 breakdown，保持向后兼容
+  } = options;
 
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [llmStats, setLlmStats] = useState<LLMCallStats>({ total: 0, stages: [] });
@@ -187,7 +195,10 @@ export const useConsoleLogger = (
   useEffect(() => {
     if (!taskId || !enableWebSocket) return;
 
-    const wsUrl = `${import.meta.env.VITE_WS_URL || 'ws://localhost:8000'}/api/v1/ws/breakdown/${taskId}`;
+    // 根据任务类型选择 WebSocket 路径
+    // 注意：后端目前只有 breakdown 的 WebSocket 端点，但 Redis 频道是通用的
+    const wsPath = taskType === 'script' ? 'breakdown' : 'breakdown';
+    const wsUrl = `${import.meta.env.VITE_WS_URL || 'ws://localhost:8000'}/api/v1/ws/${wsPath}/${taskId}`;
 
     try {
       const ws = new WebSocket(wsUrl);
@@ -309,9 +320,14 @@ export const useConsoleLogger = (
   useEffect(() => {
     if (!taskId || isConnected) return;
 
+    // 根据任务类型选择 API
+    const getTaskStatus = taskType === 'script'
+      ? scriptApi.getTaskStatus
+      : breakdownApi.getTaskStatus;
+
     const pollStatus = async () => {
       try {
-        const res = await breakdownApi.getTaskStatus(taskId);
+        const res = await getTaskStatus(taskId);
         const data = res.data;
 
         // 检测 queued 状态超时

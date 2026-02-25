@@ -938,15 +938,10 @@ class SimpleSkillExecutor:
             result = self._parse_json(full_response)
 
             # 若流式未产出任何格式化内容，则补发格式化日志，保证 Console 可见
+            # 注意：不要重复发送原始内容，因为流式输出已经发送过了
             if formatted_index == 0 and self.log_publisher and task_id:
                 try:
-                    if full_response:
-                        self.log_publisher.publish_stream_chunk(
-                            task_id,
-                            step_display_name,
-                            str(full_response)
-                        )
-
+                    # 只补发格式化内容，不重复发送原始流式内容
                     items = None
                     if isinstance(result, list):
                         items = result
@@ -1079,8 +1074,15 @@ class SimpleSkillExecutor:
         if not response or not response.strip():
             raise ValueError("LLM 返回空响应")
 
-        # 1. 优先检测 QA 报告格式（纯文本格式，不是 JSON）
-        if '【质检报告】' in response and not response.strip().startswith('{'):
+        # 1. 优先检测 QA 报告格式（支持多种格式）
+        # - 旧格式：【质检报告】
+        # - 新格式：# 漫剧剧本质检报告 或 ## 整体评估
+        is_qa_report = (
+            '【质检报告】' in response or
+            '质检报告' in response or
+            ('总分' in response and '状态' in response and ('通过' in response or '不通过' in response))
+        )
+        if is_qa_report and not response.strip().startswith('{'):
             qa_result = parse_text_qa_result(response)
             if qa_result.get("qa_status") or qa_result.get("qa_score") is not None:
                 logger.info(f"QA 报告解析成功，状态: {qa_result.get('qa_status')}, 分数: {qa_result.get('qa_score')}")
