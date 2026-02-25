@@ -43,81 +43,6 @@ export const useScriptQueue = (options: UseScriptQueueOptions = {}) => {
     }
   }, []);
 
-  // 处理单个任务的轮询
-  const pollTaskStatus = useCallback((
-    taskId: string,
-    episodeNumber: number,
-    queueList: QueueItem[],
-    index: number
-  ) => {
-    clearPolling();
-
-    intervalRef.current = setInterval(async () => {
-      try {
-        const res = await scriptApi.getTaskStatus(taskId);
-        const data = res.data;
-
-        setProgress(data.progress || 0);
-
-        if (data.current_step) {
-          setCurrentStep(data.current_step);
-          onProgress?.(data.progress || 0, data.current_step);
-        }
-
-        if (data.status === TASK_STATUS.COMPLETED) {
-          clearPolling();
-          setCurrentTaskId(null);
-          onTaskComplete?.(episodeNumber, index, queueList.length);
-
-          // 处理下一个
-          const nextIndex = index + 1;
-          if (nextIndex < queueList.length) {
-            setCurrentIndex(nextIndex);
-            processTask(queueList[nextIndex], queueList, nextIndex);
-          } else {
-            // 队列完成
-            setIsProcessing(false);
-            setQueue([]);
-            setCurrentIndex(0);
-            setProgress(0);
-            setCurrentStep('');
-            message.success('所有剧本生成完成');
-            onQueueComplete?.();
-          }
-        } else if (data.status === TASK_STATUS.FAILED) {
-          clearPolling();
-          setCurrentTaskId(null);
-          setIsProcessing(false);
-
-          // 优先使用 error_display（人性化错误信息），否则解析 error_message
-          let errorCode = 'UNKNOWN_ERROR';
-          let errorMessage = '剧本生成失败';
-
-          if (data.error_display && typeof data.error_display === 'object') {
-            errorCode = data.error_display.code || errorCode;
-            errorMessage = data.error_display.description || data.error_display.message || errorMessage;
-          } else {
-            const errorMsg = data.error_message || '剧本生成失败';
-            try {
-              const errorData = typeof errorMsg === 'string' ? JSON.parse(errorMsg) : errorMsg;
-              errorCode = errorData.code || errorCode;
-              errorMessage = errorData.message || errorMsg;
-            } catch {
-              errorMessage = errorMsg;
-            }
-          }
-
-          message.error(`第 ${episodeNumber} 集: ${errorMessage}`);
-          onError?.({ code: errorCode, message: errorMessage }, episodeNumber);
-        }
-      } catch (err) {
-        clearPolling();
-        setCurrentTaskId(null);
-        setIsProcessing(false);
-      }
-    }, pollInterval);
-  }, [clearPolling, onTaskComplete, onQueueComplete, onError, onProgress, pollInterval]);
-
   // 处理单个任务
   const processTask = useCallback(async (
     item: QueueItem,
@@ -135,14 +60,81 @@ export const useScriptQueue = (options: UseScriptQueueOptions = {}) => {
       );
       const taskId = res.data.task_id;
       setCurrentTaskId(taskId);
-      pollTaskStatus(taskId, item.episodeNumber, queueList, index);
+
+      // 启动轮询
+      clearPolling();
+      intervalRef.current = setInterval(async () => {
+        try {
+          const res = await scriptApi.getTaskStatus(taskId);
+          const data = res.data;
+
+          setProgress(data.progress || 0);
+
+          if (data.current_step) {
+            setCurrentStep(data.current_step);
+            onProgress?.(data.progress || 0, data.current_step);
+          }
+
+          if (data.status === TASK_STATUS.COMPLETED) {
+            clearPolling();
+            setCurrentTaskId(null);
+            onTaskComplete?.(item.episodeNumber, index, queueList.length);
+
+            // 处理下一个
+            const nextIndex = index + 1;
+            if (nextIndex < queueList.length) {
+              setCurrentIndex(nextIndex);
+              // 递归调用处理下一个任务
+              processTask(queueList[nextIndex], queueList, nextIndex);
+            } else {
+              // 队列完成
+              setIsProcessing(false);
+              setQueue([]);
+              setCurrentIndex(0);
+              setProgress(0);
+              setCurrentStep('');
+              message.success('所有剧本生成完成');
+              onQueueComplete?.();
+            }
+          } else if (data.status === TASK_STATUS.FAILED) {
+            clearPolling();
+            setCurrentTaskId(null);
+            setIsProcessing(false);
+
+            // 优先使用 error_display（人性化错误信息），否则解析 error_message
+            let errorCode = 'UNKNOWN_ERROR';
+            let errorMessage = '剧本生成失败';
+
+            if (data.error_display && typeof data.error_display === 'object') {
+              errorCode = data.error_display.code || errorCode;
+              errorMessage = data.error_display.description || data.error_display.message || errorMessage;
+            } else {
+              const errorMsg = data.error_message || '剧本生成失败';
+              try {
+                const errorData = typeof errorMsg === 'string' ? JSON.parse(errorMsg) : errorMsg;
+                errorCode = errorData.code || errorCode;
+                errorMessage = errorData.message || errorMsg;
+              } catch {
+                errorMessage = errorMsg;
+              }
+            }
+
+            message.error(`第 ${item.episodeNumber} 集: ${errorMessage}`);
+            onError?.({ code: errorCode, message: errorMessage }, item.episodeNumber);
+          }
+        } catch (err) {
+          clearPolling();
+          setCurrentTaskId(null);
+          setIsProcessing(false);
+        }
+      }, pollInterval);
     } catch (err: any) {
       setIsProcessing(false);
       const errorMsg = err.response?.data?.detail || '启动剧本生成失败';
       message.error(errorMsg);
       onError?.({ code: 'START_FAILED', message: errorMsg }, item.episodeNumber);
     }
-  }, [pollTaskStatus, onError, novelType]);
+  }, [clearPolling, onTaskComplete, onQueueComplete, onError, onProgress, pollInterval, novelType]);
 
   // 启动队列
   const startQueue = useCallback((items: QueueItem[]) => {

@@ -163,6 +163,29 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const [isBatchRunning, setIsBatchRunning] = useState(false);
     const [taskCompleted, setTaskCompleted] = useState(false);
 
+    // Script Tab 剧集生成进度状态
+    const [scriptProgress, setScriptProgress] = useState<{
+        total: number;
+        completed: number;
+        in_progress: number;
+        pending: number;
+        failed: number;
+    }>({
+        total: 0,
+        completed: 0,
+        in_progress: 0,
+        pending: 0,
+        failed: 0
+    });
+
+    // Script Tab 操作函数
+    const [scriptActions, setScriptActions] = useState<{
+        handleGenerateAll: () => void;
+        handleContinueGenerate: () => void;
+        handleRegenerateAll: () => void;
+    } | null>(null);
+
+
     useEffect(() => {
         // 只有在控制台打开且没有正在执行的任务时才重置进度
         // 但如果任务已完成，则保持显示完成状态
@@ -1531,6 +1554,12 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                         batchId={selectedBatch?.id}
                         breakdownId={selectedBatch?.id}
                         novelType={formData.novel_type}
+                        onProgressUpdate={(progress) => {
+                            setScriptProgress(progress);
+                        }}
+                        onActionsReady={(actions) => {
+                            setScriptActions(actions);
+                        }}
                     />
                 );
             case 'AGENTS':
@@ -1606,7 +1635,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             {/* Main Content */}
             <div className="flex-1 flex flex-col overflow-hidden relative">
                 {/* Header */}
-                {(activeTab !== 'SCRIPT' && activeTab !== 'SOURCE') && (
+                {activeTab !== 'SOURCE' && (
                     <header className="h-14 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-900/50 backdrop-blur z-10 shrink-0">
                         <div className="flex items-center gap-3">
                             <h1 className="font-semibold text-white truncate max-w-[200px]">{project.name}</h1>
@@ -1649,6 +1678,51 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                             >
                                                 {/* 流光特效 */}
                                                 {isAllBreakdownRunning && (
+                                                    <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-transparent via-white/50 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]" />
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* SCRIPT Tab: 剧集生成进度展示在 Header 左侧 */}
+                            {activeTab === 'SCRIPT' && scriptProgress.total > 0 && (
+                                <div className="ml-6 hidden md:flex items-center gap-3 animate-in fade-in slide-in-from-left-4 duration-500">
+                                    {/* 简约图标 */}
+                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-500 ${
+                                        scriptProgress.in_progress > 0
+                                        ? 'bg-cyan-500/10 text-cyan-400 shadow-[0_0_15px_-3px_rgba(6,182,212,0.4)]'
+                                        : 'bg-slate-800/80 text-slate-500 border border-slate-700/50'
+                                    }`}>
+                                        {scriptProgress.in_progress > 0 ? (
+                                            <Loader2 size={16} className="animate-spin" />
+                                        ) : (
+                                            <FileEdit size={16} className={scriptProgress.completed > 0 ? 'text-amber-400' : ''} />
+                                        )}
+                                    </div>
+
+                                    {/* 能量条进度 */}
+                                    <div className="flex flex-col gap-1.5 w-40 group">
+                                        <div className="flex justify-between items-end px-0.5">
+                                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest group-hover:text-slate-400 transition-colors">
+                                                {scriptProgress.in_progress > 0 ? '生成中' : '剧本进度'}
+                                            </span>
+                                            <span className={`text-[10px] font-mono font-bold ${scriptProgress.in_progress > 0 ? 'text-cyan-400' : 'text-emerald-500'}`}>
+                                                {scriptProgress.completed}/{scriptProgress.total}
+                                            </span>
+                                        </div>
+                                        <div className="h-1.5 w-full bg-slate-800/80 rounded-full overflow-hidden border border-slate-700/30 p-[1px]">
+                                            <div
+                                                className={`h-full rounded-full transition-all duration-700 ease-out relative overflow-hidden ${
+                                                    scriptProgress.in_progress > 0
+                                                    ? 'bg-gradient-to-r from-cyan-500 to-blue-500'
+                                                    : 'bg-gradient-to-r from-emerald-600 to-teal-400'
+                                                }`}
+                                                style={{width: `${scriptProgress.total > 0 ? (scriptProgress.completed / scriptProgress.total) * 100 : 0}%`}}
+                                            >
+                                                {/* 流光特效 */}
+                                                {scriptProgress.in_progress > 0 && (
                                                     <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-transparent via-white/50 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]" />
                                                 )}
                                             </div>
@@ -1806,6 +1880,40 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                         </button>
                                     )}
                                 </div>
+                            ) : (activeTab as Tab) === 'SCRIPT' ? (
+                                <div className="flex items-center gap-3">
+                                    <button
+                                        onClick={() => scriptActions?.handleGenerateAll()}
+                                        disabled={!scriptActions || scriptProgress.pending === 0}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white border border-indigo-500/30 rounded-lg text-xs font-bold shadow-lg shadow-indigo-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                                        title="一次性生成所有待处理剧集"
+                                    >
+                                        <FastForward size={14} />
+                                        全部生成
+                                    </button>
+                                    <button
+                                        onClick={() => scriptActions?.handleContinueGenerate()}
+                                        disabled={!scriptActions || scriptProgress.pending === 0}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white border border-emerald-500/30 rounded-lg text-xs font-bold shadow-lg shadow-emerald-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                                        title="跳转到第一个待处理剧集并开始生成"
+                                    >
+                                        <PlayCircle size={14} />
+                                        继续生成
+                                    </button>
+
+                                    <div className="w-px h-4 bg-slate-700 mx-1"></div>
+
+                                    <button
+                                        onClick={() => scriptActions?.handleRegenerateAll()}
+                                        disabled={!scriptActions || scriptProgress.total === 0}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white border border-sky-500/30 rounded-lg text-xs font-bold shadow-lg shadow-sky-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <RotateCcw size={14} />
+                                        重新生成
+                                    </button>
+                                </div>
+                            ) : (activeTab as Tab) === 'SOURCE' ? (
+                                <></>
                             ) : (
                                 <>
                                     <div className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium transition-all rounded-lg ${

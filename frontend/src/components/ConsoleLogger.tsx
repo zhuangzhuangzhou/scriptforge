@@ -415,6 +415,7 @@ const LogItem: React.FC<LogItemProps> = ({ log, viewMode, isExpanded, onToggleEx
 
   // 普通日志
   const logColorClass = {
+    info: 'text-blue-400',
     error: 'text-red-400',
     success: 'text-green-400',
     warning: 'text-amber-400',

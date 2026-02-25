@@ -159,6 +159,9 @@ export const useScriptPolling = (options: UseScriptPollingOptions = {}) => {
     currentEpisode: episodeRef.current,
     startGeneration,
     cancelGeneration,
-    stopGeneration
+    stopGeneration,
+    setTaskId,  // 导出 setTaskId，用于恢复任务
+    setIsRunning,  // 导出 setIsRunning，用于恢复状态
+    setEpisode: (episode: number) => { episodeRef.current = episode; }  // 导出设置 episode 的方法
   };
 };

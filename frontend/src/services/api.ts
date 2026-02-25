@@ -791,6 +791,27 @@ export const scriptApi = {
       return { data: { task_id: taskId, status: 'cancelled', message: '任务已停止' } };
     }
     return api.post(`/scripts/tasks/${taskId}/stop`);
+  },
+
+  // 获取项目的所有剧本任务（包括正在运行的）
+  getProjectTasks: async (projectId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return { data: [] };
+    }
+    return api.get('/scripts/tasks', { params: { project_id: projectId } });
+  },
+
+  // 设置当前版本
+  setCurrentScript: async (projectId: string, episodeNumber: number, scriptId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return { data: { message: '已设置为当前版本' } };
+    }
+    return api.post(`/scripts/${scriptId}/set-current`, {
+      project_id: projectId,
+      episode_number: episodeNumber
+    });
   }
 };
 

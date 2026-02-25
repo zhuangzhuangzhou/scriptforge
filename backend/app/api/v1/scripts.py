@@ -330,6 +330,51 @@ async def start_episode_script(
     return {"task_id": str(task.id), "status": TaskStatus.QUEUED, "episode_number": request.episode_number}
 
 
+@router.get("/tasks")
+async def get_project_script_tasks(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取项目的所有剧本任务（包括正在运行的）
+
+    用于页面重新加载时恢复任务状态
+    """
+    # 验证项目归属
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.user_id == current_user.id
+        )
+    )
+    project = result.scalar_one_or_none()
+
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    # 查询项目的所有 script 任务
+    result = await db.execute(
+        select(AITask).where(
+            AITask.project_id == project_id,
+            AITask.task_type == "script"
+        ).order_by(AITask.created_at.desc())
+    )
+    tasks = result.scalars().all()
+
+    # 返回任务列表
+    return [
+        {
+            "id": str(task.id),
+            "status": task.status,
+            "episode_number": task.result.get("episode_number") if task.result else None,
+            "progress": task.progress or 0,
+            "current_step": task.current_step,
+            "created_at": task.created_at.isoformat() if task.created_at else None
+        }
+        for task in tasks
+    ]
+
+
 @router.get("/tasks/{task_id}")
 async def get_script_task_status(
     task_id: str,

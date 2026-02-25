@@ -1,19 +1,19 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import {
-  RefreshCw, CheckCircle2, Loader2,
-  ThumbsUp, Download, FileEdit, Save, FileCheck, Search, AlertCircle,
-  Eye as EyeIcon, Edit3, Play, XCircle, StopCircle, History
-} from 'lucide-react';
 import { message, Modal } from 'antd';
-import { motion, AnimatePresence } from 'framer-motion';
+import { XCircle, FileEdit, AlertCircle } from 'lucide-react';
+import { AnimatePresence } from 'framer-motion';
 import ConfirmModal from '../../../../components/modals/ConfirmModal';
 import ConsoleLogger from '../../../../components/ConsoleLogger';
-import BreakdownDetail, { QAReportModal } from '../PlotTab/BreakdownDetail';
 import ScriptHistoryModal from './ScriptHistoryModal';
 import ScriptViewModal from './ScriptViewModal';
+import EpisodeList from './EpisodeList';
+import ScriptDetail from './ScriptDetail';
+import ExportModal from './ExportModal';
+import { QAReportModal } from '../PlotTab/BreakdownDetail';
 import { useConsoleLogger } from '../../../../hooks/useConsoleLogger';
 import { useScriptPolling, useScriptQueue } from './hooks';
 import { scriptApi, exportApi, breakdownApi } from '../../../../services/api';
+import { parseErrorMessage } from '../../../../utils/errorParser';
 import type { EpisodeScript, ScriptStructure } from '../../../../types';
 
 interface ScriptTabProps {
@@ -21,29 +21,33 @@ interface ScriptTabProps {
   batchId?: string;
   breakdownId?: string;
   novelType?: string;
+  onProgressUpdate?: (progress: {
+    total: number;
+    completed: number;
+    in_progress: number;
+    pending: number;
+    failed: number;
+  }) => void;
+  onActionsReady?: (actions: {
+    handleGenerateAll: () => void;
+    handleContinueGenerate: () => void;
+    handleRegenerateAll: () => void;
+  }) => void;
 }
-
-// 四段式结构标签
-const STRUCTURE_LABELS = {
-  opening: { name: '起', desc: '开场冲突', color: 'cyan', target: '100-150字' },
-  development: { name: '承', desc: '推进发展', color: 'blue', target: '150-200字' },
-  climax: { name: '转', desc: '反转高潮', color: 'purple', target: '200-250字' },
-  hook: { name: '钩', desc: '悬念结尾', color: 'amber', target: '100-150字' }
-} as const;
 
 const ScriptTab: React.FC<ScriptTabProps> = ({
   projectId,
   batchId,
   breakdownId,
-  novelType
+  novelType,
+  onProgressUpdate,
+  onActionsReady
 }) => {
   const [episodes, setEpisodes] = useState<Array<{ episode: number; status: string; breakdownId?: string; batchId?: string; script?: EpisodeScript }>>([]);
   const [selectedEpisode, setSelectedEpisode] = useState<number | null>(null);
   const [currentScript, setCurrentScript] = useState<EpisodeScript | null>(null);
   const [loading, setLoading] = useState(false);
-  const [viewMode, setViewMode] = useState<'structure' | 'full'>('structure');
   const [exporting, setExporting] = useState(false);
-  const [approving, setApproving] = useState(false);
   const [consoleVisible, setConsoleVisible] = useState(false);
 
   // 剧本历史弹窗状态
@@ -51,6 +55,9 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
   const [viewScriptModalOpen, setViewScriptModalOpen] = useState(false);
   const [historyScriptIds, setHistoryScriptIds] = useState<string[]>([]);
   const [currentHistoryIndex, setCurrentHistoryIndex] = useState(0);
+
+  // 导出弹窗状态
+  const [exportModalOpen, setExportModalOpen] = useState(false);
 
   // 错误弹窗状态
   const [errorModalOpen, setErrorModalOpen] = useState(false);
@@ -77,38 +84,9 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
   // 使用 ref 来追踪是否需要设置默认集数
   const selectedEpisodeRef = React.useRef(false);
 
-  // 解析错误信息（参考 Plot 页面逻辑）
-  const parseError = (errorData: any): { code: string; message: string; suggestion?: string } => {
-    let errorCode = 'UNKNOWN_ERROR';
-    let errorMessage = '操作失败';
-    let errorSuggestion = '';
-
-    // 优先使用 error_display（人性化错误信息）
-    if (errorData.error_display && typeof errorData.error_display === 'object') {
-      errorCode = errorData.error_display.code || errorCode;
-      errorMessage = errorData.error_display.description || errorData.error_display.message || errorMessage;
-      errorSuggestion = errorData.error_display.suggestion || '';
-    } else if (errorData.error_message) {
-      // 回退到解析 error_message
-      const errorMsg = errorData.error_message;
-      try {
-        const parsed = typeof errorMsg === 'string' ? JSON.parse(errorMsg) : errorMsg;
-        errorCode = parsed.code || errorCode;
-        errorMessage = parsed.message || errorMsg;
-      } catch {
-        errorMessage = errorMsg;
-      }
-    } else if (errorData.detail) {
-      // 直接使用 detail
-      errorMessage = errorData.detail;
-    }
-
-    return { code: errorCode, message: errorMessage, suggestion: errorSuggestion };
-  };
-
   // 显示错误弹窗
   const showErrorModal = useCallback((error: any, defaultMessage: string = '操作失败') => {
-    const parsed = parseError(error.response?.data || error || {});
+    const parsed = parseErrorMessage(error);
     setErrorInfo({
       code: parsed.code,
       message: parsed.message || defaultMessage,
@@ -117,33 +95,35 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     setErrorModalOpen(true);
   }, []);
 
-  // 加载剧集列表（合并已生成的剧本和待生成的拆解结果）
+  // 加载剧集列表
   const loadEpisodes = useCallback(async () => {
     if (!projectId) return;
 
     try {
       setLoading(true);
 
-      // 并行请求：获取剧本和拆解结果
       const [scriptsResponse, breakdownsResponse] = await Promise.all([
-        scriptApi.getProjectScripts(projectId),
-        breakdownApi.getProjectBreakdowns(projectId)
+        scriptApi.getProjectScripts(projectId).catch(err => {
+          console.warn('[ScriptTab] 获取剧本列表失败:', err);
+          return { data: [] };
+        }),
+        breakdownApi.getProjectBreakdowns(projectId).catch(err => {
+          console.warn('[ScriptTab] 获取拆解结果失败:', err);
+          return { data: { items: [] } };
+        })
       ]);
 
       const scripts = scriptsResponse.data || [];
       const breakdowns = breakdownsResponse.data?.items || breakdownsResponse.data || [];
 
-      // 使用 Map 存储剧集信息（key: episode, value: 剧集数据）
       const episodeMap = new Map<number, any>();
 
-      // 🔧 修复：先建立 episode -> breakdown 的正确映射
-      // 这样即使剧本记录中的 breakdown_id 过时，也能使用正确的 breakdown
+      // 建立 episode -> breakdown 映射
       const episodeToBreakdown = new Map<number, { breakdownId: string; batchId: string }>();
       breakdowns.forEach((breakdown: any) => {
         if (breakdown.plot_points && Array.isArray(breakdown.plot_points)) {
           breakdown.plot_points.forEach((pp: any) => {
             if (pp.episode && pp.episode > 0) {
-              // 只保留第一个匹配的 breakdown（按 batch_number 升序，所以第一个是正确的）
               if (!episodeToBreakdown.has(pp.episode)) {
                 episodeToBreakdown.set(pp.episode, {
                   breakdownId: breakdown.id,
@@ -155,23 +135,17 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         }
       });
 
-      // 1. 从已生成的剧本中提取剧集
+      // 从已生成的剧本中提取剧集
       scripts.forEach((script: any) => {
         const ep = script.episode_number;
-        // 🔧 修复：优先使用 breakdowns 列表中的正确 breakdown_id
         const correctBreakdown = episodeToBreakdown.get(ep);
         const breakdownId = correctBreakdown?.breakdownId || script.plot_breakdown_id;
         const batchId = correctBreakdown?.batchId || script.batch_id;
 
-        // 如果 breakdown_id 不一致，打印警告
-        if (correctBreakdown && correctBreakdown.breakdownId !== script.plot_breakdown_id) {
-          console.warn(`[ScriptTab] 第 ${ep} 集 breakdown_id 不一致！剧本记录: ${script.plot_breakdown_id?.slice(0, 8)}, 正确值: ${correctBreakdown.breakdownId?.slice(0, 8)}`);
-        }
-
         episodeMap.set(ep, {
           episode: ep,
           status: 'completed',
-          breakdownId: breakdownId,  // 使用正确的 breakdown_id
+          breakdownId: breakdownId,
           batchId: batchId,
           script: {
             id: script.id,
@@ -185,16 +159,15 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
             full_script: script.content?.full_script,
             scenes: script.content?.scenes || [],
             characters: script.content?.characters || [],
-            hook_type: script.content?.hook_type,
+            hook_type: script.content?.hook_type || '',
             qa_report: script.qa_report
           }
         });
       });
 
-      // 2. 从拆解结果中提取待生成的剧集
+      // 从拆解结果中提取待生成的剧集
       breakdowns.forEach((breakdown: any) => {
         if (breakdown.plot_points && Array.isArray(breakdown.plot_points)) {
-          // 提取所有唯一的 episode 编号
           const episodes = new Set<number>();
           breakdown.plot_points.forEach((pp: any) => {
             if (pp.episode && pp.episode > 0) {
@@ -202,7 +175,6 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
             }
           });
 
-          // 为每个 episode 创建条目（如果尚未生成剧本）
           episodes.forEach(ep => {
             if (!episodeMap.has(ep)) {
               episodeMap.set(ep, {
@@ -216,11 +188,55 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         }
       });
 
-      // 转换为数组并排序
       const episodeList = Array.from(episodeMap.values())
         .sort((a, b) => a.episode - b.episode);
 
       setEpisodes(episodeList);
+
+      // 更新进度信息
+      if (onProgressUpdate) {
+        const total = episodeList.length;
+        const completed = episodeList.filter(ep => ep.status === 'completed' && ep.script).length;
+        const inProgress = episodeList.filter(ep => ep.status === 'in_progress').length;
+        const pending = episodeList.filter(ep => ep.status === 'pending').length;
+        const failed = episodeList.filter(ep => ep.status === 'failed').length;
+
+        onProgressUpdate({
+          total,
+          completed,
+          in_progress: inProgress,
+          pending,
+          failed
+        });
+      }
+
+      // 检测并恢复正在运行的任务
+      try {
+        const tasksResponse = await scriptApi.getProjectTasks(projectId);
+        const runningTasks = tasksResponse.data?.filter((task: any) =>
+          task.status === 'running' || task.status === 'in_progress' || task.status === 'queued'
+        ) || [];
+
+        if (runningTasks.length > 0) {
+          const runningTask = runningTasks[0];
+          const episodeNumber = runningTask.episode_number;
+
+          console.log(`[ScriptTab] 检测到正在运行的任务: ${runningTask.id.slice(0, 8)}, 第 ${episodeNumber} 集`);
+
+          setCurrentTaskId(runningTask.id);
+          setIsRunning(true);
+          setEpisode(episodeNumber);
+          setConsoleVisible(true);
+
+          setEpisodes(prev => prev.map(ep =>
+            ep.episode === episodeNumber ? { ...ep, status: 'in_progress' } : ep
+          ));
+
+          addLog('info', `🔄 已恢复第 ${episodeNumber} 集的生成任务`);
+        }
+      } catch (err) {
+        console.warn('[ScriptTab] 查询正在运行的任务失败:', err);
+      }
 
       // 默认选中第一集
       if (!selectedEpisodeRef.current && episodeList.length > 0) {
@@ -235,7 +251,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     }
   }, [projectId, showErrorModal]);
 
-  // 单集生成 Hook - 使用状态驱动而非日志检测
+  // 单集生成 Hook
   const {
     taskId: currentTaskId,
     progress,
@@ -243,11 +259,13 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     currentStep,
     currentEpisode: generatingEpisode,
     startGeneration,
-    stopGeneration
+    stopGeneration,
+    setTaskId: setCurrentTaskId,
+    setIsRunning,
+    setEpisode
   } = useScriptPolling({
     onComplete: (episodeNumber) => {
       loadEpisodes();
-      // 更新列表状态
       setEpisodes(prev => prev.map(ep =>
         ep.episode === episodeNumber ? { ...ep, status: 'completed' } : ep
       ));
@@ -258,9 +276,8 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         message: error.message
       });
       setErrorModalOpen(true);
-      // 恢复列表状态
       setEpisodes(prev => prev.map(ep =>
-        ep.status === 'generating' ? { ...ep, status: 'pending' } : ep
+        ep.status === 'in_progress' ? { ...ep, status: 'pending' } : ep
       ));
     },
     onProgress: (prog, step) => {
@@ -268,7 +285,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     }
   });
 
-  // 批量生成 Hook - 逐个处理，完成后自动处理下一个
+  // 批量生成 Hook
   const {
     isProcessing: isBatchProcessing,
     currentIndex: batchCurrentIndex,
@@ -295,7 +312,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     }
   });
 
-  // Console Logger Hook (用于 WebSocket 日志显示和实时进度)
+  // Console Logger Hook
   const {
     logs,
     llmStats,
@@ -305,40 +322,32 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     clearLogs
   } = useConsoleLogger(currentTaskId, {
     enableWebSocket: true,
-    pollInterval: 999999,  // 设置超长间隔，实际上禁用轮询（轮询由 useScriptPolling 处理）
-    taskType: 'script'     // 指定任务类型为 script
+    pollInterval: 999999,
+    taskType: 'script'
   });
 
-  // 合并进度：优先使用 WebSocket 实时进度，回退到轮询进度
+  // 合并进度
   const effectiveProgress = wsProgress > 0 ? wsProgress : progress;
   const effectiveCurrentStep = wsCurrentStep || currentStep;
 
-  // 计算已完成数量
-  const completedCount = useMemo(() =>
-    episodes.filter(ep => ep.status === 'completed').length,
-    [episodes]
-  );
-
-  // 判断是否正在生成（单集或批量）
+  // 判断是否正在生成
   const isAnyGenerating = isGenerating || isBatchProcessing;
 
-  // 监听 projectId 变化，重置 ref
+  // 监听 projectId 变化
   React.useEffect(() => {
     selectedEpisodeRef.current = false;
   }, [projectId]);
 
   useEffect(() => {
-    // 在 projectId 存在时加载
     if (projectId) {
       loadEpisodes();
     }
   }, [projectId, loadEpisodes]);
 
-  // 加载单集剧本（从已加载的 episodes 列表中查找）
+  // 加载单集剧本
   const loadEpisodeScript = useCallback(async (episodeNumber: number) => {
     if (!projectId) return;
 
-    // 从已加载的 episodes 列表中查找
     const episode = episodes.find(ep => ep.episode === episodeNumber);
     if (episode?.script) {
       setCurrentScript(episode.script);
@@ -367,41 +376,50 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
   }, [hasUnsavedChanges]);
 
   // 导出剧本
-  const handleExport = async () => {
-    if (!currentScript?.id) return;
+  // 导出剧本
+  const handleExport = async (scope: 'current' | 'all', format: 'pdf' | 'docx') => {
     try {
       setExporting(true);
-      const response = await exportApi.exportSingle(currentScript.id, 'pdf');
-      const blob = new Blob([response.data], { type: 'application/pdf' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${currentScript.title || `第${currentScript.episode_number}集`}.pdf`;
-      link.click();
-      URL.revokeObjectURL(url);
+
+      if (scope === 'current') {
+        // 导出当前集
+        if (!currentScript?.id) {
+          message.error('当前剧本不存在');
+          return;
+        }
+
+        const response = await exportApi.exportSingle(currentScript.id, format);
+        const mimeType = format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        const blob = new Blob([response.data], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${currentScript.title || `第${currentScript.episode_number}集`}.${format}`;
+        link.click();
+        URL.revokeObjectURL(url);
+        message.success('导出成功');
+      } else {
+        // 导出所有剧集
+        if (!projectId) {
+          message.error('项目信息缺失');
+          return;
+        }
+
+        const response = await exportApi.exportBatch(projectId, format);
+        const mimeType = format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        const blob = new Blob([response.data], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `剧本合集.${format}`;
+        link.click();
+        URL.revokeObjectURL(url);
+        message.success('导出成功');
+      }
     } catch (err: any) {
       showErrorModal(err, '导出失败');
     } finally {
       setExporting(false);
-    }
-  };
-
-  // 审核通过
-  const handleApprove = async () => {
-    if (!currentScript?.id) return;
-    try {
-      setApproving(true);
-      await scriptApi.approveScript(currentScript.id);
-      setCurrentScript({ ...currentScript, status: 'approved' });
-      setEpisodes(prev => prev.map(ep =>
-        ep.episode === currentScript.episode_number
-          ? { ...ep, script: { ...ep.script!, status: 'approved' } }
-          : ep
-      ));
-    } catch (err: any) {
-      showErrorModal(err, '审核失败');
-    } finally {
-      setApproving(false);
     }
   };
 
@@ -424,16 +442,12 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         content: newContent
       });
 
-      // 计算总字数（根据内容结构选择计数方式）
       const structureWordCount = Object.values(editedStructure).reduce(
         (sum, s) => sum + (s?.word_count || 0), 0
       );
       const fullScriptWordCount = editedFullScript.length;
-
-      // 如果有完整剧本，使用完整剧本字数；否则使用结构化字数
       const totalWordCount = fullScriptWordCount > 0 ? fullScriptWordCount : structureWordCount;
 
-      // 更新本地状态
       setCurrentScript({
         ...currentScript,
         structure: editedStructure,
@@ -445,7 +459,6 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
       setEditMode(false);
       message.success('保存成功');
     } catch (err: any) {
-      // 回滚到原始状态
       if (originalState) {
         setEditedStructure(originalState.structure);
         setEditedFullScript(originalState.full_script);
@@ -479,6 +492,11 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
   const handleEnterEditMode = () => {
     if (!currentScript) return;
 
+    if (!currentScript.structure) {
+      message.error('剧本结构数据缺失，无法编辑');
+      return;
+    }
+
     const structureCopy: ScriptStructure = {
       opening: { ...currentScript.structure.opening },
       development: { ...currentScript.structure.development },
@@ -495,14 +513,46 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     setEditMode(true);
   };
 
-  // 生成单集剧本 - 使用 useScriptPolling Hook
+  // 处理四段式结构内容变更
+  const handleStructureChange = (key: keyof ScriptStructure, content: string) => {
+    if (!editedStructure) return;
+
+    const wordCount = content.length;
+    const updatedStructure = {
+      ...editedStructure,
+      [key]: {
+        content,
+        word_count: wordCount
+      }
+    };
+
+    setEditedStructure(updatedStructure);
+
+    // 同步更新完整剧本：将四段式内容拼接
+    const fullScript = [
+      `【起】开场冲突\n${updatedStructure.opening.content}\n`,
+      `【承】推进发展\n${updatedStructure.development.content}\n`,
+      `【转】反转高潮\n${updatedStructure.climax.content}\n`,
+      `【钩】悬念结尾\n${updatedStructure.hook.content}`
+    ].join('\n');
+
+    setEditedFullScript(fullScript);
+    setHasUnsavedChanges(true);
+  };
+
+  // 处理完整剧本内容变更
+  const handleFullScriptChange = (content: string) => {
+    setEditedFullScript(content);
+    setHasUnsavedChanges(true);
+  };
+
+  // 生成单集剧本
   const handleGenerateScript = async (episodeNumber: number) => {
     if (!projectId) {
       message.error('项目信息缺失');
       return;
     }
 
-    // 从 episodes 列表中获取该剧集的 breakdownId
     const episode = episodes.find(ep => ep.episode === episodeNumber);
     if (!episode?.breakdownId) {
       message.error('未找到拆解结果');
@@ -513,21 +563,18 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
       clearLogs();
       setConsoleVisible(true);
 
-      // 更新列表状态
       setEpisodes(prev => prev.map(ep =>
-        ep.episode === episodeNumber ? { ...ep, status: 'generating' } : ep
+        ep.episode === episodeNumber ? { ...ep, status: 'in_progress' } : ep
       ));
 
-      // 使用 Hook 启动生成
       await startGeneration(episode.breakdownId, episodeNumber, { novelType });
       addLog('info', `🎬 已启动第 ${episodeNumber} 集剧本生成任务`);
 
     } catch (err: any) {
-      const parsed = parseError(err.response?.data || err || {});
+      const parsed = parseErrorMessage(err);
       const errorMsg = parsed.message || '启动剧本生成失败';
       addLog('error', `❌ ${errorMsg}`);
 
-      // 恢复列表状态
       setEpisodes(prev => prev.map(ep =>
         ep.episode === episodeNumber ? { ...ep, status: 'pending' } : ep
       ));
@@ -543,14 +590,13 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     }
   };
 
-  // 批量生成剧本 - 使用 useScriptQueue Hook
+  // 批量生成剧本
   const handleBatchGenerate = async () => {
     if (!projectId || episodes.length === 0) {
       message.error('没有可生成的剧集');
       return;
     }
 
-    // 筛选待生成的剧集
     const pendingEpisodes = episodes.filter(ep => ep.status === 'pending');
     if (pendingEpisodes.length === 0) {
       message.info('所有剧集已生成');
@@ -560,7 +606,6 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     clearLogs();
     setConsoleVisible(true);
 
-    // 构建队列项
     const queueItems = pendingEpisodes
       .filter(ep => ep.breakdownId)
       .map(ep => ({
@@ -573,120 +618,84 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
       return;
     }
 
-    // 更新列表状态
     setEpisodes(prev => prev.map(ep =>
       pendingEpisodes.some(p => p.episode === ep.episode)
-        ? { ...ep, status: 'generating' }
+        ? { ...ep, status: 'in_progress' }
         : ep
     ));
 
     addLog('info', `🎬 开始批量生成 ${queueItems.length} 集剧本`);
     addLog('info', `待生成剧集: ${queueItems.map(q => q.episodeNumber).join(', ')}`);
 
-    // 使用队列 Hook 启动批量生成
     startQueue(queueItems);
   };
 
-  // 处理查看剧本历史
-  const handleViewScriptHistory = (scriptId: string, allScriptIds?: string[]) => {
-    if (allScriptIds && allScriptIds.length > 0) {
-      setHistoryScriptIds(allScriptIds);
-      setCurrentHistoryIndex(allScriptIds.indexOf(scriptId));
+  // 继续生成：从第一个待生成的剧集开始
+  const handleContinueGenerate = async () => {
+    if (!projectId || episodes.length === 0) {
+      message.error('没有可生成的剧集');
+      return;
+    }
+
+    const pendingEpisodes = episodes.filter(ep => ep.status === 'pending');
+    if (pendingEpisodes.length === 0) {
+      message.info('所有剧集已生成');
+      return;
+    }
+
+    // 找到第一个待生成的剧集
+    const firstPending = pendingEpisodes[0];
+    setSelectedEpisode(firstPending.episode);
+
+    // 开始生成
+    if (firstPending.breakdownId) {
+      await handleGenerateScript(firstPending.episode);
     } else {
-      // 如果没有传入 allScriptIds，直接使用传入的 scriptId
-      setHistoryScriptIds([scriptId]);
-      setCurrentHistoryIndex(0);
-    }
-    setHistoryModalOpen(false);
-    setViewScriptModalOpen(true);
-  };
-
-  // 处理切换到上一个历史版本
-  const handlePreviousVersion = () => {
-    if (currentHistoryIndex > 0) {
-      setCurrentHistoryIndex(currentHistoryIndex - 1);
+      message.error('该剧集没有关联的拆解数据');
     }
   };
 
-  // 处理切换到下一个历史版本
-  const handleNextVersion = () => {
-    if (currentHistoryIndex < historyScriptIds.length - 1) {
-      setCurrentHistoryIndex(currentHistoryIndex + 1);
+  // 重新生成：重新生成所有剧集（包括已完成的）
+  const handleRegenerateAll = async () => {
+    if (!projectId || episodes.length === 0) {
+      message.error('没有可生成的剧集');
+      return;
     }
+
+    clearLogs();
+    setConsoleVisible(true);
+
+    const queueItems = episodes
+      .filter(ep => ep.breakdownId)
+      .map(ep => ({
+        breakdownId: ep.breakdownId!,
+        episodeNumber: ep.episode
+      }));
+
+    if (queueItems.length === 0) {
+      message.error('没有有效的待生成剧集');
+      return;
+    }
+
+    setEpisodes(prev => prev.map(ep => ({ ...ep, status: 'in_progress' })));
+
+    addLog('info', `🔄 开始重新生成所有 ${queueItems.length} 集剧本`);
+    addLog('info', `待生成剧集: ${queueItems.map(q => q.episodeNumber).join(', ')}`);
+
+    startQueue(queueItems);
   };
 
-  // 渲染四段式结构
-  const renderStructure = () => {
-    if (!currentScript?.structure) return null;
+  // 暴露操作函数给父组件
+  useEffect(() => {
+    if (onActionsReady) {
+      onActionsReady({
+        handleGenerateAll: handleBatchGenerate,
+        handleContinueGenerate,
+        handleRegenerateAll
+      });
+    }
+  }, [onActionsReady, episodes, projectId]);
 
-    return (
-      <div className="space-y-4">
-        {(Object.keys(STRUCTURE_LABELS) as Array<keyof typeof STRUCTURE_LABELS>).map((key) => {
-          const label = STRUCTURE_LABELS[key];
-          const section = currentScript.structure[key];
-          const editedSection = editedStructure?.[key];
-          const wordCount = editMode ? (editedSection?.word_count || 0) : (section?.word_count || 0);
-
-          return (
-            <div key={key} className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
-              {/* 段落标题 */}
-              <div className={`px-4 py-3 bg-${label.color}-500/10 border-b border-slate-700/50 flex items-center justify-between`}>
-                <div className="flex items-center gap-3">
-                  <span className={`w-8 h-8 rounded-lg bg-${label.color}-500/20 text-${label.color}-400 flex items-center justify-center font-bold text-lg`}>
-                    {label.name}
-                  </span>
-                  <div>
-                    <div className={`text-sm font-bold text-${label.color}-400`}>{label.desc}</div>
-                    <div className="text-xs text-slate-500">目标: {label.target}</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={`text-sm font-mono ${wordCount > 0 ? 'text-slate-300' : 'text-slate-600'}`}>
-                    {wordCount} 字
-                  </span>
-                  {wordCount > 0 && (
-                    <CheckCircle2 size={16} className="text-green-500" />
-                  )}
-                </div>
-              </div>
-
-              {/* 段落内容 */}
-              <div className="p-4">
-                {editMode ? (
-                  // 编辑模式 - Textarea
-                  <textarea
-                    className="w-full h-32 bg-slate-900/50 border border-slate-700 rounded-lg p-3
-                               text-slate-300 text-sm leading-relaxed resize-none
-                               focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none font-mono"
-                    value={editedSection?.content || ''}
-                    onChange={(e) => {
-                      const newContent = e.target.value;
-                      const newWordCount = newContent.trim().length;
-                      setEditedStructure(prev => prev ? {
-                        ...prev,
-                        [key]: { content: newContent, word_count: newWordCount }
-                      } : null);
-                      setHasUnsavedChanges(true);
-                    }}
-                    placeholder={`请输入${label.desc}...`}
-                  />
-                ) : (
-                  // 预览模式 - 只读展示
-                  section?.content ? (
-                    <div className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap font-mono">
-                      {section.content}
-                    </div>
-                  ) : (
-                    <div className="text-sm text-slate-600 italic">暂无内容</div>
-                  )
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
 
   // 无项目信息时的提示
   if (!projectId) {
@@ -715,7 +724,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         iconType="warning"
       />
 
-      {/* 错误详情弹窗 - 与 Plot Tab 保持一致 */}
+      {/* 错误详情弹窗 */}
       <Modal
         open={errorModalOpen}
         onCancel={() => setErrorModalOpen(false)}
@@ -723,7 +732,6 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         centered
         width={400}
         closeIcon={<XCircle size={18} className="text-slate-500 hover:text-white transition-colors" />}
-        className="error-modal"
         styles={{
           mask: { backgroundColor: 'rgba(0, 0, 0, 0.4)', backdropFilter: 'blur(2px)' },
           content: {
@@ -732,508 +740,62 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
             borderRadius: '16px',
             padding: '0',
             boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
-          },
-          header: {
-            backgroundColor: '#0f172a',
-            borderBottom: 'none',
-            padding: '24px 24px 0',
-            borderRadius: '16px 16px 0 0'
-          },
-          body: {
-            backgroundColor: '#0f172a',
-            padding: '16px 24px 24px'
-          },
-          footer: {
-            borderTop: 'none',
-            padding: '0 24px 24px'
           }
         }}
       >
-        <div className="text-center">
-          {/* 错误图标 */}
+        <div className="text-center p-6">
           <div className="mx-auto w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mb-4">
             <XCircle size={32} className="text-red-400" />
           </div>
-
-          {/* 标题 */}
-          <h3 className="text-lg font-medium text-white mb-2">操作失败</h3>
-
-          {/* 错误信息 */}
-          <div className="bg-slate-800/50 rounded-lg p-3 mb-4">
-            <p className="text-sm text-slate-300 leading-relaxed">
-              {errorInfo?.message || '未知错误'}
-            </p>
-            {errorInfo?.code && errorInfo.code !== 'UNKNOWN_ERROR' && (
-              <p className="text-xs text-slate-500 mt-2 font-mono">
-                错误码: {errorInfo.code}
-              </p>
-            )}
-          </div>
-
-          {/* 建议 */}
+          <h3 className="text-lg font-semibold text-white mb-2">操作失败</h3>
+          <p className="text-sm text-slate-300 mb-4">{errorInfo?.message}</p>
           {errorInfo?.suggestion && (
-            <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 mb-4 text-left">
-              <div className="text-xs text-amber-400 font-medium mb-1">建议</div>
-              <div className="text-sm text-slate-300">{errorInfo.suggestion}</div>
+            <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 mb-4">
+              <div className="flex items-start gap-2">
+                <AlertCircle size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                <p className="text-xs text-amber-300 text-left">{errorInfo.suggestion}</p>
+              </div>
             </div>
           )}
-
-          {/* 操作按钮 */}
-          <div className="flex justify-center gap-3">
-            <button
-              onClick={() => setErrorModalOpen(false)}
-              className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium border border-slate-700 transition-colors"
-            >
-              关闭
-            </button>
-          </div>
+          <button
+            onClick={() => setErrorModalOpen(false)}
+            className="w-full px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm rounded-lg border border-slate-700 transition-colors"
+          >
+            关闭
+          </button>
         </div>
       </Modal>
 
-      {/* 质检报告弹窗 - 使用 PlotTab 的 QAReportModal 组件保持 UI 一致 */}
-      <AnimatePresence>
-        {qaReportModalOpen && currentScript?.qa_report && (
-          <QAReportModal
-            report={currentScript.qa_report as any}
-            onClose={() => setQAReportModalOpen(false)}
-          />
-        )}
-      </AnimatePresence>
+      {/* 左侧栏：剧集列表 */}
+      <EpisodeList
+        episodes={episodes}
+        selectedEpisode={selectedEpisode}
+        onSelectEpisode={setSelectedEpisode}
+        loading={loading}
+      />
 
-      {/* 剧本历史弹窗 */}
-      <AnimatePresence>
-        {historyModalOpen && selectedEpisode && (
-          <ScriptHistoryModal
-            projectId={projectId}
-            episodeNumber={selectedEpisode}
-            onClose={() => setHistoryModalOpen(false)}
-            onViewScript={handleViewScriptHistory}
-          />
-        )}
-      </AnimatePresence>
-
-      {/* 剧本版本查看弹窗 */}
-      <AnimatePresence>
-        {viewScriptModalOpen && historyScriptIds.length > 0 && (
-          <ScriptViewModal
-            scriptId={historyScriptIds[currentHistoryIndex]}
-            allScriptIds={historyScriptIds}
-            onClose={() => setViewScriptModalOpen(false)}
-            onPrevious={handlePreviousVersion}
-            onNext={handleNextVersion}
-          />
-        )}
-      </AnimatePresence>
-
-      {/* LEFT COLUMN: Episodes List */}
-      <div className="w-72 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-2xl">
-        {/* 生成控制区域 */}
-        <div className="p-4 border-b border-slate-800 space-y-3 bg-slate-900/50">
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-            剧本生成
-          </h3>
-
-          <button
-            onClick={() => selectedEpisode && handleGenerateScript(selectedEpisode)}
-            disabled={
-              !selectedEpisode ||
-              isAnyGenerating
-            }
-            className="w-full py-2.5 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 disabled:from-slate-700 disabled:to-slate-700 text-white rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-all"
-          >
-            {isGenerating && generatingEpisode === selectedEpisode ? (
-              <>
-                <Loader2 size={16} className="animate-spin" /> 生成中...
-              </>
-            ) : (
-              <>
-                <Play size={16} /> 生成当前集
-              </>
-            )}
-          </button>
-
-          <button
-            onClick={handleBatchGenerate}
-            disabled={
-              !projectId ||
-              isAnyGenerating ||
-              episodes.filter(ep => ep.status === 'pending').length === 0
-            }
-            className="w-full py-2 bg-slate-800 hover:bg-slate-700 disabled:bg-slate-800/50 text-slate-300 disabled:text-slate-600 border border-slate-700 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-          >
-            <Play size={14} /> 批量生成全部
-          </button>
-        </div>
-
-        {/* Episodes List */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar">
-          {/* 整体进度统计 */}
-          {episodes.length > 0 && (
-            <div className="px-4 py-3 bg-slate-800/50 border-b border-slate-700/50">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">
-                  已生成 <span className="text-cyan-400 font-bold">{completedCount}</span> / {episodes.length} 集
-                </span>
-                {isAnyGenerating && (
-                  <span className="text-cyan-400 animate-pulse">生成中...</span>
-                )}
-              </div>
-              {/* 整体进度条 */}
-              <div className="mt-2 w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-green-500 to-emerald-500 transition-all duration-300"
-                  style={{ width: `${episodes.length > 0 ? (completedCount / episodes.length) * 100 : 0}%` }}
-                />
-              </div>
-            </div>
-          )}
-
-          <div className="px-4 py-3 flex items-center justify-between text-xs text-slate-500 bg-slate-900/50 sticky top-0 z-10 backdrop-blur border-b border-slate-800">
-            <span>剧集列表 ({loading ? '-' : episodes.length})</span>
-            <button onClick={loadEpisodes} className="hover:text-white transition-colors">
-              <RefreshCw size={12} />
-            </button>
-          </div>
-
-          {/* 加载中显示骨架屏 */}
-          {loading ? (
-            <div className="p-4 space-y-3">
-              {[1, 2, 3, 4, 5, 6].map((i) => (
-                <div key={i} className="bg-slate-800/30 border border-slate-700/30 rounded-lg p-4 animate-pulse">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="h-3 w-16 bg-slate-700/50 rounded" />
-                    <div className="h-2 w-12 bg-slate-700/30 rounded" />
-                  </div>
-                  <div className="h-3 w-3/4 bg-slate-700/30 rounded" />
-                </div>
-              ))}
-            </div>
-          ) : episodes.length === 0 ? (
-            <div className="text-center py-8 text-slate-600 text-sm">
-              <p>暂无剧集</p>
-              <p className="text-xs mt-1">请先完成剧情拆解</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-800/30">
-              {episodes.map(ep => (
-                <div
-                  key={ep.episode}
-                  onClick={() => setSelectedEpisode(ep.episode)}
-                  className={`cursor-pointer transition-all ${selectedEpisode === ep.episode
-                    ? 'bg-cyan-500/10 border-l-2 border-l-cyan-500 shadow-inner'
-                    : 'hover:bg-slate-800 border-l-2 border-l-transparent'
-                    }`}
-                >
-                  <div className="px-4 py-4 flex items-center justify-between group">
-                    <div className="min-w-0 pr-2">
-                      <div className={`text-[10px] font-bold uppercase transition-colors ${selectedEpisode === ep.episode ? 'text-cyan-400' : 'text-slate-500'}`}>
-                        第 {ep.episode} 集
-                      </div>
-                      <div className={`text-xs truncate mt-1 ${selectedEpisode === ep.episode ? 'text-white font-medium' : 'text-slate-400'}`}>
-                        {ep.script?.title || `第 ${ep.episode} 集`}
-                      </div>
-                    </div>
-
-                    <div className="shrink-0 flex items-center gap-2">
-                      {ep.status === 'completed' && (
-                        <span className="px-1.5 py-0.5 bg-green-500/10 text-green-500 text-[9px] font-black rounded border border-green-500/20">
-                          OK
-                        </span>
-                      )}
-                      {ep.status === 'generating' && (
-                        <Loader2 size={12} className="animate-spin text-blue-400" />
-                      )}
-                      {ep.status === 'pending' && (
-                        <span className="px-1.5 py-0.5 bg-amber-500/10 text-amber-500 text-[9px] font-black rounded border border-amber-500/20">
-                          待生成
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* 生成中进度条 */}
-                  {ep.status === 'generating' && (
-                    <div className="px-4 pb-3">
-                      <div className="w-full bg-slate-800 h-1 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-300"
-                          style={{ width: `${(isGenerating && generatingEpisode === ep.episode) ? effectiveProgress : (isBatchProcessing && batchQueue[batchCurrentIndex]?.episodeNumber === ep.episode ? batchProgress : 0)}%` }}
-                        />
-                      </div>
-                      {((isGenerating && generatingEpisode === ep.episode) || (isBatchProcessing && batchQueue[batchCurrentIndex]?.episodeNumber === ep.episode)) && effectiveProgress > 0 && (
-                        <p className="text-[10px] text-slate-500 mt-1">{effectiveProgress}%</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* MIDDLE COLUMN: Script Content */}
+      {/* 右侧主内容区 */}
       <div className="flex-1 flex flex-col bg-slate-900/50 relative overflow-hidden">
-        {/* Toolbar */}
-        <div className="h-14 border-b border-slate-800 bg-slate-900 flex items-center justify-between px-6 shrink-0 z-10 shadow-sm">
-          <div className="flex items-center gap-3">
-            <h2 className="text-sm font-bold text-white tracking-widest uppercase truncate max-w-[300px]">
-              {currentScript ? (
-                <>
-                  第 {currentScript.episode_number} 集
-                  <span className="text-slate-500 mx-2">/</span>
-                  <span className="text-slate-400">{currentScript.title}</span>
-                </>
-              ) : selectedEpisode ? (
-                `第 ${selectedEpisode} 集`
-              ) : (
-                '选择剧集'
-              )}
-            </h2>
-          </div>
-          <div className="flex items-center gap-2">
-            {/* 视图切换：四段式/完整剧本 + 预览/编辑 */}
-            <div className="flex bg-slate-800 rounded-lg p-0.5">
-              <button
-                onClick={() => { setViewMode('structure'); setEditMode(false); }}
-                disabled={!currentScript}
-                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${viewMode === 'structure' && !editMode ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-400 hover:text-white disabled:opacity-50'}`}
-              >
-                四段式
-              </button>
-              <button
-                onClick={() => { setViewMode('full'); setEditMode(false); }}
-                disabled={!currentScript}
-                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${viewMode === 'full' && !editMode ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-400 hover:text-white disabled:opacity-50'}`}
-              >
-                完整剧本
-              </button>
-              <div className="w-px bg-slate-700 mx-1"></div>
-              <button
-                onClick={() => { setViewMode('structure'); setEditMode(true); }}
-                disabled={!currentScript}
-                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${editMode ? 'bg-green-500/20 text-green-400' : 'text-slate-400 hover:text-white disabled:opacity-50'}`}
-              >
-                <Edit3 size={12} className="inline mr-1"/> 编辑
-              </button>
-            </div>
-            <button
-              onClick={handleExport}
-              disabled={!currentScript?.id || exporting}
-              className="flex items-center gap-2 px-3 py-1.5 text-[11px] font-bold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition-all disabled:opacity-50"
-            >
-              {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} 导出
-            </button>
-            {/* 质检状态：合并查看报告和审核状态 */}
-            {currentScript?.qa_report && (
-              <button
-                onClick={() => setQAReportModalOpen(true)}
-                className={`flex items-center gap-2 px-3 py-1.5 text-[11px] font-bold rounded-lg transition-all ${
-                  currentScript.status === 'approved'
-                    ? 'text-green-400 bg-green-500/10 border border-green-500/30'
-                    : currentScript.qa_status?.toLowerCase() === 'pass'
-                    ? 'text-cyan-400 bg-cyan-500/10 border border-cyan-500/30'
-                    : 'text-amber-400 bg-amber-500/10 border border-amber-500/30'
-                }`}
-              >
-                <FileCheck size={14} />
-                {currentScript.status === 'approved' ? (
-                  <>已通过</>
-                ) : (
-                  <>质检 {currentScript.qa_score}分</>
-                )}
-              </button>
-            )}
-            {currentScript && !currentScript.qa_report && currentScript.status !== 'approved' && (
-              <button
-                onClick={handleApprove}
-                disabled={approving}
-                className="flex items-center gap-2 px-3 py-1.5 text-[11px] font-bold text-green-400 bg-green-500/10 border border-green-500/30 rounded-lg hover:bg-green-500/20 transition-all ml-2 shadow-sm disabled:opacity-50"
-              >
-                {approving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} 审核通过
-              </button>
-            )}
-          </div>
+        <div className="flex-1 overflow-y-auto p-0">
+          <ScriptDetail
+            currentScript={currentScript}
+            selectedEpisode={selectedEpisode}
+            onGenerateScript={handleGenerateScript}
+            isGenerating={isAnyGenerating}
+            progress={effectiveProgress}
+            onViewHistory={() => setHistoryModalOpen(true)}
+            onExport={() => setExportModalOpen(true)}
+            onEdit={handleEnterEditMode}
+            editMode={editMode}
+            onSaveEdit={handleSave}
+            onCancelEdit={handleCancelEdit}
+            hasUnsavedChanges={hasUnsavedChanges}
+            editedStructure={editedStructure}
+            editedFullScript={editedFullScript}
+            onStructureChange={handleStructureChange}
+            onFullScriptChange={handleFullScriptChange}
+          />
         </div>
-
-        {/* Content Area */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-8">
-          {currentScript ? (
-            viewMode === 'structure' ? (
-              <div className="max-w-3xl mx-auto">
-                {/* 剧本标题栏 */}
-                <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h2 className="text-xl font-bold text-white">{currentScript.title}</h2>
-                    <p className="text-xs text-slate-500 mt-1">第 {selectedEpisode} 集</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        setHistoryScriptIds([]);
-                        setHistoryModalOpen(true);
-                      }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors border border-slate-700"
-                    >
-                      <History size={14} />
-                      历史
-                    </button>
-                  </div>
-                </div>
-
-                {/* 剧本元信息 */}
-                <div className="mb-6 p-4 bg-slate-800/30 rounded-xl border border-slate-700/50">
-                  <div className="grid grid-cols-4 gap-4 text-center">
-                    <div>
-                      <div className="text-2xl font-bold text-white">{currentScript.word_count}</div>
-                      <div className="text-xs text-slate-500">总字数</div>
-                    </div>
-                    <div>
-                      <div className="text-2xl font-bold text-cyan-400">{currentScript.scenes?.length || 0}</div>
-                      <div className="text-xs text-slate-500">场景数</div>
-                    </div>
-                    <div>
-                      <div className="text-2xl font-bold text-purple-400">{currentScript.characters?.length || 0}</div>
-                      <div className="text-xs text-slate-500">角色数</div>
-                    </div>
-                    <div>
-                      <div className="text-lg font-bold text-amber-400 truncate">{currentScript.hook_type || '-'}</div>
-                      <div className="text-xs text-slate-500">悬念类型</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 四段式结构 */}
-                {renderStructure()}
-              </div>
-            ) : (
-              /* 完整剧本视图 */
-              <div className="max-w-3xl mx-auto">
-                {editMode ? (
-                  // 编辑模式 - 可编辑的 Textarea
-                  <textarea
-                    className="w-full min-h-[calc(100vh-300px)] bg-slate-900/50 border border-slate-700 rounded-lg p-4
-                               text-slate-300 font-mono text-sm leading-relaxed resize-none
-                               focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none whitespace-pre-wrap"
-                    value={editedFullScript}
-                    onChange={(e) => {
-                      setEditedFullScript(e.target.value);
-                      setHasUnsavedChanges(true);
-                    }}
-                    placeholder="请输入完整剧本内容..."
-                  />
-                ) : (
-                  // 预览模式 - 只读展示
-                  <pre className="whitespace-pre-wrap text-slate-300 font-mono text-sm leading-relaxed bg-slate-900/30 p-4 rounded-lg border border-slate-800/50">
-                    {currentScript.full_script}
-                  </pre>
-                )}
-              </div>
-            )
-          ) : (
-            /* 未选择剧集或待生成/生成中 */
-            !selectedEpisode ? (
-              <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-4 opacity-30">
-                <FileEdit size={64} />
-                <p className="text-sm tracking-widest uppercase">请选择一个剧集</p>
-              </div>
-            ) : (isGenerating && generatingEpisode === selectedEpisode) ? (
-              /* 生成中状态 - 显示进度条和详细信息 */
-              <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
-                {/* 加载动画 */}
-                <div className="w-20 h-20 rounded-2xl bg-cyan-500/10 flex items-center justify-center border border-cyan-500/20 animate-pulse">
-                  <Loader2 size={32} className="text-cyan-400 animate-spin" />
-                </div>
-
-                {/* 状态文本 */}
-                <p className="text-sm font-bold text-cyan-400">AI 正在生成第 {generatingEpisode} 集剧本...</p>
-
-                {/* 当前步骤 */}
-                {currentStep && (
-                  <p className="text-xs text-slate-500">{currentStep}</p>
-                )}
-
-                {/* 进度条 */}
-                <div className="w-64">
-                  <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-300"
-                      style={{ width: `${progress}%` }}
-                    />
-                  </div>
-                  <p className="text-xs text-slate-600 text-center mt-2">{progress}%</p>
-                </div>
-
-                {/* 停止按钮 */}
-                <button
-                  onClick={async () => {
-                    addLog('warning', '正在停止生成任务...');
-                    await stopGeneration();
-                    // 恢复列表状态
-                    setEpisodes(prev => prev.map(ep =>
-                      ep.status === 'generating' ? { ...ep, status: 'pending' } : ep
-                    ));
-                  }}
-                  className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs rounded-lg border border-red-500/30 transition-colors flex items-center gap-2"
-                >
-                  <StopCircle size={14} />
-                  停止生成
-                </button>
-              </div>
-            ) : (
-              /* 待生成状态 */
-              <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-4">
-                <FileEdit size={64} className="opacity-30" />
-                <p className="text-lg font-medium">第 {selectedEpisode} 集剧本待生成</p>
-                <button
-                  onClick={() => handleGenerateScript(selectedEpisode)}
-                  disabled={isAnyGenerating}
-                  className="mt-4 px-6 py-3 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg font-bold flex items-center gap-2 transition-all hover:scale-105 disabled:opacity-50"
-                >
-                  <Play size={18} /> 开始生成
-                </button>
-              </div>
-            )
-          )}
-        </div>
-
-        {/* Editor Footer */}
-        {currentScript && (
-          <div className="h-8 bg-slate-900 border-t border-slate-800 flex items-center justify-between px-4 text-[10px] text-slate-500 shrink-0 font-mono">
-            <div className="flex items-center gap-4">
-              <span>STAT: {currentScript.word_count} WORDS</span>
-              <span>ENCODING: UTF-8</span>
-            </div>
-            <span className="flex items-center gap-1.5 text-green-500"><Save size={10} /> SAVED</span>
-          </div>
-        )}
-
-        {/* 编辑模式底部操作栏 */}
-        {editMode && (
-          <div className="h-14 bg-slate-900 border-t border-slate-800 flex items-center justify-between px-6 shrink-0">
-            <div className="flex items-center gap-2 text-amber-400 text-sm">
-              <AlertCircle size={14} />
-              <span>编辑模式 - {hasUnsavedChanges ? '有未保存的更改' : '无未保存的更改'}</span>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleCancelEdit}
-                className="px-4 py-2 text-sm text-slate-400 hover:text-white bg-slate-800 border border-slate-700 rounded-lg hover:bg-slate-700 transition-colors"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={isSaving}
-                className="px-4 py-2 text-sm font-bold text-white bg-gradient-to-r from-cyan-600 to-blue-600 rounded-lg flex items-center gap-2 disabled:opacity-50 hover:from-cyan-500 hover:to-blue-500 transition-all"
-              >
-                {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                保存更改
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Console Logger */}
@@ -1243,10 +805,84 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         visible={consoleVisible}
         isProcessing={isAnyGenerating}
         progress={effectiveProgress}
-        currentStep={effectiveCurrentStep || batchCurrentStep || (isGenerating ? `生成第 ${generatingEpisode} 集剧本` : '')}
-        episodeNumber={generatingEpisode || batchQueue[batchCurrentIndex]?.episodeNumber || 0}
+        currentStep={effectiveCurrentStep}
         onClose={() => setConsoleVisible(false)}
       />
+
+      {/* 质检报告弹窗 */}
+      <AnimatePresence>
+        {qaReportModalOpen && currentScript?.qa_report && (
+          <QAReportModal
+            report={{
+              status: currentScript.qa_report.status,
+              score: currentScript.qa_report.score,
+              dimensions: Object.entries(currentScript.qa_report.dimensions).map(([key, value]) => ({
+                name: key,
+                pass: value.score >= 60,
+                score: value.score,
+                issues: value.issues
+              })),
+              issues: currentScript.qa_report.fix_instructions?.map(fi => fi.issue) || [],
+              suggestions: currentScript.qa_report.fix_instructions?.map(fi => fi.suggestion) || [],
+              fix_instructions: currentScript.qa_report.fix_instructions
+            }}
+            onClose={() => setQAReportModalOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* 剧本历史弹窗 */}
+      {historyModalOpen && selectedEpisode && (
+        <ScriptHistoryModal
+          episodeNumber={selectedEpisode}
+          projectId={projectId}
+          onClose={() => setHistoryModalOpen(false)}
+          onViewScript={(scriptId, allIds) => {
+            setHistoryScriptIds(allIds || [scriptId]);
+            setCurrentHistoryIndex(allIds?.indexOf(scriptId) || 0);
+            setHistoryModalOpen(false);
+            setViewScriptModalOpen(true);
+          }}
+          onSetCurrent={async (scriptId) => {
+            try {
+              await scriptApi.setCurrentScript(projectId, selectedEpisode!, scriptId);
+              message.success('已设置为当前版本');
+              // 重新加载剧集列表以更新当前剧本
+              await loadEpisodes();
+              // 重新加载当前剧本详情
+              if (selectedEpisode) {
+                const episode = episodes.find(ep => ep.episode === selectedEpisode);
+                if (episode?.script) {
+                  setCurrentScript(episode.script);
+                }
+              }
+            } catch (err: any) {
+              showErrorModal(err, '设置当前版本失败');
+            }
+          }}
+        />
+      )}
+
+      {/* 剧本查看弹窗 */}
+      {viewScriptModalOpen && historyScriptIds.length > 0 && (
+        <ScriptViewModal
+          scriptId={historyScriptIds[currentHistoryIndex]}
+          allScriptIds={historyScriptIds}
+          onClose={() => setViewScriptModalOpen(false)}
+          onPrevious={currentHistoryIndex > 0 ? () => setCurrentHistoryIndex(currentHistoryIndex - 1) : undefined}
+          onNext={currentHistoryIndex < historyScriptIds.length - 1 ? () => setCurrentHistoryIndex(currentHistoryIndex + 1) : undefined}
+        />
+      )}
+
+      {/* 导出弹窗 */}
+      {exportModalOpen && currentScript && (
+        <ExportModal
+          onClose={() => setExportModalOpen(false)}
+          onExport={handleExport}
+          currentEpisode={currentScript.episode_number}
+          totalEpisodes={episodes.length}
+        />
+      )}
     </div>
   );
 };

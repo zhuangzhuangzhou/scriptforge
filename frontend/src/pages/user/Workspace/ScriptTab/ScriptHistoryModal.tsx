@@ -11,6 +11,7 @@ interface ScriptHistoryModalProps {
   episodeNumber: number;
   onClose: () => void;
   onViewScript?: (scriptId: string, allScriptIds?: string[]) => void;
+  onSetCurrent?: (scriptId: string) => void;
 }
 
 interface ScriptHistoryItem {
@@ -29,11 +30,13 @@ const ScriptHistoryModal: React.FC<ScriptHistoryModalProps> = ({
   projectId,
   episodeNumber,
   onClose,
-  onViewScript
+  onViewScript,
+  onSetCurrent
 }) => {
   const [loading, setLoading] = useState(true);
   const [history, setHistory] = useState<ScriptHistoryItem[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [settingCurrent, setSettingCurrent] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchHistory = async () => {
@@ -70,6 +73,25 @@ const ScriptHistoryModal: React.FC<ScriptHistoryModalProps> = ({
   const handleView = (scriptId: string) => {
     if (onViewScript) {
       onViewScript(scriptId, history.map(h => h.script_id));
+    }
+  };
+
+  const handleSetCurrent = async (scriptId: string) => {
+    if (!onSetCurrent) return;
+
+    try {
+      setSettingCurrent(scriptId);
+      await onSetCurrent(scriptId);
+
+      // 更新本地状态
+      setHistory(prev => prev.map(item => ({
+        ...item,
+        is_current: item.script_id === scriptId
+      })));
+    } catch (err) {
+      console.error('设置当前版本失败:', err);
+    } finally {
+      setSettingCurrent(null);
     }
   };
 
@@ -123,7 +145,7 @@ const ScriptHistoryModal: React.FC<ScriptHistoryModalProps> = ({
                   <th className="px-4 py-3 text-center text-[10px] font-semibold text-slate-400 uppercase tracking-wider">字数</th>
                   <th className="px-4 py-3 text-center text-[10px] font-semibold text-slate-400 uppercase tracking-wider">场景</th>
                   <th className="px-4 py-3 text-center text-[10px] font-semibold text-slate-400 uppercase tracking-wider">质检</th>
-                  <th className="px-4 py-3 text-center text-[10px] font-semibold text-slate-400 uppercase tracking-wider w-20">操作</th>
+                  <th className="px-4 py-3 text-center text-[10px] font-semibold text-slate-400 uppercase tracking-wider w-36">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -162,13 +184,29 @@ const ScriptHistoryModal: React.FC<ScriptHistoryModalProps> = ({
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <button
-                        onClick={() => handleView(item.script_id)}
-                        className="flex items-center gap-1 px-2 py-1 text-[10px] text-cyan-400 hover:bg-cyan-500/10 rounded transition-colors"
-                      >
-                        <Eye className="w-3 h-3" />
-                        查看
-                      </button>
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          onClick={() => handleView(item.script_id)}
+                          className="flex items-center gap-1 px-2 py-1 text-[10px] text-cyan-400 hover:bg-cyan-500/10 rounded transition-colors"
+                        >
+                          <Eye className="w-3 h-3" />
+                          查看
+                        </button>
+                        {!item.is_current && (
+                          <button
+                            onClick={() => handleSetCurrent(item.script_id)}
+                            disabled={settingCurrent === item.script_id}
+                            className="flex items-center gap-1 px-2 py-1 text-[10px] text-green-400 hover:bg-green-500/10 rounded transition-colors disabled:opacity-50"
+                          >
+                            {settingCurrent === item.script_id ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <CheckCircle className="w-3 h-3" />
+                            )}
+                            设为当前
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
