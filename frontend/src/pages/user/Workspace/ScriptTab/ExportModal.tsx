@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { X, Download, FileText, File, Loader2 } from 'lucide-react';
+import { X, Download, FileText, File, Files, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 interface ExportModalProps {
   onClose: () => void;
-  onExport: (scope: 'current' | 'all', format: 'pdf' | 'docx') => Promise<void>;
+  onExport: (scope: 'current' | 'all' | 'merged', format: 'pdf' | 'docx') => Promise<void>;
   currentEpisode: number;
   totalEpisodes: number;
 }
@@ -15,8 +15,8 @@ const ExportModal: React.FC<ExportModalProps> = ({
   currentEpisode,
   totalEpisodes
 }) => {
-  const [scope, setScope] = useState<'current' | 'all'>('current');
-  const [format, setFormat] = useState<'pdf' | 'docx'>('pdf');
+  const [scope, setScope] = useState<'current' | 'all' | 'merged'>('current');
+  const [format, setFormat] = useState<'pdf' | 'docx'>('docx');
   const [exporting, setExporting] = useState(false);
 
   const handleExport = async () => {
@@ -60,7 +60,7 @@ const ExportModal: React.FC<ExportModalProps> = ({
             <label className="block text-sm font-medium text-slate-300 mb-3">
               导出范围
             </label>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <button
                 onClick={() => setScope('current')}
                 className={`p-4 rounded-lg border-2 transition-all ${
@@ -87,8 +87,26 @@ const ExportModal: React.FC<ExportModalProps> = ({
                 <File className={`w-6 h-6 mx-auto mb-2 ${
                   scope === 'all' ? 'text-cyan-400' : 'text-slate-400'
                 }`} />
-                <div className="text-sm font-medium text-slate-300">所有剧集</div>
-                <div className="text-xs text-slate-500 mt-1">共 {totalEpisodes} 集</div>
+                <div className="text-sm font-medium text-slate-300">分集</div>
+                <div className="text-xs text-slate-500 mt-1">{totalEpisodes} 个文件</div>
+              </button>
+
+              <button
+                onClick={() => {
+                  setScope('merged');
+                  setFormat('docx');
+                }}
+                className={`p-4 rounded-lg border-2 transition-all ${
+                  scope === 'merged'
+                    ? 'border-cyan-500 bg-cyan-500/10'
+                    : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'
+                }`}
+              >
+                <Files className={`w-6 h-6 mx-auto mb-2 ${
+                  scope === 'merged' ? 'text-cyan-400' : 'text-slate-400'
+                }`} />
+                <div className="text-sm font-medium text-slate-300">合并</div>
+                <div className="text-xs text-slate-500 mt-1">1 个文件</div>
               </button>
             </div>
           </div>
@@ -101,11 +119,12 @@ const ExportModal: React.FC<ExportModalProps> = ({
             <div className="grid grid-cols-2 gap-3">
               <button
                 onClick={() => setFormat('pdf')}
+                disabled={scope === 'merged'}
                 className={`p-4 rounded-lg border-2 transition-all ${
                   format === 'pdf'
                     ? 'border-purple-500 bg-purple-500/10'
                     : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'
-                }`}
+                } ${scope === 'merged' ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 <div className="text-2xl mb-2">📄</div>
                 <div className="text-sm font-medium text-slate-300">PDF</div>
@@ -131,7 +150,14 @@ const ExportModal: React.FC<ExportModalProps> = ({
           {scope === 'all' && (
             <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
               <p className="text-xs text-amber-300">
-                导出所有剧集可能需要较长时间，请耐心等待
+                导出所有剧集将生成 ZIP 压缩包，可能需要较长时间
+              </p>
+            </div>
+          )}
+          {scope === 'merged' && (
+            <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-lg p-3">
+              <p className="text-xs text-cyan-300">
+                合并导出将所有剧集整合为一份 Word 文档，每集之间自动分页
               </p>
             </div>
           )}

@@ -1556,6 +1556,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 return (
                     <ScriptTab
                         projectId={projectId!}
+                        projectName={formData.name}
                         batchId={selectedBatch?.id}
                         breakdownId={selectedBatch?.id}
                         novelType={formData.novel_type}

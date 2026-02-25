@@ -117,7 +117,7 @@ interface FormattedContentProps {
 
 const FormattedContent: React.FC<FormattedContentProps> = ({ message }) => {
   // 预处理文本
-  let text = normalizeTaskName(message).replace(/^◆\s*/, '');
+  const text = normalizeTaskName(message).replace(/^◆\s*/, '');
 
   // 检测 JSON 内容
   const { isJson, formatted } = tryFormatJson(text);
@@ -266,7 +266,7 @@ const StatusInfo: React.FC<StatusInfoProps> = ({
   totalRounds,
 }) => {
   const taskName = currentStep
-    .replace(/[🚀✅❌⚠️◈]/g, '')
+    .replace(/\u{1F680}|\u{2705}|\u{274C}|\u{26A0}\u{FE0F}|\u{25C8}/gu, '')
     .trim();
 
   const roundTone = useMemo(() => {

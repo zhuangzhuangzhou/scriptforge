@@ -662,6 +662,21 @@ export const aiResourceApi = {
 
 // 单集剧本 API
 export const scriptApi = {
+  // 获取剧集摘要（Script Tab 专用聚合接口）
+  getEpisodesSummary: async (projectId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return {
+        data: {
+          episodes: [],
+          running_task: null,
+          progress: { total: 0, completed: 0, in_progress: 0, pending: 0, failed: 0 }
+        }
+      };
+    }
+    return api.get('/scripts/episodes/summary', { params: { project_id: projectId } });
+  },
+
   // 按项目获取所有剧本列表
   getProjectScripts: async (projectId: string) => {
     if (USE_MOCK) {
@@ -802,12 +817,18 @@ export const scriptApi = {
 export const exportApi = {
   // 导出单集
   exportSingle: async (scriptId: string, format: 'pdf' | 'docx' = 'pdf') => {
-    return api.post('/export/single', { script_id: scriptId, format }, { responseType: 'blob' });
+    return api.post('/export/single', { script_id: scriptId, format }, {
+      responseType: 'blob',
+      timeout: 60000  // 单集导出 60 秒超时
+    });
   },
 
-  // 批量导出
-  exportBatch: async (projectId: string, format: 'pdf' | 'docx' = 'pdf') => {
-    return api.post('/export/batch', { project_id: projectId, format }, { responseType: 'blob' });
+  // 批量导出（超时时间更长）
+  exportBatch: async (projectId: string, format: 'pdf' | 'docx' = 'pdf', merged: boolean = false) => {
+    return api.post('/export/batch', { project_id: projectId, format, merged }, {
+      responseType: 'blob',
+      timeout: 300000  // 批量导出 5 分钟超时
+    });
   }
 };
 
