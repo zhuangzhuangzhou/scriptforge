@@ -1,0 +1,3 @@
+{"path": ".trellis/spec/frontend/api-integration.md", "reason": "API集成最佳实践-避免重复调用和正确使用缓存"}
+{"path": ".trellis/spec/frontend/react-hooks-patterns.md", "reason": "React Hooks最佳实践-避免闭包陷阱"}
+{"path": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层数据流追踪方法"}

@@ -1738,3 +1738,150 @@ CREDITS_RETRY=50         # 重试费用
 
 ---
 
+
+## [20260225-221352] 文件解析增强和配置优化
+
+**时间**: 2026-02-25 22:13:52
+
+**提交**:
+- `1b6afcf` - feat: 文件解析增强和配置优化
+
+
+## 核心改进
+
+### 1. 文件编码兼容性增强
+
+**问题**: 
+- 用户上传的 DOCX 文件拆分时报错：`invalid byte sequence for encoding "UTF8": 0x00`
+- 系统直接将二进制内容当作文本处理，导致 NULL 字节写入数据库
+
+**解决方案**:
+```python
+# 根据文件类型选择解析方式
+if file_type == 'docx':
+    # 使用 python-docx 解析
+    doc = Document(tmp_path)
+    content = '\n'.join([p.text for p in doc.paragraphs if p.text.strip()])
+elif file_type == 'pdf':
+    # 使用 PyPDF2 解析
+    reader = PdfReader(tmp_path)
+    content = '\n'.join([page.extract_text() for page in reader.pages])
+else:
+    # TXT: 多编码尝试
+    for encoding in ['utf-8', 'gbk', 'gb2312', 'utf-8-sig']:
+        try:
+            content = raw_content.decode(encoding)
+            break
+        except (UnicodeDecodeError, LookupError):
+            continue
+```
+
+**向后兼容**:
+- 旧项目的 `original_file_type` 字段为 NULL
+- 从文件名提取扩展名作为兜底：`'novel.docx' → 'docx'`
+
+### 2. 英文章节拆分支持
+
+**新增功能**:
+- 支持 "Chapter X" 格式的英文章节标题
+- 正则表达式：`r"(?i)Chapter\s+\d+"` (大小写不敏感)
+
+**前后端同步**:
+```python
+# 后端常量
+ENGLISH_CHAPTER_PATTERN = r"(?i)Chapter\s+\d+"
+
+# API 规范化
+if rule == "english":
+    return {"type": "regex", "pattern": ENGLISH_CHAPTER_PATTERN}
+
+# 工具类处理
+if split_rule == "english":
+    return {"type": "regex", "pattern": ENGLISH_CHAPTER_PATTERN}
+```
+
+```tsx
+// 前端配置选项
+<option value="auto">智能识别 (第X章)</option>
+<option value="english">英文章节 (Chapter X)</option>
+<option value="blank_line">空行拆分</option>
+```
+
+### 3. 批次大小默认值调整
+
+**修改**: 5 → 6
+
+**影响范围** (8 处):
+- 后端: `project.py`, `projects.py`, `batch_divider.py`, `batch_tasks.py`
+- 前端: `Workspace/index.tsx` (2处), `ConfigTab/index.tsx`
+- Mock: `mockData.ts`
+
+**数据库更新**:
+- 批量更新 4 个旧项目的 batch_size: 5 → 6
+- 所有项目现在统一使用默认值 6
+
+### 4. UI 优化
+
+**Dashboard 项目卡片标题显示**:
+- 移除固定宽度限制 `max-w-[150px]`
+- 使用 Flexbox 弹性布局 `flex-min-w-0`
+- 标题自适应占据可用空间
+
+## 技术细节
+
+### 文件解析流程
+
+```
+用户上传文件 → MinIO 存储 (二进制) →
+API 读取 raw_content →
+识别 file_type (优先字段 → 文件名扩展名 → 默认 txt) →
+根据类型解析:
+  - DOCX: 临时文件 → python-docx → 纯文本
+  - PDF: 临时文件 → PyPDF2 → 纯文本
+  - TXT: 多编码尝试 → 纯文本
+→ ChapterSplitter 拆分 →
+数据库存储 (chapters 表)
+```
+
+### 跨层一致性验证
+
+**Dimension A: 跨层数据流** ✅
+- 文件解析: 存储层 → API 层 → 工具层 → 数据库层
+- 英文规则: 前端选项 → API 规范化 → 工具类处理
+- batch_size: 前端默认 → API Schema → 数据库模型 → 任务队列
+
+**Dimension B: 代码复用** ✅
+- 章节拆分规则常量在两处定义，但值完全一致
+- batch_size 默认值全面统一
+
+**Dimension D: 同层一致性** ✅
+- 文件类型处理与 `file_parser.py` 一致
+- 前后端章节拆分规则选项值完全对应
+
+## 修改文件
+
+**后端** (7 个文件):
+- `app/api/v1/projects.py` - 文件解析逻辑、英文规则、batch_size
+- `app/utils/chapter_splitter.py` - 英文章节正则常量
+- `app/models/project.py` - batch_size 默认值
+- `app/utils/batch_divider.py` - batch_size 默认值
+- `app/tasks/batch_tasks.py` - batch_size 兜底值
+
+**前端** (4 个文件):
+- `pages/user/Dashboard.tsx` - 项目卡片标题布局
+- `pages/user/Workspace/ConfigTab/index.tsx` - 英文规则选项、batch_size
+- `pages/user/Workspace/index.tsx` - batch_size 默认值
+- `services/mockData.ts` - batch_size 测试数据
+
+## 测试验证
+
+- ✅ DOCX 文件正确解析为纯文本
+- ✅ 英文章节 "Chapter 1" 正确识别
+- ✅ 中文章节 "第一章" 正常工作
+- ✅ 空行分隔模式正常工作
+- ✅ 旧项目兼容（从文件名提取类型）
+- ✅ 新项目默认 batch_size = 6
+- ✅ Dashboard 标题自适应显示
+
+---
+

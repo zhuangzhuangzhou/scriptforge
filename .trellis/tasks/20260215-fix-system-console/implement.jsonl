@@ -1,0 +1,20 @@
+{"path": "frontend/src/components/ConsoleLogger.tsx", "reason": "主要修改文件：标题格式、按钮文字、日志颜色"}
+{"path": "frontend/src/hooks/useBreakdownLogs.ts", "reason": "任务完成后状态处理"}
+{"path": "frontend/src/hooks/useConsoleLogger.ts", "reason": "日志管理 Hook"}
+{"path": "backend/app/core/status.py", "reason": "新增任务/批次状态常量与映射规则"}
+{"path": "backend/app/core/progress.py", "reason": "任务状态写入统一归一化与转换规则"}
+{"path": "backend/app/api/v1/breakdown.py", "reason": "任务/批次状态查询与返回统一常量"}
+{"path": "backend/app/api/v1/websocket.py", "reason": "WS 输出状态规范化，使用常量"}
+{"path": "backend/app/tasks/breakdown_tasks.py", "reason": "批次状态与任务状态映射统一"}
+{"path": "backend/app/tasks/script_tasks.py", "reason": "剧本任务状态常量化"}
+{"path": "backend/app/api/v1/scripts.py", "reason": "脚本任务状态常量化"}
+{"path": "backend/app/api/v1/admin_core.py", "reason": "任务统计状态常量化"}
+{"path": "backend/app/api/v1/projects.py", "reason": "批次状态判断常量化"}
+{"path": "frontend/src/constants/status.ts", "reason": "前端任务/批次状态常量"}
+{"path": "frontend/src/pages/user/Workspace/index.tsx", "reason": "前端批次/任务状态判断统一常量"}
+{"path": "frontend/src/pages/user/Workspace/PlotTab/BatchCard.tsx", "reason": "批次卡片状态判断统一常量"}
+{"path": "frontend/src/pages/user/Workspace/PlotTab/BreakdownDetail.tsx", "reason": "批次详情状态判断统一常量"}
+{"path": "frontend/src/pages/user/PlotBreakdown.tsx", "reason": "老页面状态判断统一常量"}
+{"path": "frontend/src/hooks/useBreakdownWebSocket.ts", "reason": "WS 状态判断常量化"}
+{"path": "frontend/src/pages/user/Workspace/PlotTab/hooks/useBreakdownPolling.ts", "reason": "轮询状态判断常量化"}
+{"path": "frontend/src/pages/user/Workspace/PlotTab/hooks/useBreakdownQueue.ts", "reason": "队列状态判断常量化"}

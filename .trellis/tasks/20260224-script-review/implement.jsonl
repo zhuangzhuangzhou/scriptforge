@@ -1,0 +1,7 @@
+{"path": "frontend/src/pages/user/ScriptGeneration.tsx", "reason": "前端剧本生成页面组件"}
+{"path": "frontend/src/pages/user/Workspace/ScriptTab/index.tsx", "reason": "工作区剧本标签页组件"}
+{"path": "frontend/src/types.ts", "reason": "前端类型定义"}
+{"path": "frontend/src/services/api.ts", "reason": "前端 API 服务"}
+{"path": "backend/app/api/v1/scripts.py", "reason": "后端剧本 API 端点"}
+{"path": "backend/app/models/script.py", "reason": "后端剧本数据模型"}
+{"path": "backend/app/tasks/script_tasks.py", "reason": "后端剧本生成任务"}
