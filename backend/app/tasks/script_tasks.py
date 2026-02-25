@@ -266,6 +266,10 @@ def _execute_episode_script_sync(
         script_result = results.get("script_result")
         qa_result = results.get("qa_result", {})
 
+        # 调试日志：记录 Agent 返回的完整结果
+        logger.info(f"Agent 返回结果 keys: {list(results.keys())}")
+        logger.info(f"script_result 类型: {type(script_result)}, 内容预览: {str(script_result)[:500] if script_result else 'None'}")
+
         if not script_result:
             raise AITaskException(code="AGENT_EXECUTION_ERROR", message="Agent 未返回剧本结果")
 
@@ -350,58 +354,40 @@ def _execute_episode_script_sync(
     qa_score = qa_result.get("qa_score") if isinstance(qa_result, dict) else None
     qa_report = qa_result if isinstance(qa_result, dict) else None
 
-    # 检查是否已存在该集剧本
-    existing_script = db.query(Script).filter(
-        Script.plot_breakdown_id == breakdown_id,
-        Script.episode_number == episode_number
-    ).first()
+    # 将该集所有旧版本的 is_current 设为 False（保留历史版本）
+    db.query(Script).filter(
+        Script.project_id == project_id,
+        Script.episode_number == episode_number,
+        Script.is_current == True
+    ).update({"is_current": False})
 
-    if existing_script:
-        # 更新现有剧本
-        existing_script.title = title
-        existing_script.content = {
+    # 创建新版本的剧本
+    new_script = Script(
+        batch_id=breakdown.batch_id,
+        project_id=project_id,
+        plot_breakdown_id=breakdown_id,
+        episode_number=episode_number,
+        title=title,
+        content={
             "structure": structure,
             "full_script": full_script,
             "scenes": scenes,
             "characters": characters,
             "hook_type": hook_type
-        }
-        existing_script.word_count = word_count
-        existing_script.scene_count = scene_count
-        existing_script.status = "draft"
-        existing_script.qa_status = qa_status
-        existing_script.qa_score = qa_score
-        existing_script.qa_report = qa_report
-        script_id = str(existing_script.id)
-        if log_publisher:
-            log_publisher.publish_info(task_id, f"✏️ 更新已存在的剧本 (ID: {script_id[:8]}...)")
-    else:
-        # 创建新剧本
-        new_script = Script(
-            batch_id=breakdown.batch_id,
-            project_id=project_id,
-            plot_breakdown_id=breakdown_id,
-            episode_number=episode_number,
-            title=title,
-            content={
-                "structure": structure,
-                "full_script": full_script,
-                "scenes": scenes,
-                "characters": characters,
-                "hook_type": hook_type
-            },
-            word_count=word_count,
-            scene_count=scene_count,
-            status="draft",
-            qa_status=qa_status,
-            qa_score=qa_score,
-            qa_report=qa_report
-        )
-        db.add(new_script)
-        db.flush()
-        script_id = str(new_script.id)
-        if log_publisher:
-            log_publisher.publish_success(task_id, f"✅ 剧本已保存 (ID: {script_id[:8]}...)")
+        },
+        word_count=word_count,
+        scene_count=scene_count,
+        status="draft",
+        qa_status=qa_status,
+        qa_score=qa_score,
+        qa_report=qa_report,
+        is_current=True
+    )
+    db.add(new_script)
+    db.flush()
+    script_id = str(new_script.id)
+    if log_publisher:
+        log_publisher.publish_success(task_id, f"✅ 剧本已保存 (ID: {script_id[:8]}...)")
 
     db.commit()
     logger.info(f"剧本已保存到数据库: script_id={script_id}, episode={episode_number}, qa_status={qa_status}, qa_score={qa_score}")

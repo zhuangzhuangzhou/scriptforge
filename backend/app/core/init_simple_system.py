@@ -711,7 +711,7 @@ BUILTIN_AGENTS = [
                         "chapters_text": "${context.chapters_text}",
                         "adapt_method": "${context.adapt_method}",
                         "episode_number": "${context.episode_number}",
-                        "previous_script": "${script_result}",
+                        "previous_script": "${script_result.full_script}",
                         "qa_feedback": "${qa_result}"
                     },
                     "output_key": "script_result",
@@ -722,7 +722,7 @@ BUILTIN_AGENTS = [
                     "id": "qa",
                     "skill": "webtoon_aligner",
                     "inputs": {
-                        "script": "${script_result}",
+                        "script": "${script_result.full_script}",
                         "chapters_text": "${context.chapters_text}",
                         "adapt_method": "${context.adapt_method}"
                     },

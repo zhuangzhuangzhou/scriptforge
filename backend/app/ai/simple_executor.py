@@ -1079,8 +1079,8 @@ class SimpleSkillExecutor:
         if not response or not response.strip():
             raise ValueError("LLM 返回空响应")
 
-        # 1. 优先检测 QA 报告格式
-        if '【质检报告】' in response:
+        # 1. 优先检测 QA 报告格式（纯文本格式，不是 JSON）
+        if '【质检报告】' in response and not response.strip().startswith('{'):
             qa_result = parse_text_qa_result(response)
             if qa_result.get("qa_status") or qa_result.get("qa_score") is not None:
                 logger.info(f"QA 报告解析成功，状态: {qa_result.get('qa_status')}, 分数: {qa_result.get('qa_score')}")
@@ -1088,16 +1088,7 @@ class SimpleSkillExecutor:
             else:
                 raise ValueError("QA 报告格式检测到但解析失败")
 
-        # 2. 检测剧情点格式（管道符）
-        if '|' in response and '第' in response and '集' in response:
-            text_result = parse_text_plot_points(response)
-            if text_result:
-                logger.info(f"剧情点解析成功，共 {len(text_result)} 个")
-                return text_result
-            else:
-                raise ValueError("检测到剧情点格式但解析失败")
-
-        # 3. 尝试 JSON 解析
+        # 2. 优先尝试 JSON 解析（剧本等结构化数据）
         _PARSE_FAILED = object()
         result = parse_llm_response(
             response=response,
@@ -1108,6 +1099,13 @@ class SimpleSkillExecutor:
 
         if result is not _PARSE_FAILED and isinstance(result, (dict, list)):
             return result
+
+        # 3. JSON 解析失败后，检测剧情点格式（管道符）
+        if '|' in response and '第' in response and '集' in response:
+            text_result = parse_text_plot_points(response)
+            if text_result:
+                logger.info(f"剧情点解析成功，共 {len(text_result)} 个")
+                return text_result
 
         raise ValueError("无法解析 LLM 响应")
 

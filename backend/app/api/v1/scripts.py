@@ -113,8 +113,11 @@ async def list_scripts(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取剧本列表"""
-    query = select(Script).join(Project).where(Project.user_id == current_user.id)
+    """获取剧本列表（只返回当前版本）"""
+    query = select(Script).join(Project).where(
+        Project.user_id == current_user.id,
+        Script.is_current == True  # 只返回当前版本
+    )
 
     if project_id:
         query = query.where(Script.project_id == project_id)
@@ -125,6 +128,102 @@ async def list_scripts(
     result = await db.execute(query)
     scripts = result.scalars().all()
     return scripts
+
+
+# ==================== 剧本历史 API ====================
+
+class ScriptHistoryItem(BaseModel):
+    """剧本历史项"""
+    script_id: str
+    episode_number: int
+    title: str
+    word_count: int
+    scene_count: int
+    qa_status: Optional[str] = None
+    qa_score: Optional[int] = None
+    is_current: bool
+    created_at: str
+
+
+@router.get("/episode/{project_id}/{episode_number}/history", response_model=List[ScriptHistoryItem])
+async def get_script_history(
+    project_id: str,
+    episode_number: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取某集的所有剧本历史版本"""
+    # 验证项目属于当前用户
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.user_id == current_user.id
+        )
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    # 查询该集的所有历史版本
+    result = await db.execute(
+        select(Script).where(
+            Script.project_id == project_id,
+            Script.episode_number == episode_number
+        ).order_by(Script.created_at.desc())
+    )
+    scripts = result.scalars().all()
+
+    return [
+        ScriptHistoryItem(
+            script_id=str(s.id),
+            episode_number=s.episode_number,
+            title=s.title or f"第{s.episode_number}集",
+            word_count=s.word_count or 0,
+            scene_count=s.scene_count or 0,
+            qa_status=s.qa_status,
+            qa_score=s.qa_score,
+            is_current=s.is_current,
+            created_at=s.created_at.isoformat() if s.created_at else ""
+        )
+        for s in scripts
+    ]
+
+
+@router.get("/{script_id}/detail")
+async def get_script_detail(
+    script_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取指定剧本的完整数据"""
+    result = await db.execute(
+        select(Script).join(Project).where(
+            Script.id == script_id,
+            Project.user_id == current_user.id
+        )
+    )
+    script = result.scalar_one_or_none()
+
+    if not script:
+        raise HTTPException(status_code=404, detail="剧本不存在")
+
+    return {
+        "script_id": str(script.id),
+        "project_id": str(script.project_id),
+        "batch_id": str(script.batch_id) if script.batch_id else None,
+        "plot_breakdown_id": str(script.plot_breakdown_id) if script.plot_breakdown_id else None,
+        "episode_number": script.episode_number,
+        "title": script.title,
+        "content": script.content,
+        "word_count": script.word_count,
+        "scene_count": script.scene_count,
+        "status": script.status,
+        "qa_status": script.qa_status,
+        "qa_score": script.qa_score,
+        "qa_report": script.qa_report,
+        "is_current": script.is_current,
+        "created_at": script.created_at.isoformat() if script.created_at else None
+    }
 
 
 @router.get("/{script_id}", response_model=ScriptResponse)

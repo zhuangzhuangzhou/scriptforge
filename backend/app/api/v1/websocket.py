@@ -105,10 +105,12 @@ async def websocket_breakdown_progress(websocket: WebSocket, task_id: str):
         try:
             redis_client = await get_redis()
             if redis_client:
-                channel_name = f"breakdown:progress:{task_id}"
+                # 订阅两个频道：progress（进度更新）和 logs（实时日志）
+                progress_channel = f"breakdown:progress:{task_id}"
+                logs_channel = f"breakdown:logs:{task_id}"
                 pubsub = redis_client.pubsub()
-                await pubsub.subscribe(channel_name)
-                print(f"[WebSocket] 已订阅 Redis 频道: {channel_name}")
+                await pubsub.subscribe(progress_channel, logs_channel)
+                print(f"[WebSocket] 已订阅 Redis 频道: {progress_channel}, {logs_channel}")
             else:
                 print(f"[WebSocket] Redis 不可用，降级到数据库轮询")
                 use_polling = True

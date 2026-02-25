@@ -764,6 +764,24 @@ export const scriptApi = {
       return { data: { message: '审核通过', status: 'approved' } };
     }
     return api.post(`/scripts/${scriptId}/approve`);
+  },
+
+  // 获取剧本历史版本列表
+  getScriptHistory: async (projectId: string, episodeNumber: number) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return { data: [] };
+    }
+    return api.get(`/scripts/episode/${projectId}/${episodeNumber}/history`);
+  },
+
+  // 获取指定剧本版本的完整数据
+  getScriptDetail: async (scriptId: string) => {
+    if (USE_MOCK) {
+      await delay(300);
+      return { data: null };
+    }
+    return api.get(`/scripts/${scriptId}/detail`);
   }
 };
 
