@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   FileEdit, Loader2, Play, Eye as EyeIcon, Edit3, Download,
   History, BarChart3, CheckCircle, XCircle, Clock, AlertCircle,
-  Save, X as XIcon
+  Save, X as XIcon, StopCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { EpisodeScript, ScriptStructure } from '../../../../types';
@@ -11,6 +11,7 @@ interface ScriptDetailProps {
   currentScript: EpisodeScript | null;
   selectedEpisode: number | null;
   onGenerateScript: (episode: number) => void;
+  onStopGenerate?: () => void;  // 停止生成回调
   isGenerating: boolean;
   progress: number;
   onViewHistory?: () => void;
@@ -38,6 +39,7 @@ const ScriptDetail: React.FC<ScriptDetailProps> = ({
   currentScript,
   selectedEpisode,
   onGenerateScript,
+  onStopGenerate,
   isGenerating,
   progress,
   onViewHistory,
@@ -81,6 +83,16 @@ const ScriptDetail: React.FC<ScriptDetailProps> = ({
           </div>
           <p className="text-xs text-slate-600 text-center mt-2">{progress}%</p>
         </div>
+        {/* 停止按钮 */}
+        {onStopGenerate && (
+          <button
+            onClick={onStopGenerate}
+            className="mt-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 text-sm rounded-lg border border-red-500/30 transition-colors flex items-center gap-2"
+          >
+            <StopCircle size={16} />
+            停止生成
+          </button>
+        )}
       </div>
     );
   }

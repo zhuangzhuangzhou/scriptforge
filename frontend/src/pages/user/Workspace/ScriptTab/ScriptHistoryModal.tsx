@@ -101,7 +101,7 @@ const ScriptHistoryModal: React.FC<ScriptHistoryModalProps> = ({
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95 }}
-        className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-3xl overflow-hidden shadow-2xl"
+        className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-4xl overflow-hidden shadow-2xl"
       >
         {/* 头部 */}
         <div className="flex items-center justify-between p-4 border-b border-slate-700">
@@ -145,7 +145,7 @@ const ScriptHistoryModal: React.FC<ScriptHistoryModalProps> = ({
                   <th className="px-4 py-3 text-center text-[10px] font-semibold text-slate-400 uppercase tracking-wider">字数</th>
                   <th className="px-4 py-3 text-center text-[10px] font-semibold text-slate-400 uppercase tracking-wider">场景</th>
                   <th className="px-4 py-3 text-center text-[10px] font-semibold text-slate-400 uppercase tracking-wider">质检</th>
-                  <th className="px-4 py-3 text-center text-[10px] font-semibold text-slate-400 uppercase tracking-wider w-36">操作</th>
+                  <th className="px-4 py-3 text-center text-[10px] font-semibold text-slate-400 uppercase tracking-wider w-44">操作</th>
                 </tr>
               </thead>
               <tbody>

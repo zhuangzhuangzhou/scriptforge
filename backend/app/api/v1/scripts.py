@@ -227,30 +227,6 @@ async def get_script_detail(
     }
 
 
-@router.get("/{script_id}", response_model=ScriptResponse)
-async def get_script(
-    script_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """获取单个剧本"""
-    result = await db.execute(
-        select(Script).join(Project).where(
-            Script.id == script_id,
-            Project.user_id == current_user.id
-        )
-    )
-    script = result.scalar_one_or_none()
-
-    if not script:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="剧本不存在"
-        )
-
-    return script
-
-
 # ==================== 单集剧本 API ====================
 
 @router.post("/episode/start")
@@ -685,3 +661,30 @@ async def approve_script(
     await db.commit()
 
     return {"message": "审核通过", "script_id": script_id, "status": "approved"}
+
+
+# ==================== 通用剧本查询 API ====================
+# 注意：此路由必须放在最后，因为 {script_id} 是通配符，会匹配所有路径
+
+@router.get("/{script_id}", response_model=ScriptResponse)
+async def get_script(
+    script_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取单个剧本"""
+    result = await db.execute(
+        select(Script).join(Project).where(
+            Script.id == script_id,
+            Project.user_id == current_user.id
+        )
+    )
+    script = result.scalar_one_or_none()
+
+    if not script:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="剧本不存在"
+        )
+
+    return script

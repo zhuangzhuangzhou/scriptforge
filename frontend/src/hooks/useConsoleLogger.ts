@@ -34,6 +34,8 @@ interface UseConsoleLoggerOptions {
     newBatchId: string;
     newBatchNumber: number;
   }) => void;
+  onComplete?: () => void;  // 任务完成回调
+  onError?: (error: { code: string; message: string }) => void;  // 任务失败回调
 }
 
 export const useConsoleLogger = (
@@ -55,6 +57,18 @@ export const useConsoleLogger = (
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queuedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const taskStartTimeRef = useRef<number | null>(null);
+
+  // 使用 ref 存储回调，避免闭包陷阱
+  const onCompleteRef = useRef(options.onComplete);
+  const onErrorRef = useRef(options.onError);
+  const onBatchSwitchRef = useRef(options.onBatchSwitch);
+
+  // 同步更新 ref（每次渲染时更新，确保回调始终是最新的）
+  useEffect(() => {
+    onCompleteRef.current = options.onComplete;
+    onErrorRef.current = options.onError;
+    onBatchSwitchRef.current = options.onBatchSwitch;
+  });
 
   // 添加日志
   const addLog = useCallback((
@@ -255,6 +269,7 @@ export const useConsoleLogger = (
           // 处理任务完成
           if (data.status === TASK_STATUS.COMPLETED) {
             addLog('success', '任务完成');
+            onCompleteRef.current?.();  // 使用 ref 调用，避免闭包陷阱
             // 获取 LLM 调用日志
             setTimeout(() => {
               fetchLLMCallLogs();
@@ -264,25 +279,25 @@ export const useConsoleLogger = (
           // 处理任务失败
           if (data.status === TASK_STATUS.FAILED) {
             // 传递详细错误信息
-            addLog('error', data.error_message || '任务失败', {
+            const errorMsg = data.error_message || '任务失败';
+            addLog('error', errorMsg, {
               error_message: data.error_message,
               error_display: data.error_display
             });
+            onErrorRef.current?.({ code: 'TASK_FAILED', message: errorMsg });  // 使用 ref 调用
           }
 
-          // 🔧 修复: 处理批次切换消息
+          // 处理批次切换消息
           if (data.type === 'batch_switch') {
             const { new_task_id, new_batch_id, new_batch_number } = data.metadata || {};
             addLog('info', `批次 ${new_batch_number} 已开始拆解，正在切换...`);
 
-            // 触发回调通知父组件
-            if (options.onBatchSwitch) {
-              options.onBatchSwitch({
-                newTaskId: new_task_id,
-                newBatchId: new_batch_id,
-                newBatchNumber: new_batch_number
-              });
-            }
+            // 触发回调通知父组件（使用 ref 调用）
+            onBatchSwitchRef.current?.({
+              newTaskId: new_task_id,
+              newBatchId: new_batch_id,
+              newBatchNumber: new_batch_number
+            });
             // 不关闭连接,让父组件处理切换
             return;
           }

@@ -23,7 +23,7 @@ class Project(Base):
     original_file_type = Column(String(50))
 
     # 批次配置
-    batch_size = Column(Integer, nullable=False, default=5)
+    batch_size = Column(Integer, nullable=False, default=6)
     chapter_split_rule = Column(JSONB)
 
     # AI 模型配置

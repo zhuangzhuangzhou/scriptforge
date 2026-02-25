@@ -4,7 +4,7 @@ import {
   Settings, FileEdit, Play,
   BrainCircuit, Layers, Users,
   Terminal, LayoutTemplate,
-  BookText, Save, Loader2, X,
+  BookText, Save, Loader2, X, XCircle,
   RotateCcw, PlayCircle, FastForward, Zap,
   Upload, AlertTriangle
 } from 'lucide-react';
@@ -116,7 +116,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         name: '',
         novel_type: '悬疑/惊悚',
         description: '',
-        batch_size: 5,
+        batch_size: 6,
         chapter_split_rule: 'auto',
         breakdown_model: 'DeepNarrative-Pro',
         script_model: 'Gemini-1.5-Pro'
@@ -182,7 +182,12 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const [scriptActions, setScriptActions] = useState<{
         handleGenerateAll: () => void;
         handleContinueGenerate: () => void;
+        handleRegenerateCurrent: () => void;
         handleRegenerateAll: () => void;
+        handleStopBatchGenerate: () => void;
+        handleStopGenerate: () => void;  // 停止单集生成
+        isBatchProcessing: boolean;
+        isGenerating: boolean;  // 单集生成状态
     } | null>(null);
 
 
@@ -805,7 +810,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 name: res.data.name || '',
                 novel_type: res.data.novel_type || '悬疑/惊悚',
                 description: res.data.description || '',
-                batch_size: res.data.batch_size || 5,
+                batch_size: res.data.batch_size || 6,
                 chapter_split_rule: 'auto',
                 breakdown_model: res.data.breakdown_model_id || '',  // 使用后端返回的模型 ID
                 script_model: res.data.script_model_id || ''  // 使用后端返回的模型 ID
@@ -1882,35 +1887,53 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                                 </div>
                             ) : (activeTab as Tab) === 'SCRIPT' ? (
                                 <div className="flex items-center gap-3">
-                                    <button
-                                        onClick={() => scriptActions?.handleGenerateAll()}
-                                        disabled={!scriptActions || scriptProgress.pending === 0}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white border border-indigo-500/30 rounded-lg text-xs font-bold shadow-lg shadow-indigo-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
-                                        title="一次性生成所有待处理剧集"
-                                    >
-                                        <FastForward size={14} />
-                                        全部生成
-                                    </button>
-                                    <button
-                                        onClick={() => scriptActions?.handleContinueGenerate()}
-                                        disabled={!scriptActions || scriptProgress.pending === 0}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white border border-emerald-500/30 rounded-lg text-xs font-bold shadow-lg shadow-emerald-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
-                                        title="跳转到第一个待处理剧集并开始生成"
-                                    >
-                                        <PlayCircle size={14} />
-                                        继续生成
-                                    </button>
+                                    {(scriptActions?.isBatchProcessing || scriptActions?.isGenerating) ? (
+                                        // 生成中 - 显示停止按钮
+                                        <button
+                                            onClick={() => scriptActions?.isBatchProcessing
+                                                ? scriptActions?.handleStopBatchGenerate()
+                                                : scriptActions?.handleStopGenerate()
+                                            }
+                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white border border-red-500/30 rounded-lg text-xs font-bold shadow-lg shadow-red-900/20 transition-all hover:scale-[1.02]"
+                                            title="停止生成"
+                                        >
+                                            <XCircle size={14} />
+                                            停止生成
+                                        </button>
+                                    ) : (
+                                        <>
+                                            <button
+                                                onClick={() => scriptActions?.handleGenerateAll()}
+                                                disabled={!scriptActions || scriptProgress.pending === 0}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white border border-indigo-500/30 rounded-lg text-xs font-bold shadow-lg shadow-indigo-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                                                title="一次性生成所有待处理剧集"
+                                            >
+                                                <FastForward size={14} />
+                                                全部生成
+                                            </button>
+                                            <button
+                                                onClick={() => scriptActions?.handleContinueGenerate()}
+                                                disabled={!scriptActions || scriptProgress.pending === 0}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white border border-emerald-500/30 rounded-lg text-xs font-bold shadow-lg shadow-emerald-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                                                title="跳转到第一个待处理剧集并开始生成"
+                                            >
+                                                <PlayCircle size={14} />
+                                                继续生成
+                                            </button>
 
-                                    <div className="w-px h-4 bg-slate-700 mx-1"></div>
+                                            <div className="w-px h-4 bg-slate-700 mx-1"></div>
 
-                                    <button
-                                        onClick={() => scriptActions?.handleRegenerateAll()}
-                                        disabled={!scriptActions || scriptProgress.total === 0}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white border border-sky-500/30 rounded-lg text-xs font-bold shadow-lg shadow-sky-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                        <RotateCcw size={14} />
-                                        重新生成
-                                    </button>
+                                            <button
+                                                onClick={() => scriptActions?.handleRegenerateCurrent()}
+                                                disabled={!scriptActions || scriptProgress.total === 0}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white border border-sky-500/30 rounded-lg text-xs font-bold shadow-lg shadow-sky-900/20 transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
+                                                title="重新生成当前选中的剧集"
+                                            >
+                                                <RotateCcw size={14} />
+                                                重新生成
+                                            </button>
+                                        </>
+                                    )}
                                 </div>
                             ) : (activeTab as Tab) === 'SOURCE' ? (
                                 <></>

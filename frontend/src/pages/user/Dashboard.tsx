@@ -207,7 +207,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
           <div className="absolute inset-0 w-1/2 h-full bg-white/10 -skew-x-12 -translate-x-full group-hover:translate-x-[200%] transition-transform duration-700 ease-in-out" />
           <div className="flex items-center gap-2 relative z-10">
             <Plus size={20} strokeWidth={3} />
-            <span className="tracking-wide">新建改编项目</span>
+            <span className="tracking-wide">新建项目</span>
             <Sparkles size={16} className="text-cyan-200 animate-pulse" />
           </div>
         </motion.button>
@@ -236,13 +236,13 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
                     >
                         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-indigo-500/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
 
-                        <div className="flex justify-between items-start mb-6">
-                        <div className="flex items-center gap-4">
-                            <div className={`w-12 h-12 rounded-xl ${style.bgColor} flex items-center justify-center ${style.color} group-hover:scale-110 transition-all`}>
+                        <div className="flex justify-between items-start mb-6 gap-3">
+                        <div className="flex items-center gap-4 min-w-0 flex-1">
+                            <div className={`w-12 h-12 rounded-xl ${style.bgColor} flex items-center justify-center ${style.color} group-hover:scale-110 transition-all shrink-0`}>
                                 <ProjectIcon size={24} />
                             </div>
-                            <div>
-                                <h3 className="font-bold text-white group-hover:text-indigo-400 transition-colors tracking-tight text-lg truncate max-w-[150px]">{project.name}</h3>
+                            <div className="min-w-0 flex-1">
+                                <h3 className="font-bold text-white group-hover:text-indigo-400 transition-colors tracking-tight text-lg truncate">{project.name}</h3>
                                 <span className="text-[10px] uppercase font-black text-slate-500 border border-slate-800 rounded px-2 py-0.5 mt-1 inline-block">{project.novel_type || '未分类'}</span>
                             </div>
                         </div>

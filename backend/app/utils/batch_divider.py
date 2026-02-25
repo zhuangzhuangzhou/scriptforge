@@ -4,7 +4,7 @@ from typing import List, Dict
 class BatchDivider:
     """批次划分器"""
 
-    def __init__(self, batch_size: int = 5):
+    def __init__(self, batch_size: int = 6):
         """
         初始化批次划分器
 

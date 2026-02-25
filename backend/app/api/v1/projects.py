@@ -28,6 +28,7 @@ router = APIRouter()
 
 # 默认章节识别正则
 DEFAULT_CHAPTER_PATTERN = r"第[一二三四五六七八九十百千\d]+章"
+ENGLISH_CHAPTER_PATTERN = r"(?i)Chapter\s+\d+"
 
 
 def normalize_chapter_split_rule(rule: Optional[Union[str, Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
@@ -38,6 +39,8 @@ def normalize_chapter_split_rule(rule: Optional[Union[str, Dict[str, Any]]]) -> 
     if isinstance(rule, str):
         if rule == "auto":
             return {"type": "regex", "pattern": DEFAULT_CHAPTER_PATTERN}
+        if rule == "english":
+            return {"type": "regex", "pattern": ENGLISH_CHAPTER_PATTERN}
         if rule == "blank_line":
             return {"type": "blank_line"}
         # 兜底：把字符串当成自定义正则
@@ -53,7 +56,7 @@ class ProjectCreate(BaseModel):
     name: str
     novel_type: Optional[str] = None
     description: Optional[str] = None
-    batch_size: int = 5
+    batch_size: int = 6
     # 兼容两种方式：直接传规则 或 传规则ID
     chapter_split_rule: Optional[Union[str, Dict[str, Any]]] = None
     split_rule_id: Optional[str] = None
@@ -681,10 +684,70 @@ async def split_chapters(
     if not project.original_file_path:
         raise HTTPException(status_code=400, detail="源文件不存在")
 
-    # 2. 从 MinIO 读取文件
+    # 2. 从 MinIO 读取文件并解析
     try:
         response = minio_access_key_client.get_object(project.original_file_path)
-        content = response.read().decode('utf-8')
+        raw_content = response.read()
+
+        # 根据文件类型解析内容（优先使用 file_type，兜底从文件名提取扩展名）
+        file_type = project.original_file_type
+        if not file_type and project.original_file_name:
+            # 从文件名提取扩展名
+            file_type = project.original_file_name.rsplit('.', 1)[-1].lower() if '.' in project.original_file_name else 'txt'
+        file_type = file_type or 'txt'
+
+        if file_type == 'docx':
+            # DOCX 文件：保存临时文件后用 python-docx 解析
+            import tempfile
+            from docx import Document
+
+            with tempfile.NamedTemporaryFile(suffix='.docx', delete=False) as tmp_file:
+                tmp_file.write(raw_content)
+                tmp_path = tmp_file.name
+
+            try:
+                doc = Document(tmp_path)
+                text_content = []
+                for paragraph in doc.paragraphs:
+                    if paragraph.text.strip():
+                        text_content.append(paragraph.text)
+                content = '\n'.join(text_content)
+            finally:
+                import os
+                os.unlink(tmp_path)
+
+        elif file_type == 'pdf':
+            # PDF 文件：保存临时文件后用 PyPDF2 解析
+            import tempfile
+            from PyPDF2 import PdfReader
+
+            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_file:
+                tmp_file.write(raw_content)
+                tmp_path = tmp_file.name
+
+            try:
+                reader = PdfReader(tmp_path)
+                text_content = []
+                for page in reader.pages:
+                    text = page.extract_text()
+                    if text.strip():
+                        text_content.append(text)
+                content = '\n'.join(text_content)
+            finally:
+                import os
+                os.unlink(tmp_path)
+        else:
+            # TXT 文件：尝试多种编码解码
+            for encoding in ['utf-8', 'gbk', 'gb2312', 'utf-8-sig']:
+                try:
+                    content = raw_content.decode(encoding)
+                    break
+                except (UnicodeDecodeError, LookupError):
+                    continue
+            else:
+                # 所有编码都失败，使用 UTF-8 容错模式
+                content = raw_content.decode('utf-8', errors='ignore')
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"读取文件失败: {str(e)}")
 

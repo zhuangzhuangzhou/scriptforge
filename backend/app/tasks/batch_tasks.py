@@ -50,7 +50,7 @@ def create_batches_task(project_id: str):
                     for c in chapters
                 ]
 
-                batch_size = project.batch_size or 5
+                batch_size = project.batch_size or 6
                 divider = BatchDivider(batch_size=batch_size)
                 batches_data = divider.divide(chapters_data)
 

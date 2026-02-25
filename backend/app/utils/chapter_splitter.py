@@ -2,6 +2,7 @@ import re
 from typing import List, Dict, Any, Optional, Union
 
 DEFAULT_CHAPTER_PATTERN = r"第[一二三四五六七八九十百千\d]+章"
+ENGLISH_CHAPTER_PATTERN = r"(?i)Chapter\s+\d+"
 
 
 class ChapterSplitter:
@@ -24,6 +25,8 @@ class ChapterSplitter:
         if isinstance(split_rule, str):
             if split_rule == "auto":
                 return {"type": "regex", "pattern": DEFAULT_CHAPTER_PATTERN}
+            if split_rule == "english":
+                return {"type": "regex", "pattern": ENGLISH_CHAPTER_PATTERN}
             if split_rule == "blank_line":
                 return {"type": "blank_line"}
             # 将字符串视为自定义正则

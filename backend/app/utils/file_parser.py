@@ -16,8 +16,35 @@ class TxtParser(FileParser):
     """TXT文件解析器"""
 
     def parse(self, file_path: str) -> str:
-        """解析TXT文件"""
-        with open(file_path, 'r', encoding='utf-8') as f:
+        """解析TXT文件，自动检测编码"""
+        # 尝试多种常见编码
+        encodings = ['utf-8', 'gbk', 'gb2312', 'gb18030', 'utf-16', 'big5']
+
+        for encoding in encodings:
+            try:
+                with open(file_path, 'r', encoding=encoding) as f:
+                    content = f.read()
+                    # 成功读取，返回内容
+                    return content
+            except (UnicodeDecodeError, LookupError):
+                # 当前编码失败，尝试下一个
+                continue
+
+        # 所有编码都失败，尝试使用 chardet 库检测
+        try:
+            import chardet
+            with open(file_path, 'rb') as f:
+                raw_data = f.read()
+                result = chardet.detect(raw_data)
+                detected_encoding = result['encoding']
+
+                if detected_encoding:
+                    return raw_data.decode(detected_encoding)
+        except Exception:
+            pass
+
+        # 最后的兜底方案：使用 latin-1（不会抛出异常，但可能乱码）
+        with open(file_path, 'r', encoding='latin-1') as f:
             return f.read()
 
 

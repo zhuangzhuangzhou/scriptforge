@@ -731,23 +731,6 @@ export const scriptApi = {
     return api.get(`/scripts/episodes/${breakdownId}`);
   },
 
-  // 批量生成剧本
-  startBatchScripts: async (breakdownId: string, episodeNumbers: number[], options?: {
-    modelConfigId?: string;
-    novelType?: string;
-  }) => {
-    if (USE_MOCK) {
-      await delay(500);
-      return { data: { task_ids: [], total: episodeNumbers.length } };
-    }
-    return api.post('/scripts/batch/start', {
-      breakdown_id: breakdownId,
-      episode_numbers: episodeNumbers,
-      model_config_id: options?.modelConfigId,
-      novel_type: options?.novelType
-    });
-  },
-
   // 更新剧本
   updateScript: async (scriptId: string, data: { title?: string; content?: any; full_script?: string }) => {
     if (USE_MOCK) {

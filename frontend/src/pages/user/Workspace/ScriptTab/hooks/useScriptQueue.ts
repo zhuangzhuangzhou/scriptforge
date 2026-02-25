@@ -34,6 +34,7 @@ export const useScriptQueue = (options: UseScriptQueueOptions = {}) => {
   const [progress, setProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState('');
   const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const enablePollingRef = useRef<boolean>(true);  // 默认启用轮询（批量生成需要）
 
   // 清理轮询
   const clearPolling = useCallback(() => {
@@ -61,7 +62,13 @@ export const useScriptQueue = (options: UseScriptQueueOptions = {}) => {
       const taskId = res.data.task_id;
       setCurrentTaskId(taskId);
 
-      // 启动轮询
+      // 如果未启用轮询，直接返回（依赖 WebSocket 监控）
+      if (!enablePollingRef.current) {
+        console.log('[useScriptQueue] 轮询已禁用，依赖 WebSocket 监控进度');
+        return;
+      }
+
+      // 启动轮询（仅在 WebSocket 失败时使用）
       clearPolling();
       intervalRef.current = setInterval(async () => {
         try {
@@ -189,6 +196,7 @@ export const useScriptQueue = (options: UseScriptQueueOptions = {}) => {
     startQueue,
     cancelQueue,
     stopQueue,
-    currentItem: queue[currentIndex] || null
+    currentItem: queue[currentIndex] || null,
+    enablePolling: (enable: boolean) => { enablePollingRef.current = enable; }  // 新增：控制是否启用轮询
   };
 };

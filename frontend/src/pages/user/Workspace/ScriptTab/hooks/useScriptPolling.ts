@@ -17,8 +17,9 @@ export const useScriptPolling = (options: UseScriptPollingOptions = {}) => {
   const [progress, setProgress] = useState(0);
   const [isRunning, setIsRunning] = useState(false);
   const [currentStep, setCurrentStep] = useState('');
+  const [currentEpisode, setCurrentEpisode] = useState<number | null>(null);  // 改为 useState，确保响应式
   const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const episodeRef = useRef<number | null>(null);
+  const enablePollingRef = useRef<boolean>(false);  // 控制是否启用轮询
 
   // 清理轮询
   const clearPolling = useCallback(() => {
@@ -28,10 +29,18 @@ export const useScriptPolling = (options: UseScriptPollingOptions = {}) => {
     }
   }, []);
 
-  // 开始轮询
+  // 开始轮询（仅在 WebSocket 失败时使用）
   const startPolling = useCallback((newTaskId: string, episodeNumber: number) => {
+    // 如果未启用轮询，直接返回
+    if (!enablePollingRef.current) {
+      console.log('[useScriptPolling] 轮询已禁用，使用 WebSocket 监控进度');
+      return;
+    }
+
     clearPolling();
-    episodeRef.current = episodeNumber;
+    setCurrentEpisode(episodeNumber);
+
+    console.log('[useScriptPolling] 启动轮询，taskId:', newTaskId);
 
     intervalRef.current = setInterval(async () => {
       try {
@@ -95,6 +104,7 @@ export const useScriptPolling = (options: UseScriptPollingOptions = {}) => {
       setIsRunning(true);
       setProgress(0);
       setCurrentStep('');
+      setCurrentEpisode(episodeNumber);  // 立即设置 episode，确保 UI 能显示
 
       const res = await scriptApi.startEpisodeScript(breakdownId, episodeNumber, options);
       const newTaskId = res.data.task_id;
@@ -102,12 +112,13 @@ export const useScriptPolling = (options: UseScriptPollingOptions = {}) => {
       setTaskId(newTaskId);
       message.info(`已启动第 ${episodeNumber} 集剧本生成`);
 
-      // 开始轮询
+      // 开始轮询（如果启用）
       startPolling(newTaskId, episodeNumber);
 
       return res.data;
     } catch (err: any) {
       setIsRunning(false);
+      setCurrentEpisode(null);  // 失败时清除
       const errorMsg = err.response?.data?.detail || '启动剧本生成失败';
       message.error(errorMsg);
       onError?.({ code: 'START_FAILED', message: errorMsg });
@@ -156,12 +167,13 @@ export const useScriptPolling = (options: UseScriptPollingOptions = {}) => {
     progress,
     isRunning,
     currentStep,
-    currentEpisode: episodeRef.current,
+    currentEpisode,  // 现在是响应式的 state
     startGeneration,
     cancelGeneration,
     stopGeneration,
     setTaskId,  // 导出 setTaskId，用于恢复任务
     setIsRunning,  // 导出 setIsRunning，用于恢复状态
-    setEpisode: (episode: number) => { episodeRef.current = episode; }  // 导出设置 episode 的方法
+    setEpisode: setCurrentEpisode,  // 导出设置 episode 的方法
+    enablePolling: (enable: boolean) => { enablePollingRef.current = enable; }  // 控制是否启用轮询
   };
 };

@@ -119,29 +119,44 @@ class PDFExporter:
 
         # 内容
         content = script_data.get('content', {})
-        scenes = content.get('scenes', [])
 
-        for scene in scenes:
-            # 场景标题
-            scene_title = f"场景 {scene.get('scene_number', '')}: {scene.get('location', '')}"
-            story.append(Paragraph(scene_title, self.styles['Heading2']))
-            story.append(Spacer(1, 0.5*cm))
+        # 优先使用 full_script（完整剧本文本）
+        full_script = ''
+        if isinstance(content, str):
+            full_script = content
+        elif isinstance(content, dict):
+            full_script = content.get('full_script', '')
 
-            # 场景内容
-            for item in scene.get('content', []):
-                if item['type'] == 'stage_direction':
-                    # 舞台指示
-                    text = f"[{item['text']}]"
-                    story.append(Paragraph(text, self.styles['Italic']))
-                elif item['type'] == 'dialogue':
-                    # 对话
-                    character = item.get('character', '')
-                    text = item.get('text', '')
-                    story.append(Paragraph(f"<b>{character}:</b> {text}", self.styles['Normal']))
+            # 如果没有 full_script，尝试从 scenes 构建
+            if not full_script:
+                scenes = content.get('scenes', [])
+                if isinstance(scenes, list) and len(scenes) > 0:
+                    # 检查 scenes 是字符串数组还是对象数组
+                    if isinstance(scenes[0], str):
+                        # 字符串数组：直接拼接
+                        full_script = '\n\n'.join(scenes)
+                    elif isinstance(scenes[0], dict):
+                        # 对象数组：尝试提取文本
+                        scene_texts = []
+                        for scene in scenes:
+                            scene_text = scene.get('text', '') or scene.get('content', '')
+                            if scene_text:
+                                scene_texts.append(scene_text)
+                        full_script = '\n\n'.join(scene_texts)
 
-                story.append(Spacer(1, 0.3*cm))
-
-            story.append(PageBreak())
+        # 将剧本文本按段落添加到文档
+        if full_script:
+            # 按换行符分割段落
+            paragraphs = full_script.split('\n')
+            for para_text in paragraphs:
+                if para_text.strip():  # 跳过空行
+                    # 转义 HTML 特殊字符
+                    safe_text = para_text.strip().replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                    story.append(Paragraph(safe_text, self.styles['Normal']))
+                    story.append(Spacer(1, 0.2*cm))
+        else:
+            # 如果没有任何内容，添加提示
+            story.append(Paragraph('（暂无剧本内容）', self.styles['Normal']))
 
         doc.build(story)
         buffer.seek(0)

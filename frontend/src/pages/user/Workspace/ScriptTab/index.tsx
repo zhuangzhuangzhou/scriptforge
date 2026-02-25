@@ -31,7 +31,12 @@ interface ScriptTabProps {
   onActionsReady?: (actions: {
     handleGenerateAll: () => void;
     handleContinueGenerate: () => void;
+    handleRegenerateCurrent: () => void;
     handleRegenerateAll: () => void;
+    handleStopBatchGenerate: () => void;
+    handleStopGenerate: () => void;  // 停止单集生成
+    isBatchProcessing: boolean;
+    isGenerating: boolean;  // 单集生成状态
   }) => void;
 }
 
@@ -262,7 +267,8 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     stopGeneration,
     setTaskId: setCurrentTaskId,
     setIsRunning,
-    setEpisode
+    setEpisode,
+    enablePolling
   } = useScriptPolling({
     onComplete: (episodeNumber) => {
       loadEpisodes();
@@ -285,32 +291,53 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     }
   });
 
-  // 批量生成 Hook
+  // 禁用 useScriptPolling 的轮询，因为我们使用 WebSocket
+  useEffect(() => {
+    enablePolling(false);
+  }, [enablePolling]);
+
+  // 批量生成 Hook（顺序执行队列）
   const {
-    isProcessing: isBatchProcessing,
     currentIndex: batchCurrentIndex,
     queue: batchQueue,
     progress: batchProgress,
     currentStep: batchCurrentStep,
+    isProcessing: isBatchProcessing,  // 批量生成状态
     startQueue,
-    stopQueue
+    stopQueue,
+    enablePolling: enableQueuePolling
   } = useScriptQueue({
     novelType,
     onTaskComplete: (episodeNumber, index, total) => {
-      message.info(`第 ${episodeNumber} 集完成 (${index + 1}/${total})`);
+      addLog('success', `✅ 第 ${episodeNumber} 集完成 (${index + 1}/${total})`);
       loadEpisodes();
+      // 更新剧集状态
+      setEpisodes(prev => prev.map(ep =>
+        ep.episode === episodeNumber ? { ...ep, status: 'completed' } : ep
+      ));
     },
     onQueueComplete: () => {
+      addLog('success', '🎉 所有剧本生成完成');
       loadEpisodes();
     },
     onError: (error, episodeNumber) => {
+      addLog('error', `❌ 第 ${episodeNumber} 集失败: ${error.message}`);
       setErrorInfo({
         code: error.code,
         message: `第 ${episodeNumber} 集: ${error.message}`
       });
       setErrorModalOpen(true);
+    },
+    onProgress: (prog, step) => {
+      // 进度更新
     }
   });
+
+  // 注意：useScriptQueue 需要保留轮询功能，因为队列流转依赖轮询检测任务完成
+  // TODO: 未来优化 - 让 WebSocket 能够触发队列流转
+  useEffect(() => {
+    enableQueuePolling(true);  // 批量生成时启用轮询
+  }, [enableQueuePolling]);
 
   // Console Logger Hook
   const {
@@ -323,15 +350,52 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
   } = useConsoleLogger(currentTaskId, {
     enableWebSocket: true,
     pollInterval: 999999,
-    taskType: 'script'
+    taskType: 'script',
+    onComplete: () => {
+      // WebSocket 收到完成消息时，重置生成状态
+      setIsRunning(false);
+      setCurrentTaskId(null);
+      if (generatingEpisode) {
+        loadEpisodes();
+        setEpisodes(prev => prev.map(ep =>
+          ep.episode === generatingEpisode ? { ...ep, status: 'completed' } : ep
+        ));
+      }
+    },
+    onError: (error) => {
+      // WebSocket 收到失败消息时，重置生成状态
+      setIsRunning(false);
+      setCurrentTaskId(null);
+      setErrorInfo({
+        code: error.code,
+        message: error.message
+      });
+      setErrorModalOpen(true);
+      setEpisodes(prev => prev.map(ep =>
+        ep.status === 'in_progress' ? { ...ep, status: 'pending' } : ep
+      ));
+    }
   });
 
   // 合并进度
   const effectiveProgress = wsProgress > 0 ? wsProgress : progress;
   const effectiveCurrentStep = wsCurrentStep || currentStep;
 
-  // 判断是否正在生成
+  // 判断是否正在生成（全局状态，用于 Console 等）
   const isAnyGenerating = isGenerating || isBatchProcessing;
+
+  // 判断当前选中的剧集是否正在生成（用于 ScriptDetail 显示）
+  const isCurrentEpisodeGenerating = useMemo(() => {
+    // 单集生成：检查 generatingEpisode 是否为当前选中剧集
+    if (isGenerating && generatingEpisode === selectedEpisode) {
+      return true;
+    }
+    // 批量生成：检查当前队列项是否为当前选中剧集
+    if (isBatchProcessing && batchQueue[batchCurrentIndex]?.episodeNumber === selectedEpisode) {
+      return true;
+    }
+    return false;
+  }, [isGenerating, generatingEpisode, selectedEpisode, isBatchProcessing, batchQueue, batchCurrentIndex]);
 
   // 监听 projectId 变化
   React.useEffect(() => {
@@ -590,14 +654,14 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     }
   };
 
-  // 批量生成剧本
+  // 批量生成剧本（顺序执行：完成一集再开始下一集）
   const handleBatchGenerate = async () => {
     if (!projectId || episodes.length === 0) {
       message.error('没有可生成的剧集');
       return;
     }
 
-    const pendingEpisodes = episodes.filter(ep => ep.status === 'pending');
+    const pendingEpisodes = episodes.filter(ep => ep.status === 'pending' && ep.breakdownId);
     if (pendingEpisodes.length === 0) {
       message.info('所有剧集已生成');
       return;
@@ -606,28 +670,23 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     clearLogs();
     setConsoleVisible(true);
 
-    const queueItems = pendingEpisodes
-      .filter(ep => ep.breakdownId)
-      .map(ep => ({
-        breakdownId: ep.breakdownId!,
-        episodeNumber: ep.episode
-      }));
-
-    if (queueItems.length === 0) {
-      message.error('没有有效的待生成剧集');
-      return;
-    }
-
-    setEpisodes(prev => prev.map(ep =>
-      pendingEpisodes.some(p => p.episode === ep.episode)
-        ? { ...ep, status: 'in_progress' }
-        : ep
-    ));
+    // 构建队列项
+    const queueItems = pendingEpisodes.map(ep => ({
+      breakdownId: ep.breakdownId!,
+      episodeNumber: ep.episode
+    }));
 
     addLog('info', `🎬 开始批量生成 ${queueItems.length} 集剧本`);
     addLog('info', `待生成剧集: ${queueItems.map(q => q.episodeNumber).join(', ')}`);
 
+    // 使用队列顺序执行
     startQueue(queueItems);
+  };
+
+  // 停止批量生成
+  const handleStopBatchGenerate = async () => {
+    await stopQueue();
+    addLog('warning', '⚠️ 已停止批量生成');
   };
 
   // 继续生成：从第一个待生成的剧集开始
@@ -655,7 +714,29 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     }
   };
 
-  // 重新生成：重新生成所有剧集（包括已完成的）
+  // 重新生成当前集：重新生成当前选中的剧集
+  const handleRegenerateCurrent = async () => {
+    if (!projectId || !selectedEpisode) {
+      message.error('请先选择要重新生成的剧集');
+      return;
+    }
+
+    const episode = episodes.find(ep => ep.episode === selectedEpisode);
+    if (!episode?.breakdownId) {
+      message.error('该剧集没有关联的拆解数据');
+      return;
+    }
+
+    clearLogs();
+    setConsoleVisible(true);
+
+    addLog('info', `🔄 开始重新生成第 ${selectedEpisode} 集剧本`);
+
+    // 重新生成当前集
+    await handleGenerateScript(selectedEpisode);
+  };
+
+  // 重新生成所有：重新生成所有剧集（包括已完成的）
   const handleRegenerateAll = async () => {
     if (!projectId || episodes.length === 0) {
       message.error('没有可生成的剧集');
@@ -691,10 +772,15 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
       onActionsReady({
         handleGenerateAll: handleBatchGenerate,
         handleContinueGenerate,
-        handleRegenerateAll
+        handleRegenerateCurrent,
+        handleRegenerateAll,
+        handleStopBatchGenerate,
+        handleStopGenerate: stopGeneration,  // 停止单集生成
+        isBatchProcessing,
+        isGenerating  // 单集生成状态
       });
     }
-  }, [onActionsReady, episodes, projectId]);
+  }, [onActionsReady, episodes, projectId, selectedEpisode, isBatchProcessing, isGenerating]);
 
 
   // 无项目信息时的提示
@@ -781,7 +867,8 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
             currentScript={currentScript}
             selectedEpisode={selectedEpisode}
             onGenerateScript={handleGenerateScript}
-            isGenerating={isAnyGenerating}
+            onStopGenerate={stopGeneration}
+            isGenerating={isCurrentEpisodeGenerating}
             progress={effectiveProgress}
             onViewHistory={() => setHistoryModalOpen(true)}
             onExport={() => setExportModalOpen(true)}
@@ -806,6 +893,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         isProcessing={isAnyGenerating}
         progress={effectiveProgress}
         currentStep={effectiveCurrentStep}
+        episodeNumber={generatingEpisode || selectedEpisode || 0}
         onClose={() => setConsoleVisible(false)}
       />
 

@@ -160,7 +160,7 @@ const ConfigTab: React.FC<ConfigTabProps> = ({
               <input
                 type="number"
                 value={formData.batch_size}
-                onChange={(e) => onFormChange('batch_size', parseInt(e.target.value) || 5)}
+                onChange={(e) => onFormChange('batch_size', parseInt(e.target.value) || 6)}
                 className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:ring-1 focus:ring-cyan-500 outline-none"
               />
             </div>
@@ -172,8 +172,9 @@ const ConfigTab: React.FC<ConfigTabProps> = ({
                 className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-cyan-500 outline-none"
               >
                 <option value="auto">智能识别 (第X章)</option>
+                <option value="english">英文章节 (Chapter X)</option>
                 <option value="blank_line">空行拆分</option>
-                <option value="custom">自定义正则</option>
+                {/* <option value="custom">自定义正则</option> */}
               </select>
             </div>
           </div>

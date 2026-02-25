@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing import Optional
 from io import BytesIO
 import zipfile
+from zipfile import ZipInfo
 import urllib.parse
 
 from app.core.database import get_db
@@ -81,8 +82,8 @@ async def export_single(
             detail=f"不支持的导出格式: {request.format}"
         )
 
-    # 设置文件名 (处理中文文件名)
-    filename = f"{script.title}.{ext}"
+    # 设置文件名 (处理中文文件名)，格式：项目名称_x集
+    filename = f"{project.name}_{script.episode_number}集.{ext}"
     encoded_filename = urllib.parse.quote(filename)
 
     return StreamingResponse(
@@ -156,9 +157,12 @@ async def export_batch(
                  # 暂时跳过不支持的格式，或者报错
                  continue
 
-            # 添加到ZIP
-            filename = f"第{script.episode_number}集_{script.title}.{ext}"
-            zip_file.writestr(filename, file_content)
+            # 添加到ZIP，使用 项目名称_x集 格式
+            filename = f"{project.name}_{script.episode_number}集.{ext}"
+            # 使用 ZipInfo 并设置 UTF-8 标志位，避免中文文件名乱码
+            zip_info = ZipInfo(filename)
+            zip_info.flag_bits |= 0x800  # UTF-8 编码标志
+            zip_file.writestr(zip_info, file_content)
 
     zip_buffer.seek(0)
 
