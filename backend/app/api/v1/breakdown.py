@@ -1,4 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+import logging
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from pydantic import BaseModel, Field
@@ -2054,56 +2057,78 @@ async def get_project_breakdowns(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取项目的所有拆解结果（只返回质检通过的）"""
+    """获取项目的所有拆解结果（只返回质检通过的）
+
+    返回按 batch_number 升序排列的批次数据，每个批次的 plot_points 按 episode 升序排列。
+    """
     from app.models.plot_breakdown import PlotBreakdown
     from sqlalchemy import func
 
-    # 计算总数（用于分页）
-    count_result = await db.execute(
-        select(func.count(PlotBreakdown.id))
-        .join(Batch)
-        .join(Project)
-        .where(
-            Project.id == project_id,
-            Project.user_id == current_user.id,
-            PlotBreakdown.qa_status == 'PASS'
+    try:
+        # 计算总数（用于分页）
+        count_result = await db.execute(
+            select(func.count(PlotBreakdown.id))
+            .join(Batch)
+            .join(Project)
+            .where(
+                Project.id == project_id,
+                Project.user_id == current_user.id,
+                PlotBreakdown.qa_status == 'PASS'
+            )
         )
-    )
-    total = count_result.scalar() or 0
+        total = count_result.scalar() or 0
 
-    # 分页查询，只返回必要字段
-    result = await db.execute(
-        select(
-            PlotBreakdown.id,
-            PlotBreakdown.batch_id,
-            PlotBreakdown.plot_points
+        # 分页查询，只返回必要字段
+        # 按 batch_number 升序排列（而不是按创建时间降序）
+        result = await db.execute(
+            select(
+                PlotBreakdown.id,
+                PlotBreakdown.batch_id,
+                PlotBreakdown.plot_points,
+                Batch.batch_number
+            )
+            .join(Batch)
+            .join(Project)
+            .where(
+                Project.id == project_id,
+                Project.user_id == current_user.id,
+                PlotBreakdown.qa_status == 'PASS'
+            )
+            .order_by(Batch.batch_number.asc())  # 按批次号升序排列
+            .offset((page - 1) * page_size)
+            .limit(page_size)
         )
-        .join(Batch)
-        .join(Project)
-        .where(
-            Project.id == project_id,
-            Project.user_id == current_user.id,
-            PlotBreakdown.qa_status == 'PASS'
-        )
-        .order_by(PlotBreakdown.created_at.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    )
-    rows = result.all()
+        rows = result.all()
 
-    return {
-        "items": [
-            {
+        # 对每个 plot_points 列表按 episode 字段升序排序
+        items = []
+        for row in rows:
+            plot_points = row.plot_points
+            if plot_points and isinstance(plot_points, list):
+                # 按 episode 字段升序排序，episode 为 None 或 0 的排到最后
+                plot_points = sorted(
+                    plot_points,
+                    key=lambda x: (x.get('episode') is None or x.get('episode') == 0, x.get('episode', 0))
+                )
+
+            items.append({
                 "id": str(row.id),
                 "batch_id": str(row.batch_id),
-                "plot_points": row.plot_points
-            }
-            for row in rows
-        ],
-        "total": total,
-        "page": page,
-        "page_size": page_size
-    }
+                "plot_points": plot_points
+            })
+
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size
+        }
+    except Exception as e:
+        logger.error(f"获取项目拆解结果失败: project_id={project_id}, error={str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="获取拆解结果失败，请稍后重试"
+        )
 
 
 @router.post("/tasks/{task_id}/stop")

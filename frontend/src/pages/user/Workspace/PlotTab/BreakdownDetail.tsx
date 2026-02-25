@@ -782,3 +782,4 @@ const BreakdownDetail: React.FC<BreakdownDetailProps> = ({
 };
 
 export default BreakdownDetail;
+export { QAReportModal };

@@ -1,14 +1,16 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   RefreshCw, CheckCircle2, Loader2,
   ThumbsUp, Download, FileEdit, Save, FileCheck, Search, AlertCircle,
-  Eye as EyeIcon, Edit3, Play, XCircle
+  Eye as EyeIcon, Edit3, Play, XCircle, StopCircle, History
 } from 'lucide-react';
 import { message, Modal } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
 import ConfirmModal from '../../../../components/modals/ConfirmModal';
 import ConsoleLogger from '../../../../components/ConsoleLogger';
 import BreakdownDetail, { QAReportModal } from '../PlotTab/BreakdownDetail';
+import ScriptHistoryModal from './ScriptHistoryModal';
+import ScriptViewModal from './ScriptViewModal';
 import { useConsoleLogger } from '../../../../hooks/useConsoleLogger';
 import { scriptApi, exportApi, breakdownApi } from '../../../../services/api';
 import type { EpisodeScript, ScriptStructure } from '../../../../types';
@@ -44,6 +46,13 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
   const [generating, setGenerating] = useState<number | null>(null);
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [consoleVisible, setConsoleVisible] = useState(false);
+
+  // 剧本历史弹窗状态
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const [viewScriptModalOpen, setViewScriptModalOpen] = useState(false);
+  const [historyScriptIds, setHistoryScriptIds] = useState<string[]>([]);
+  const [currentHistoryIndex, setCurrentHistoryIndex] = useState(0);
+
   const refreshIntervalRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Console Logger Hook (监听任务完成事件)
@@ -80,6 +89,12 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
 
   // 质检报告弹窗状态
   const [qaReportModalOpen, setQAReportModalOpen] = useState(false);
+
+  // 计算已完成数量
+  const completedCount = useMemo(() =>
+    episodes.filter(ep => ep.status === 'completed').length,
+    [episodes]
+  );
 
   // 解析错误信息（参考 Plot 页面逻辑）
   const parseError = (errorData: any): { code: string; message: string; suggestion?: string } => {
@@ -605,6 +620,34 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     }
   };
 
+  // 处理查看剧本历史
+  const handleViewScriptHistory = (scriptId: string, allScriptIds?: string[]) => {
+    if (allScriptIds && allScriptIds.length > 0) {
+      setHistoryScriptIds(allScriptIds);
+      setCurrentHistoryIndex(allScriptIds.indexOf(scriptId));
+    } else {
+      // 如果没有传入 allScriptIds，直接使用传入的 scriptId
+      setHistoryScriptIds([scriptId]);
+      setCurrentHistoryIndex(0);
+    }
+    setHistoryModalOpen(false);
+    setViewScriptModalOpen(true);
+  };
+
+  // 处理切换到上一个历史版本
+  const handlePreviousVersion = () => {
+    if (currentHistoryIndex > 0) {
+      setCurrentHistoryIndex(currentHistoryIndex - 1);
+    }
+  };
+
+  // 处理切换到下一个历史版本
+  const handleNextVersion = () => {
+    if (currentHistoryIndex < historyScriptIds.length - 1) {
+      setCurrentHistoryIndex(currentHistoryIndex + 1);
+    }
+  };
+
   // 渲染四段式结构
   const renderStructure = () => {
     if (!currentScript?.structure) return null;
@@ -705,49 +748,78 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         iconType="warning"
       />
 
-      {/* 错误详情弹窗 */}
+      {/* 错误详情弹窗 - 与 Plot Tab 保持一致 */}
       <Modal
         open={errorModalOpen}
         onCancel={() => setErrorModalOpen(false)}
-        footer={[
-          <button
-            key="close"
-            onClick={() => setErrorModalOpen(false)}
-            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
-          >
-            关闭
-          </button>
-        ]}
-        title={
-          <div className="flex items-center gap-2 text-red-400">
-            <XCircle size={20} />
-            <span>操作失败</span>
-          </div>
-        }
+        footer={null}
         centered
-        width={480}
+        width={400}
+        closeIcon={<XCircle size={18} className="text-slate-500 hover:text-white transition-colors" />}
+        className="error-modal"
+        styles={{
+          mask: { backgroundColor: 'rgba(0, 0, 0, 0.4)', backdropFilter: 'blur(2px)' },
+          content: {
+            backgroundColor: '#0f172a',
+            border: '1px solid #334155',
+            borderRadius: '16px',
+            padding: '0',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
+          },
+          header: {
+            backgroundColor: '#0f172a',
+            borderBottom: 'none',
+            padding: '24px 24px 0',
+            borderRadius: '16px 16px 0 0'
+          },
+          body: {
+            backgroundColor: '#0f172a',
+            padding: '16px 24px 24px'
+          },
+          footer: {
+            borderTop: 'none',
+            padding: '0 24px 24px'
+          }
+        }}
       >
-        <div className="space-y-4">
-          {/* 错误信息 */}
-          <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg">
-            <div className="text-sm text-slate-300">{errorInfo?.message}</div>
+        <div className="text-center">
+          {/* 错误图标 */}
+          <div className="mx-auto w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mb-4">
+            <XCircle size={32} className="text-red-400" />
           </div>
 
-          {/* 错误代码 */}
-          {errorInfo?.code && errorInfo.code !== 'UNKNOWN_ERROR' && (
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span className="font-mono">错误代码:</span>
-              <span className="font-mono px-2 py-0.5 bg-slate-800 rounded">{errorInfo.code}</span>
-            </div>
-          )}
+          {/* 标题 */}
+          <h3 className="text-lg font-medium text-white mb-2">操作失败</h3>
+
+          {/* 错误信息 */}
+          <div className="bg-slate-800/50 rounded-lg p-3 mb-4">
+            <p className="text-sm text-slate-300 leading-relaxed">
+              {errorInfo?.message || '未知错误'}
+            </p>
+            {errorInfo?.code && errorInfo.code !== 'UNKNOWN_ERROR' && (
+              <p className="text-xs text-slate-500 mt-2 font-mono">
+                错误码: {errorInfo.code}
+              </p>
+            )}
+          </div>
 
           {/* 建议 */}
           {errorInfo?.suggestion && (
-            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+            <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 mb-4 text-left">
               <div className="text-xs text-amber-400 font-medium mb-1">建议</div>
               <div className="text-sm text-slate-300">{errorInfo.suggestion}</div>
             </div>
           )}
+
+          {/* 操作按钮 */}
+          <div className="flex justify-center gap-3">
+            <button
+              onClick={() => setErrorModalOpen(false)}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium border border-slate-700 transition-colors"
+            >
+              关闭
+            </button>
+          </div>
         </div>
       </Modal>
 
@@ -755,8 +827,33 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
       <AnimatePresence>
         {qaReportModalOpen && currentScript?.qa_report && (
           <QAReportModal
-            report={currentScript.qa_report}
+            report={currentScript.qa_report as any}
             onClose={() => setQAReportModalOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* 剧本历史弹窗 */}
+      <AnimatePresence>
+        {historyModalOpen && selectedEpisode && (
+          <ScriptHistoryModal
+            projectId={projectId}
+            episodeNumber={selectedEpisode}
+            onClose={() => setHistoryModalOpen(false)}
+            onViewScript={handleViewScriptHistory}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* 剧本版本查看弹窗 */}
+      <AnimatePresence>
+        {viewScriptModalOpen && historyScriptIds.length > 0 && (
+          <ScriptViewModal
+            scriptId={historyScriptIds[currentHistoryIndex]}
+            allScriptIds={historyScriptIds}
+            onClose={() => setViewScriptModalOpen(false)}
+            onPrevious={handlePreviousVersion}
+            onNext={handleNextVersion}
           />
         )}
       </AnimatePresence>
@@ -803,6 +900,27 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
 
         {/* Episodes List */}
         <div className="flex-1 overflow-y-auto custom-scrollbar">
+          {/* 整体进度统计 */}
+          {episodes.length > 0 && (
+            <div className="px-4 py-3 bg-slate-800/50 border-b border-slate-700/50">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400">
+                  已生成 <span className="text-cyan-400 font-bold">{completedCount}</span> / {episodes.length} 集
+                </span>
+                {generating !== null && (
+                  <span className="text-cyan-400 animate-pulse">生成中...</span>
+                )}
+              </div>
+              {/* 整体进度条 */}
+              <div className="mt-2 w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-green-500 to-emerald-500 transition-all duration-300"
+                  style={{ width: `${episodes.length > 0 ? (completedCount / episodes.length) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           <div className="px-4 py-3 flex items-center justify-between text-xs text-slate-500 bg-slate-900/50 sticky top-0 z-10 backdrop-blur border-b border-slate-800">
             <span>剧集列表 ({loading ? '-' : episodes.length})</span>
             <button onClick={loadEpisodes} className="hover:text-white transition-colors">
@@ -834,35 +952,52 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
                 <div
                   key={ep.episode}
                   onClick={() => setSelectedEpisode(ep.episode)}
-                  className={`px-4 py-4 cursor-pointer transition-all flex items-center justify-between group ${selectedEpisode === ep.episode
+                  className={`cursor-pointer transition-all ${selectedEpisode === ep.episode
                     ? 'bg-cyan-500/10 border-l-2 border-l-cyan-500 shadow-inner'
                     : 'hover:bg-slate-800 border-l-2 border-l-transparent'
                     }`}
                 >
-                  <div className="min-w-0 pr-2">
-                    <div className={`text-[10px] font-bold uppercase transition-colors ${selectedEpisode === ep.episode ? 'text-cyan-400' : 'text-slate-500'}`}>
-                      第 {ep.episode} 集
+                  <div className="px-4 py-4 flex items-center justify-between group">
+                    <div className="min-w-0 pr-2">
+                      <div className={`text-[10px] font-bold uppercase transition-colors ${selectedEpisode === ep.episode ? 'text-cyan-400' : 'text-slate-500'}`}>
+                        第 {ep.episode} 集
+                      </div>
+                      <div className={`text-xs truncate mt-1 ${selectedEpisode === ep.episode ? 'text-white font-medium' : 'text-slate-400'}`}>
+                        {ep.script?.title || `第 ${ep.episode} 集`}
+                      </div>
                     </div>
-                    <div className={`text-xs truncate mt-1 ${selectedEpisode === ep.episode ? 'text-white font-medium' : 'text-slate-400'}`}>
-                      {ep.script?.title || `第 ${ep.episode} 集`}
+
+                    <div className="shrink-0 flex items-center gap-2">
+                      {ep.status === 'completed' && (
+                        <span className="px-1.5 py-0.5 bg-green-500/10 text-green-500 text-[9px] font-black rounded border border-green-500/20">
+                          OK
+                        </span>
+                      )}
+                      {ep.status === 'generating' && (
+                        <Loader2 size={12} className="animate-spin text-blue-400" />
+                      )}
+                      {ep.status === 'pending' && (
+                        <span className="px-1.5 py-0.5 bg-amber-500/10 text-amber-500 text-[9px] font-black rounded border border-amber-500/20">
+                          待生成
+                        </span>
+                      )}
                     </div>
                   </div>
 
-                  <div className="shrink-0 flex items-center gap-2">
-                    {ep.status === 'completed' && (
-                      <span className="px-1.5 py-0.5 bg-green-500/10 text-green-500 text-[9px] font-black rounded border border-green-500/20">
-                        OK
-                      </span>
-                    )}
-                    {ep.status === 'generating' && (
-                      <Loader2 size={12} className="animate-spin text-blue-400" />
-                    )}
-                    {ep.status === 'pending' && (
-                      <span className="px-1.5 py-0.5 bg-amber-500/10 text-amber-500 text-[9px] font-black rounded border border-amber-500/20">
-                        待生成
-                      </span>
-                    )}
-                  </div>
+                  {/* 生成中进度条 */}
+                  {ep.status === 'generating' && (
+                    <div className="px-4 pb-3">
+                      <div className="w-full bg-slate-800 h-1 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-300"
+                          style={{ width: `${generating === ep.episode ? progress : 0}%` }}
+                        />
+                      </div>
+                      {generating === ep.episode && progress > 0 && (
+                        <p className="text-[10px] text-slate-500 mt-1">{progress}%</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -959,6 +1094,26 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
           {currentScript ? (
             viewMode === 'structure' ? (
               <div className="max-w-3xl mx-auto">
+                {/* 剧本标题栏 */}
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h2 className="text-xl font-bold text-white">{currentScript.title}</h2>
+                    <p className="text-xs text-slate-500 mt-1">第 {selectedEpisode} 集</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setHistoryScriptIds([]);
+                        setHistoryModalOpen(true);
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors border border-slate-700"
+                    >
+                      <History size={14} />
+                      历史
+                    </button>
+                  </div>
+                </div>
+
                 {/* 剧本元信息 */}
                 <div className="mb-6 p-4 bg-slate-800/30 rounded-xl border border-slate-700/50">
                   <div className="grid grid-cols-4 gap-4 text-center">
@@ -1009,13 +1164,55 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
               </div>
             )
           ) : (
-            /* 未选择剧集或待生成 */
+            /* 未选择剧集或待生成/生成中 */
             !selectedEpisode ? (
               <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-4 opacity-30">
                 <FileEdit size={64} />
                 <p className="text-sm tracking-widest uppercase">请选择一个剧集</p>
               </div>
+            ) : generating === selectedEpisode ? (
+              /* 生成中状态 - 显示进度条和详细信息 */
+              <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-4">
+                {/* 加载动画 */}
+                <div className="w-20 h-20 rounded-2xl bg-cyan-500/10 flex items-center justify-center border border-cyan-500/20 animate-pulse">
+                  <Loader2 size={32} className="text-cyan-400 animate-spin" />
+                </div>
+
+                {/* 状态文本 */}
+                <p className="text-sm font-bold text-cyan-400">AI 正在生成第 {generating} 集剧本...</p>
+
+                {/* 当前步骤 */}
+                {currentStep && (
+                  <p className="text-xs text-slate-500">{currentStep}</p>
+                )}
+
+                {/* 进度条 */}
+                <div className="w-64">
+                  <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-300"
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-slate-600 text-center mt-2">{progress}%</p>
+                </div>
+
+                {/* 停止按钮 */}
+                <button
+                  onClick={() => {
+                    setGenerating(null);
+                    setCurrentTaskId(null);
+                    addLog('warning', '用户取消了生成任务');
+                    message.info('已取消生成');
+                  }}
+                  className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs rounded-lg border border-red-500/30 transition-colors flex items-center gap-2"
+                >
+                  <StopCircle size={14} />
+                  停止生成
+                </button>
+              </div>
             ) : (
+              /* 待生成状态 */
               <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-4">
                 <FileEdit size={64} className="opacity-30" />
                 <p className="text-lg font-medium">第 {selectedEpisode} 集剧本待生成</p>
@@ -1024,15 +1221,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
                   disabled={generating !== null}
                   className="mt-4 px-6 py-3 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg font-bold flex items-center gap-2 transition-all hover:scale-105 disabled:opacity-50"
                 >
-                  {generating === selectedEpisode ? (
-                    <>
-                      <Loader2 size={18} className="animate-spin" /> 生成中...
-                    </>
-                  ) : (
-                    <>
-                      <Play size={18} /> 开始生成
-                    </>
-                  )}
+                  <Play size={18} /> 开始生成
                 </button>
               </div>
             )

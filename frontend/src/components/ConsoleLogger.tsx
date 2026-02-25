@@ -95,14 +95,55 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
     }
   }, [logs, isMinimized, visible, userScrolled]);
 
-  // 根据视图模式过滤日志
-  const filteredLogs = logs.filter(log => {
-    if (viewMode === 'raw') {
-      // RAW 模式显示所有非 formatted 类型的日志
-      return log.type !== 'formatted';
+  // 判断日志是否为关键内容（精简版 - 只保留最重要的信息）
+  const isKeyContent = (log: LogEntry): boolean => {
+    const msg = log.message;
+
+    // 排除：纯 JSON 格式的原始数据（通常是调试信息）
+    if (msg.trim().startsWith('{') || msg.trim().startsWith('[')) return false;
+
+    // 排除：过长的内容（可能是原始数据）
+    if (msg.length > 500) return false;
+
+    // 排除：包含大量技术细节的日志
+    if (msg.includes('token') || msg.includes('model_config') || msg.includes('batch_id')) return false;
+
+    // 保留：任务完成/失败状态
+    if (log.type === 'success' && msg.includes('完成')) return true;
+    if (log.type === 'error') return true;
+
+    // 保留：Agent 运行状态（开始/结束）
+    if (msg.includes('Agent') && (msg.includes('运行结束') || msg.includes('开始运行'))) return true;
+
+    // 保留：质检结果摘要（只保留总体评分）
+    if (msg.includes('【总体】') || msg.includes('质检通过') || msg.includes('质检未通过')) return true;
+    if (msg.includes('质量检查') && msg.includes('评分')) return true;
+
+    // 保留：关键进度信息
+    if (msg.includes('生成完成') || msg.includes('拆解完成')) return true;
+
+    return false;
+  };
+
+  // 格式化 JSON 内容（用于 stream 类型）
+  const formatJsonContent = (content: string): string => {
+    try {
+      // 尝试解析 JSON
+      const trimmed = content.trim();
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        const parsed = JSON.parse(trimmed);
+        return JSON.stringify(parsed, null, 2);
+      }
+    } catch {
+      // 不是有效 JSON，返回原内容
     }
-    return log.type === 'formatted';
-  });
+    return content;
+  };
+
+  // 根据视图模式过滤日志
+  const filteredLogs = viewMode === 'formatted'
+    ? logs.filter(isKeyContent)
+    : logs;
 
   // 获取日志类型的中文标签和颜色
   const getLogTypeInfo = (type: string): { label: string; colorClass: string } => {
@@ -130,13 +171,28 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
       .replace(/质量校验/g, '质量检查');
   };
 
-  // 渲染格式化内容（颜色丰富化）
+  // 渲染格式化内容（颜色丰富化 + JSON 格式化）
   const renderFormattedContent = (message: string) => {
     // 先统一名称
     let text = normalizeTaskName(message);
 
     // 去掉开头的 ◆ 符号
     text = text.replace(/^◆\s*/, '');
+
+    // 检测并格式化 JSON 内容
+    const trimmed = text.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        return (
+          <pre className="text-[10px] text-slate-400 bg-slate-900/50 p-2 rounded border border-slate-700/50 overflow-x-auto">
+            {JSON.stringify(parsed, null, 2)}
+          </pre>
+        );
+      } catch {
+        // 不是有效 JSON，继续正常渲染
+      }
+    }
 
     const lines = text.split(/\r?\n/);
 
@@ -554,7 +610,7 @@ const ConsoleLogger: React.FC<ConsoleLoggerProps> = ({
                       {log.type === 'thinking' && <span className="mr-1">◈</span>}
                       {log.type === 'stream' && viewMode === 'raw' && <br />}
                       {log.type === 'stream' && <span className="mr-2 text-purple-400">▸</span>}
-                      {log.type === 'formatted'
+                      {viewMode === 'formatted'
                         ? renderFormattedContent(log.message)
                         : normalizeTaskName(log.message)
                       }
