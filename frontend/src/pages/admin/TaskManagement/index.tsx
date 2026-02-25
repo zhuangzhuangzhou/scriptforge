@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, Tag, message, Modal, Progress, Tooltip, Space, Select, Card, Typography, Table, Checkbox } from 'antd';
+import { Button, Tag, message, Modal, Progress, Tooltip, Space, Typography } from 'antd';
 import { ReloadOutlined, StopOutlined, DeleteOutlined, ExclamationCircleOutlined, PlayCircleOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { adminApi } from '../../../services/api';
+import { GlassTable } from '../../../components/ui/GlassTable';
+import { GlassModal } from '../../../components/ui/GlassModal';
+import { GlassSelect } from '../../../components/ui/GlassSelect';
 
 const { Text, Title } = Typography;
 
@@ -12,12 +15,14 @@ interface RunningTask {
   status: string;
   progress: number;
   current_step: string;
+  retry_count: number;
   user_id: string;
   username: string;
   project_id: string;
   project_name: string;
   batch_id: string;
   batch_number: number;
+  started_at: string;
   created_at: string;
   updated_at: string;
   running_time: number;
@@ -29,7 +34,7 @@ const TaskManagement: React.FC = () => {
   const [tasks, setTasks] = useState<RunningTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [refreshInterval, setRefreshInterval] = useState(5);
+  const [refreshInterval, setRefreshInterval] = useState(30);
 
   // 卡住任务 Modal 状态
   const [stuckTasksModalVisible, setStuckTasksModalVisible] = useState(false);
@@ -194,6 +199,17 @@ const TaskManagement: React.FC = () => {
     }
   };
 
+  // 获取任务类型标签
+  const getTaskTypeTag = (taskType: string) => {
+    const typeMap: Record<string, { color: string; text: string }> = {
+      breakdown: { color: 'blue', text: '剧集拆解' },
+      script: { color: 'green', text: '剧本生成' },
+      consistency_check: { color: 'orange', text: '一致性检查' },
+    };
+    const config = typeMap[taskType] || { color: 'default', text: taskType };
+    return <Tag color={config.color}>{config.text}</Tag>;
+  };
+
   // 获取状态标签
   const getStatusTag = (status: string) => {
     const statusMap: Record<string, { color: string; text: string }> = {
@@ -221,21 +237,38 @@ const TaskManagement: React.FC = () => {
 
   const columns = [
     {
+      title: '序号',
+      key: 'index',
+      width: 70,
+      fixed: 'left' as const,
+      render: (_: any, __: any, index: number) => (
+        <span className="font-mono text-slate-400">{index + 1}</span>
+      ),
+    },
+    {
       title: '任务ID',
       dataIndex: 'id',
       key: 'id',
       width: 120,
       render: (id: string) => (
         <Tooltip title={id}>
-          <span className="font-mono text-xs">{id.slice(0, 8)}...</span>
+          <span className="font-mono text-xs text-slate-300">{id.slice(0, 8)}...</span>
         </Tooltip>
       ),
+    },
+    {
+      title: '任务类型',
+      dataIndex: 'task_type',
+      key: 'task_type',
+      width: 110,
+      render: (taskType: string) => getTaskTypeTag(taskType),
     },
     {
       title: '用户',
       dataIndex: 'username',
       key: 'username',
       width: 100,
+      render: (text: string) => <span className="text-slate-300">{text}</span>,
     },
     {
       title: '项目',
@@ -243,13 +276,14 @@ const TaskManagement: React.FC = () => {
       key: 'project_name',
       width: 150,
       ellipsis: true,
+      render: (text: string) => <span className="text-slate-300">{text}</span>,
     },
     {
       title: '批次',
       dataIndex: 'batch_number',
       key: 'batch_number',
       width: 80,
-      render: (num: number) => <span className="font-mono">#{num}</span>,
+      render: (num: number) => <span className="font-mono text-slate-300">#{num}</span>,
     },
     {
       title: '状态',
@@ -311,11 +345,33 @@ const TaskManagement: React.FC = () => {
       },
     },
     {
+      title: '重试次数',
+      dataIndex: 'retry_count',
+      key: 'retry_count',
+      width: 90,
+      render: (count: number) => (
+        <span className={`font-mono text-xs ${count > 0 ? 'text-amber-500' : 'text-slate-400'}`}>
+          {count}
+        </span>
+      ),
+    },
+    {
+      title: '开始时间',
+      dataIndex: 'started_at',
+      key: 'started_at',
+      width: 130,
+      render: (time: string) => (
+        <span className="text-slate-400 text-xs">
+          {time ? formatTime(time) : '-'}
+        </span>
+      ),
+    },
+    {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
       width: 130,
-      render: (time: string) => formatTime(time),
+      render: (time: string) => <span className="text-slate-400 text-xs">{formatTime(time)}</span>,
     },
     {
       title: '操作',
@@ -336,6 +392,114 @@ const TaskManagement: React.FC = () => {
     },
   ];
 
+  const stuckTaskColumns = [
+    {
+      title: '序号',
+      key: 'index',
+      width: 70,
+      render: (_: any, __: any, index: number) => (
+        <span className="font-mono text-slate-400">{index + 1}</span>
+      ),
+    },
+    {
+      title: '任务ID',
+      dataIndex: 'id',
+      key: 'id',
+      width: 100,
+      render: (id: string) => (
+        <Tooltip title={id}>
+          <span className="font-mono text-xs">{id.slice(0, 8)}...</span>
+        </Tooltip>
+      ),
+    },
+    {
+      title: '任务类型',
+      dataIndex: 'task_type',
+      key: 'task_type',
+      width: 110,
+      render: (taskType: string) => getTaskTypeTag(taskType),
+    },
+    {
+      title: '用户',
+      dataIndex: 'username',
+      key: 'username',
+      width: 100,
+    },
+    {
+      title: '项目',
+      dataIndex: 'project_name',
+      key: 'project_name',
+      width: 150,
+      ellipsis: true,
+    },
+    {
+      title: '批次',
+      dataIndex: 'batch_number',
+      key: 'batch_number',
+      width: 80,
+      render: (num: number) => <span className="font-mono">#{num}</span>,
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      key: 'status',
+      width: 100,
+      render: (status: string) => getStatusTag(status),
+    },
+    {
+      title: '进度',
+      dataIndex: 'progress',
+      key: 'progress',
+      width: 100,
+      render: (progress: number) => (
+        <Progress
+          percent={progress}
+          size="small"
+          status={progress < 100 ? 'active' : 'success'}
+        />
+      ),
+    },
+    {
+      title: '运行时间',
+      dataIndex: 'running_time',
+      key: 'running_time',
+      width: 100,
+      render: (time: number) => {
+        const style = getRunningTimeColor(time);
+        return (
+          <span className={`font-mono text-xs ${style.text}`}>
+            {formatDuration(time)}
+          </span>
+        );
+      },
+    },
+    {
+      title: '停滞时间',
+      dataIndex: 'idle_time',
+      key: 'idle_time',
+      width: 100,
+      render: (time: number) => {
+        const style = getIdleTimeColor(time);
+        return (
+          <Tooltip title="距离上次更新的时间">
+            <span className={`font-mono text-xs ${style.text}`}>
+              {formatDuration(time)}
+            </span>
+          </Tooltip>
+        );
+      },
+    },
+    {
+      title: '卡住原因',
+      dataIndex: 'reason',
+      key: 'reason',
+      width: 150,
+      render: (reason: string) => (
+        <span className="text-amber-500 text-xs">{reason}</span>
+      ),
+    },
+  ];
+
   return (
     <div className="p-6 h-full overflow-y-auto">
       {/* 页面标题 */}
@@ -347,7 +511,7 @@ const TaskManagement: React.FC = () => {
           </Text>
         </div>
         <Space>
-          <Select
+          <GlassSelect
             value={refreshInterval}
             onChange={setRefreshInterval}
             style={{ width: 100 }}
@@ -369,6 +533,7 @@ const TaskManagement: React.FC = () => {
           <Button
             icon={<DeleteOutlined />}
             onClick={handleCheckStuckTasks}
+            loading={loadingStuckTasks}
           >
             检查卡住任务
           </Button>
@@ -382,108 +547,23 @@ const TaskManagement: React.FC = () => {
         </Space>
       </div>
 
-      {/* 任务列表卡片 */}
-      <Card
-        bordered={false}
-        className="bg-slate-800"
-        bodyStyle={{ padding: 0 }}
-      >
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-slate-900">
-              <tr>
-                {columns.map((col) => (
-                  <th
-                    key={col.key as string}
-                    className="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider"
-                    style={{ width: col.width }}
-                  >
-                    {col.title}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-700">
-              {loading && tasks.length === 0 ? (
-                <tr>
-                  <td colSpan={columns.length} className="px-4 py-12 text-center">
-                    <ReloadOutlined className="animate-spin text-2xl text-slate-500" />
-                  </td>
-                </tr>
-              ) : tasks.length === 0 ? (
-                <tr>
-                  <td colSpan={columns.length} className="px-4 py-12 text-center">
-                    <ClockCircleOutlined className="text-4xl text-slate-600 mb-3" />
-                    <p className="text-slate-500">当前没有正在运行的任务</p>
-                  </td>
-                </tr>
-              ) : (
-                tasks.map((task) => (
-                  <tr key={task.id} className="hover:bg-slate-700/50 transition-colors">
-                    <td className="px-4 py-3">
-                      <Tooltip title={task.id}>
-                        <span className="font-mono text-xs">{task.id.slice(0, 8)}...</span>
-                      </Tooltip>
-                    </td>
-                    <td className="px-4 py-3 text-slate-300">{task.username}</td>
-                    <td className="px-4 py-3 text-slate-300 max-w-[150px] truncate" title={task.project_name}>
-                      {task.project_name}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-slate-300">#{task.batch_number}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      {getStatusTag(task.status)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="space-y-1">
-                        <Progress
-                          percent={task.progress}
-                          size="small"
-                          status={task.progress < 100 ? 'active' : 'success'}
-                          strokeColor={{
-                            '0%': '#108ee9',
-                            '100%': '#87d068',
-                          }}
-                        />
-                        <div className="text-xs text-slate-500 truncate max-w-[160px]" title={task.current_step}>
-                          {task.current_step || '-'}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`font-mono text-xs ${getRunningTimeColor(task.running_time).text}`}>
-                        {formatDuration(task.running_time)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Tooltip title="距离上次更新的时间">
-                        <span className={`font-mono text-xs ${getIdleTimeColor(task.idle_time).text}`}>
-                          {formatDuration(task.idle_time)}
-                        </span>
-                      </Tooltip>
-                    </td>
-                    <td className="px-4 py-3 text-slate-400 text-xs">
-                      {formatTime(task.created_at)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Button
-                        type="link"
-                        danger
-                        size="small"
-                        icon={<StopOutlined />}
-                        onClick={() => handleStopTask(task)}
-                      >
-                        停止
-                      </Button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      {/* 任务列表 */}
+      <GlassTable
+        dataSource={tasks}
+        columns={columns}
+        rowKey="id"
+        loading={loading}
+        pagination={false}
+        scroll={{ x: 1400 }}
+        locale={{
+          emptyText: (
+            <div className="py-12">
+              <ClockCircleOutlined className="text-4xl text-slate-600 mb-3" />
+              <p className="text-slate-500">当前没有正在运行的任务</p>
+            </div>
+          ),
+        }}
+      />
 
       {/* 底部提示 */}
       <div className="mt-4 text-xs text-slate-500 flex items-center gap-4">
@@ -494,7 +574,7 @@ const TaskManagement: React.FC = () => {
       </div>
 
       {/* 卡住任务 Modal */}
-      <Modal
+      <GlassModal
         title="卡住的任务列表"
         open={stuckTasksModalVisible}
         onCancel={() => {
@@ -529,8 +609,9 @@ const TaskManagement: React.FC = () => {
           </ul>
         </div>
 
-        <Table
+        <GlassTable
           dataSource={stuckTasks}
+          columns={stuckTaskColumns}
           rowKey="id"
           loading={loadingStuckTasks}
           pagination={false}
@@ -539,100 +620,8 @@ const TaskManagement: React.FC = () => {
             selectedRowKeys: selectedStuckTaskIds,
             onChange: (selectedKeys) => setSelectedStuckTaskIds(selectedKeys as string[]),
           }}
-          columns={[
-            {
-              title: '任务ID',
-              dataIndex: 'id',
-              key: 'id',
-              width: 100,
-              render: (id: string) => (
-                <Tooltip title={id}>
-                  <span className="font-mono text-xs">{id.slice(0, 8)}...</span>
-                </Tooltip>
-              ),
-            },
-            {
-              title: '用户',
-              dataIndex: 'username',
-              key: 'username',
-              width: 100,
-            },
-            {
-              title: '项目',
-              dataIndex: 'project_name',
-              key: 'project_name',
-              width: 150,
-              ellipsis: true,
-            },
-            {
-              title: '批次',
-              dataIndex: 'batch_number',
-              key: 'batch_number',
-              width: 80,
-              render: (num: number) => <span className="font-mono">#{num}</span>,
-            },
-            {
-              title: '状态',
-              dataIndex: 'status',
-              key: 'status',
-              width: 100,
-              render: (status: string) => getStatusTag(status),
-            },
-            {
-              title: '进度',
-              dataIndex: 'progress',
-              key: 'progress',
-              width: 100,
-              render: (progress: number) => (
-                <Progress
-                  percent={progress}
-                  size="small"
-                  status={progress < 100 ? 'active' : 'success'}
-                />
-              ),
-            },
-            {
-              title: '运行时间',
-              dataIndex: 'running_time',
-              key: 'running_time',
-              width: 100,
-              render: (time: number) => {
-                const style = getRunningTimeColor(time);
-                return (
-                  <span className={`font-mono text-xs ${style.text}`}>
-                    {formatDuration(time)}
-                  </span>
-                );
-              },
-            },
-            {
-              title: '停滞时间',
-              dataIndex: 'idle_time',
-              key: 'idle_time',
-              width: 100,
-              render: (time: number) => {
-                const style = getIdleTimeColor(time);
-                return (
-                  <Tooltip title="距离上次更新的时间">
-                    <span className={`font-mono text-xs ${style.text}`}>
-                      {formatDuration(time)}
-                    </span>
-                  </Tooltip>
-                );
-              },
-            },
-            {
-              title: '卡住原因',
-              dataIndex: 'reason',
-              key: 'reason',
-              width: 150,
-              render: (reason: string) => (
-                <span className="text-amber-500 text-xs">{reason}</span>
-              ),
-            },
-          ]}
         />
-      </Modal>
+      </GlassModal>
     </div>
   );
 };
