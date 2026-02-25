@@ -406,7 +406,7 @@ export const useConsoleLogger = (
         clearInterval(pollTimerRef.current);
       }
     };
-  }, [taskId, isConnected, pollInterval, addLog, fetchLLMCallLogs]);
+  }, [taskId, isConnected, pollInterval, taskType, addLog, fetchLLMCallLogs]);
 
   return {
     logs,

@@ -305,7 +305,8 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     clearLogs
   } = useConsoleLogger(currentTaskId, {
     enableWebSocket: true,
-    pollInterval: 999999  // 设置超长间隔，实际上禁用轮询
+    pollInterval: 999999,  // 设置超长间隔，实际上禁用轮询（轮询由 useScriptPolling 处理）
+    taskType: 'script'     // 指定任务类型为 script
   });
 
   // 合并进度：优先使用 WebSocket 实时进度，回退到轮询进度
