@@ -163,7 +163,97 @@ python3 debug_api.py   # 调用实际接口，检查状态码和响应
 
 ## 8. 常见错误与陷阱 (Common Mistakes)
 
-### 8.1 SQLAlchemy AsyncSession 方法
+### 8.1 API 分页与字段选择优化
+
+**问题**: 返回不需要的字段导致数据传输量大，数据库查询效率低
+
+**场景**: 列表 API 返回所有字段，大项目可能有大量数据
+
+**优化方案**:
+
+```python
+# ❌ 错误：返回所有字段，无分页
+@router.get("/project-breakdowns")
+async def get_project_breakdowns(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(PlotBreakdown)  # 查询所有字段
+        .join(Batch)
+        .join(Project)
+        .where(Project.id == project_id, Project.user_id == current_user.id)
+    )
+    breakdowns = result.scalars().all()
+
+    # 返回 6 个字段，但前端只需要 2 个
+    return [
+        {
+            "id": str(bd.id),
+            "batch_id": str(bd.batch_id),
+            "plot_points": bd.plot_points,
+            "qa_status": bd.qa_status,
+            "qa_score": bd.qa_score,
+            "created_at": bd.created_at.isoformat()
+        }
+        for bd in breakdowns
+    ]
+
+# ✅ 正确：分页 + 指定字段
+@router.get("/project-breakdowns")
+async def get_project_breakdowns(
+    project_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    from sqlalchemy import func
+
+    # 1. 先查询总数
+    count_result = await db.execute(
+        select(func.count(PlotBreakdown.id))
+        .join(Batch).join(Project)
+        .where(Project.id == project_id, Project.user_id == current_user.id)
+    )
+    total = count_result.scalar() or 0
+
+    # 2. 分页查询，只返回需要的字段
+    result = await db.execute(
+        select(
+            PlotBreakdown.id,
+            PlotBreakdown.batch_id,
+            PlotBreakdown.plot_points  # 只返回这 3 个字段
+        )
+        .join(Batch).join(Project)
+        .where(Project.id == project_id, Project.user_id == current_user.id)
+        .order_by(PlotBreakdown.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    rows = result.all()
+
+    return {
+        "items": [
+            {"id": str(row.id), "batch_id": str(row.batch_id), "plot_points": row.plot_points}
+            for row in rows
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size
+    }
+```
+
+**优化效果**:
+
+| 优化点 | 效果 |
+|--------|------|
+| 减少返回字段 | 6 → 3 字段，减少约 50% 数据传输 |
+| 添加分页 | 支持大项目分页加载 |
+| 使用 select() 指定字段 | 只查询需要的字段，减少 DB IO |
+
+### 8.2 SQLAlchemy AsyncSession 方法
 
 **问题**: `expire_all()` 是同步方法，不能使用 `await`
 

@@ -1708,3 +1708,33 @@ CREDITS_RETRY=50         # 重试费用
 
 ---
 
+
+## [20260224-194015] API 分页优化实现
+
+**时间**: 2026-02-24 19:40:15
+
+**提交**:
+- `db3e616` - chore: 代码优化和错误处理增强
+- `a495258` - chore: 代码优化和规范化
+
+
+| 变更 | 描述 |
+|------|------|
+| 后端 API | `/project-breakdowns` 添加分页参数，优化返回字段 |
+| 前端 API | 支持分页参数调用 |
+| 前端组件 | 适配分页响应格式 |
+| 规范文档 | 记录 API 分页优化最佳实践 |
+
+**详细说明**:
+- 后端：添加 `page` 和 `page_size` 查询参数，使用 `select()` 指定返回字段减少 DB IO
+- 前端：调用 API 时传入分页参数，直接使用 `response.data.items`
+- 规范：在 `.trellis/spec/backend/index.md` 新增 API 分页优化章节
+
+**涉及文件**:
+- `backend/app/api/v1/breakdown.py`
+- `frontend/src/services/api.ts`
+- `frontend/src/pages/user/Workspace/ScriptTab/index.tsx`
+- `.trellis/spec/backend/index.md`
+
+---
+

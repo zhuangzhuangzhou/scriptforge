@@ -15,11 +15,10 @@ else
 
     # 使用默认配置启动 Chrome（保持登录状态）
     # 添加 --remote-allow-origins=* 允许 WebSocket 连接
-    # 使用 --user-data-dir 指定数据目录
+    # 不指定 --user-data-dir，使用系统默认配置目录
     /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
         --remote-debugging-port=9222 \
         --remote-allow-origins=* \
-        --user-data-dir=/tmp/chrome-debug \
         --new-window about:blank &
 
     # 等待 Chrome 启动
