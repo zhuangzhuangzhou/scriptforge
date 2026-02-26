@@ -57,6 +57,11 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
   const [exporting, setExporting] = useState(false);
   const [consoleVisible, setConsoleVisible] = useState(false);
 
+  // 分页状态
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const PAGE_SIZE = 20;
+
   // 剧本历史弹窗状态
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const [viewScriptModalOpen, setViewScriptModalOpen] = useState(false);
@@ -220,17 +225,17 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     }
   });
 
-  // 加载剧集列表（使用聚合接口）
-  const loadEpisodes = useCallback(async () => {
+  // 加载剧集列表（使用聚合接口，支持分页）
+  const loadEpisodes = useCallback(async (page: number = 1) => {
     if (!projectId) return;
 
     try {
       setLoading(true);
 
-      const response = await scriptApi.getEpisodesSummary(projectId);
-      const { episodes: episodeList, running_task, progress: progressData } = response.data;
+      const response = await scriptApi.getEpisodesSummary(projectId, page, PAGE_SIZE);
+      const { episodes: episodeList, running_task, progress: progressData, pagination } = response.data;
 
-      // 转换为前端格式
+      // 转换为前端格式（注意：后端不再返回 structure、full_script、qa_report）
       const formattedEpisodes = episodeList.map((ep: any) => ({
         episode: ep.episode_number,
         status: ep.status,
@@ -244,16 +249,19 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
           status: ep.status,
           qa_status: ep.script.qa_status,
           qa_score: ep.script.qa_score,
-          structure: ep.script.structure,
-          full_script: ep.script.full_script,
+          // 大字段需要单独加载
+          structure: undefined,
+          full_script: undefined,
           scenes: [],
           characters: [],
           hook_type: '',
-          qa_report: ep.script.qa_report
+          qa_report: undefined
         } : undefined
       }));
 
       setEpisodes(formattedEpisodes);
+      setCurrentPage(pagination.page);
+      setTotalPages(pagination.total_pages);
 
       // 更新进度信息
       if (onProgressUpdate) {
@@ -283,7 +291,8 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [projectId, showErrorModal, onProgressUpdate, addLog, setCurrentTaskId, setIsRunning, setEpisode]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   // 合并进度
   const effectiveProgress = wsProgress > 0 ? wsProgress : progress;
@@ -316,15 +325,40 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     }
   }, [projectId, loadEpisodes]);
 
-  // 加载单集剧本
+  // 加载单集剧本完整数据（包含 structure、full_script 等大字段）
   const loadEpisodeScript = useCallback(async (episodeNumber: number) => {
     if (!projectId) return;
 
     const episode = episodes.find(ep => ep.episode === episodeNumber);
-    if (episode?.script) {
-      setCurrentScript(episode.script);
-    } else {
+    if (!episode?.script?.id) {
       setCurrentScript(null);
+      return;
+    }
+
+    try {
+      // 调用详情接口获取完整数据
+      const response = await scriptApi.getScriptDetail(episode.script.id);
+      const scriptData = response.data;
+
+      setCurrentScript({
+        id: scriptData.id,
+        episode_number: scriptData.episode_number,
+        title: scriptData.title,
+        word_count: scriptData.word_count,
+        status: scriptData.status as EpisodeScript['status'],
+        qa_status: scriptData.qa_status,
+        qa_score: scriptData.qa_score,
+        structure: scriptData.content?.structure,
+        full_script: scriptData.content?.full_script,
+        scenes: scriptData.content?.scenes || [],
+        characters: scriptData.content?.characters || [],
+        hook_type: scriptData.content?.hook_type || '',
+        qa_report: scriptData.qa_report
+      });
+    } catch (err) {
+      console.error('加载剧本详情失败:', err);
+      // 降级使用列表中的基本信息
+      setCurrentScript(episode.script);
     }
   }, [projectId, episodes]);
 
@@ -796,6 +830,9 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         selectedEpisode={selectedEpisode}
         onSelectEpisode={setSelectedEpisode}
         loading={loading}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={(page) => loadEpisodes(page)}
       />
 
       {/* 右侧主内容区 */}

@@ -10,6 +10,16 @@ from typing import Optional
 # canceled	      pending（或 failed）	                 取消后批次可重新提交
 
 
+class TaskType:
+    """任务类型常量 - 避免字符串硬编码导致的不一致问题"""
+    BREAKDOWN = "breakdown"
+    EPISODE_SCRIPT = "episode_script"
+    CONSISTENCY_CHECK = "consistency_check"
+
+    # 所有有效的任务类型集合
+    ALL = {BREAKDOWN, EPISODE_SCRIPT, CONSISTENCY_CHECK}
+
+
 class TaskStatus:
     PENDING = "pending"
     QUEUED = "queued"

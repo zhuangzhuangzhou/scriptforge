@@ -1,5 +1,6 @@
 import React from 'react';
-import { FileEdit, Loader2 } from 'lucide-react';
+import { FileEdit } from 'lucide-react';
+import { Pagination } from 'antd';
 import EpisodeCard from './EpisodeCard';
 import type { EpisodeScript } from '../../../../types';
 
@@ -14,13 +15,20 @@ interface EpisodeListProps {
   selectedEpisode: number | null;
   onSelectEpisode: (episode: number) => void;
   loading: boolean;
+  // 分页相关
+  currentPage?: number;
+  totalPages?: number;
+  onPageChange?: (page: number) => void;
 }
 
 const EpisodeList: React.FC<EpisodeListProps> = ({
   episodes,
   selectedEpisode,
   onSelectEpisode,
-  loading
+  loading,
+  currentPage = 1,
+  totalPages = 1,
+  onPageChange
 }) => {
   // 骨架屏组件
   const EpisodeSkeleton = () => (
@@ -63,6 +71,22 @@ const EpisodeList: React.FC<EpisodeListProps> = ({
           </>
         )}
       </div>
+
+      {/* 分页控件 */}
+      {totalPages > 1 && (
+        <div className="px-3 py-2 border-t border-slate-800 bg-slate-900/80">
+          <Pagination
+            current={currentPage}
+            total={totalPages * 20}
+            pageSize={20}
+            onChange={onPageChange}
+            size="small"
+            showSizeChanger={false}
+            showQuickJumper={totalPages > 10}
+            className="flex justify-center [&_.ant-pagination-item]:!bg-slate-800 [&_.ant-pagination-item]:!border-slate-700 [&_.ant-pagination-item-active]:!bg-cyan-600 [&_.ant-pagination-item-active]:!border-cyan-600 [&_.ant-pagination-item_a]:!text-slate-300 [&_.ant-pagination-item-active_a]:!text-white [&_.ant-pagination-prev_.ant-pagination-item-link]:!bg-slate-800 [&_.ant-pagination-prev_.ant-pagination-item-link]:!border-slate-700 [&_.ant-pagination-next_.ant-pagination-item-link]:!bg-slate-800 [&_.ant-pagination-next_.ant-pagination-item-link]:!border-slate-700 [&_.ant-pagination-jump-prev]:!text-slate-500 [&_.ant-pagination-jump-next]:!text-slate-500"
+          />
+        </div>
+      )}
     </div>
   );
 };

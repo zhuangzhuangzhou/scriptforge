@@ -162,6 +162,11 @@ export const useScriptPolling = (options: UseScriptPollingOptions = {}) => {
     };
   }, [clearPolling]);
 
+  // 稳定的 enablePolling 函数
+  const enablePolling = useCallback((enable: boolean) => {
+    enablePollingRef.current = enable;
+  }, []);
+
   return {
     taskId,
     progress,
@@ -174,6 +179,6 @@ export const useScriptPolling = (options: UseScriptPollingOptions = {}) => {
     setTaskId,  // 导出 setTaskId，用于恢复任务
     setIsRunning,  // 导出 setIsRunning，用于恢复状态
     setEpisode: setCurrentEpisode,  // 导出设置 episode 的方法
-    enablePolling: (enable: boolean) => { enablePollingRef.current = enable; }  // 控制是否启用轮询
+    enablePolling  // 控制是否启用轮询
   };
 };

@@ -88,6 +88,7 @@ class ProjectResponse(BaseModel):
     total_chapters: int = 0
     total_words: int = 0
     processed_chapters: int = 0
+    scripted_chapters: int = 0
     status: str
     chapter_split_rule: Optional[Union[str, Dict[str, Any]]] = None
     created_at: str

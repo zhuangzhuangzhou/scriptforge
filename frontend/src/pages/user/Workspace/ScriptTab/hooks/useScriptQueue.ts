@@ -186,6 +186,11 @@ export const useScriptQueue = (options: UseScriptQueueOptions = {}) => {
     message.info('已停止批量生成');
   }, [currentTaskId, cancelQueue]);
 
+  // 稳定的 enablePolling 函数
+  const enablePolling = useCallback((enable: boolean) => {
+    enablePollingRef.current = enable;
+  }, []);
+
   return {
     queue,
     currentIndex,
@@ -197,6 +202,6 @@ export const useScriptQueue = (options: UseScriptQueueOptions = {}) => {
     cancelQueue,
     stopQueue,
     currentItem: queue[currentIndex] || null,
-    enablePolling: (enable: boolean) => { enablePollingRef.current = enable; }  // 新增：控制是否启用轮询
+    enablePolling  // 控制是否启用轮询
   };
 };

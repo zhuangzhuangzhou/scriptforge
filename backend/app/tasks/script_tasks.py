@@ -16,6 +16,7 @@ from app.core.progress import update_task_progress_sync
 from app.core.status import TaskStatus
 from app.core.exceptions import AITaskException, RetryableError, classify_exception
 from app.models.ai_task import AITask
+from app.models.project import Project
 import logging
 
 logger = logging.getLogger(__name__)
@@ -110,6 +111,20 @@ def run_episode_script_task(
         )
 
         update_task_progress_sync(db, task_id, status=TaskStatus.COMPLETED, progress=100, current_step="剧本创作完成 (100%)")
+
+        # 更新项目的已生成剧本集数（仅首次生成该集时累加）
+        from app.models.script import Script
+        existing_scripts = db.query(Script).filter(
+            Script.project_id == project_id,
+            Script.episode_number == episode_number
+        ).count()
+        # 如果这是该集的第一个剧本版本，累加 scripted_chapters
+        if existing_scripts == 1:  # 刚刚创建的那一个
+            project = db.query(Project).filter(Project.id == project_id).first()
+            if project:
+                project.scripted_chapters = (project.scripted_chapters or 0) + 1
+                db.commit()
+                logger.info(f"项目 {project_id} 已生成剧本集数更新为 {project.scripted_chapters}")
 
         # 发布任务完成日志
         if log_publisher:
@@ -425,6 +440,7 @@ def _update_plot_points_status_sync(db: Session, breakdown_id: str, episode_numb
         episode_number: 剧集编号
     """
     from app.models.plot_breakdown import PlotBreakdown
+    from sqlalchemy.orm.attributes import flag_modified
 
     breakdown = db.query(PlotBreakdown).filter(PlotBreakdown.id == breakdown_id).first()
 
@@ -444,6 +460,8 @@ def _update_plot_points_status_sync(db: Session, breakdown_id: str, episode_numb
 
     if updated_count > 0:
         breakdown.plot_points = updated_points
+        # 显式标记 JSONB 字段已修改，确保 SQLAlchemy 检测到变更
+        flag_modified(breakdown, 'plot_points')
         db.commit()
         logger.info(f"已将第 {episode_number} 集的 {updated_count} 个剧情点标记为已使用")
     else:

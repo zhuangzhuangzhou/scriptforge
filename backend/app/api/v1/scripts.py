@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, Field, field_serializer, model_validator
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime, timezone
 from uuid import UUID
 from app.core.database import get_db
@@ -15,9 +15,216 @@ from app.models.script import Script
 from app.api.v1.auth import get_current_user
 from app.api.v1.breakdown import _humanize_error_message
 from app.core.quota import QuotaService
-from app.core.status import TaskStatus
+from app.core.status import TaskStatus, TaskType
 
 router = APIRouter()
+
+
+# ==================== 剧集摘要聚合接口 ====================
+
+class EpisodeScriptInfo(BaseModel):
+    """剧集中的剧本信息（轻量版，不含大字段）"""
+    id: str
+    title: Optional[str] = None
+    word_count: int = 0
+    qa_status: Optional[str] = None
+    qa_score: Optional[int] = None
+    # 移除大字段: structure, full_script, qa_report
+
+
+class EpisodeSummaryItem(BaseModel):
+    """单个剧集摘要"""
+    episode_number: int
+    status: str  # pending | in_progress | completed | failed
+    breakdown_id: Optional[str] = None
+    batch_id: Optional[str] = None
+    script: Optional[EpisodeScriptInfo] = None
+
+
+class RunningTaskInfo(BaseModel):
+    """正在运行的任务信息"""
+    task_id: str
+    episode_number: int
+    progress: int = 0
+    current_step: Optional[str] = None
+
+
+class ProgressSummary(BaseModel):
+    """进度统计"""
+    total: int = 0
+    completed: int = 0
+    in_progress: int = 0
+    pending: int = 0
+    failed: int = 0
+
+
+class PaginationInfo(BaseModel):
+    """分页信息"""
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class EpisodesSummaryResponse(BaseModel):
+    """剧集摘要响应"""
+    episodes: List[EpisodeSummaryItem]
+    running_task: Optional[RunningTaskInfo] = None
+    progress: ProgressSummary
+    pagination: PaginationInfo
+
+
+@router.get("/episodes/summary", response_model=EpisodesSummaryResponse)
+async def get_episodes_summary(
+    project_id: str,
+    page: int = 1,
+    page_size: int = 20,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取项目的剧集摘要（Script Tab 专用聚合接口）
+
+    支持分页，返回轻量级数据（不含 structure、full_script 等大字段）。
+    进度统计基于全量数据计算，不受分页影响。
+    """
+    # 验证项目归属
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.user_id == current_user.id
+        )
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    # 1. 获取所有拆解结果（只取 episode 和 breakdown_id）
+    breakdowns_result = await db.execute(
+        select(PlotBreakdown).join(Batch).where(
+            Batch.project_id == project_id
+        )
+    )
+    breakdowns = breakdowns_result.scalars().all()
+
+    # 建立 episode -> breakdown 映射
+    episode_map: dict[int, dict[str, Any]] = {}
+    for breakdown in breakdowns:
+        if breakdown.plot_points:
+            for pp in breakdown.plot_points:
+                ep = pp.get("episode")
+                if ep and ep > 0 and ep not in episode_map:
+                    episode_map[ep] = {
+                        "episode_number": ep,
+                        "status": "pending",
+                        "breakdown_id": str(breakdown.id),
+                        "batch_id": str(breakdown.batch_id),
+                        "script": None
+                    }
+
+    # 2. 获取已生成的剧本（只取当前版本）
+    scripts_result = await db.execute(
+        select(Script).where(
+            Script.project_id == project_id,
+            Script.is_current == True
+        )
+    )
+    scripts = scripts_result.scalars().all()
+
+    for script in scripts:
+        ep = script.episode_number
+        script_info = EpisodeScriptInfo(
+            id=str(script.id),
+            title=script.title,
+            word_count=script.word_count or 0,
+            qa_status=script.qa_status,
+            qa_score=script.qa_score
+        )
+
+        if ep in episode_map:
+            episode_map[ep]["status"] = "completed"
+            episode_map[ep]["script"] = script_info
+        else:
+            # 剧本存在但没有对应的拆解记录（边缘情况）
+            episode_map[ep] = {
+                "episode_number": ep,
+                "status": "completed",
+                "breakdown_id": str(script.plot_breakdown_id) if script.plot_breakdown_id else None,
+                "batch_id": str(script.batch_id) if script.batch_id else None,
+                "script": script_info
+            }
+
+    # 3. 获取正在运行的任务
+    running_task_result = await db.execute(
+        select(AITask).where(
+            AITask.project_id == project_id,
+            AITask.task_type == TaskType.EPISODE_SCRIPT,
+            AITask.status.in_([TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.IN_PROGRESS, TaskStatus.RETRYING])
+        ).order_by(AITask.created_at.desc()).limit(1)
+    )
+    running_task = running_task_result.scalar_one_or_none()
+
+    running_task_info = None
+    if running_task:
+        ep_num = (running_task.config.get("episode_number") if running_task.config else None) or \
+                 (running_task.result.get("episode_number") if running_task.result else None)
+        running_task_info = RunningTaskInfo(
+            task_id=str(running_task.id),
+            episode_number=ep_num or 0,
+            progress=running_task.progress or 0,
+            current_step=running_task.current_step
+        )
+        # 更新对应剧集状态为 in_progress
+        if ep_num and ep_num in episode_map:
+            episode_map[ep_num]["status"] = "in_progress"
+
+    # 4. 检查失败的任务（最近的）
+    failed_tasks_result = await db.execute(
+        select(AITask).where(
+            AITask.project_id == project_id,
+            AITask.task_type == TaskType.EPISODE_SCRIPT,
+            AITask.status == TaskStatus.FAILED
+        ).order_by(AITask.created_at.desc())
+    )
+    failed_tasks = failed_tasks_result.scalars().all()
+
+    for task in failed_tasks:
+        ep_num = (task.config.get("episode_number") if task.config else None)
+        if ep_num and ep_num in episode_map:
+            # 只有当该集没有成功的剧本时才标记为 failed
+            if episode_map[ep_num]["status"] == "pending":
+                episode_map[ep_num]["status"] = "failed"
+
+    # 构建响应
+    all_episodes = sorted(
+        [EpisodeSummaryItem(**ep) for ep in episode_map.values()],
+        key=lambda x: x.episode_number
+    )
+
+    # 统计进度（基于全量数据）
+    progress = ProgressSummary(
+        total=len(all_episodes),
+        completed=sum(1 for ep in all_episodes if ep.status == "completed"),
+        in_progress=sum(1 for ep in all_episodes if ep.status == "in_progress"),
+        pending=sum(1 for ep in all_episodes if ep.status == "pending"),
+        failed=sum(1 for ep in all_episodes if ep.status == "failed")
+    )
+
+    # 分页
+    total_items = len(all_episodes)
+    total_pages = (total_items + page_size - 1) // page_size if total_items > 0 else 1
+    start_idx = (page - 1) * page_size
+    end_idx = start_idx + page_size
+    paged_episodes = all_episodes[start_idx:end_idx]
+
+    return EpisodesSummaryResponse(
+        episodes=paged_episodes,
+        running_task=running_task_info,
+        progress=progress,
+        pagination=PaginationInfo(
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
+    )
 
 
 class EpisodeScriptStartRequest(BaseModel):
@@ -283,7 +490,7 @@ async def start_episode_script(
     task = AITask(
         project_id=breakdown.project_id,
         batch_id=breakdown.batch_id,
-        task_type="episode_script",
+        task_type=TaskType.EPISODE_SCRIPT,
         status=TaskStatus.QUEUED,
         depends_on=[],
         config=task_config
@@ -328,11 +535,11 @@ async def get_project_script_tasks(
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
 
-    # 查询项目的所有 script 任务
+    # 查询项目的所有剧本生成任务
     result = await db.execute(
         select(AITask).where(
             AITask.project_id == project_id,
-            AITask.task_type == "script"
+            AITask.task_type == TaskType.EPISODE_SCRIPT  # 与创建任务时的 task_type 一致
         ).order_by(AITask.created_at.desc())
     )
     tasks = result.scalars().all()
@@ -342,7 +549,8 @@ async def get_project_script_tasks(
         {
             "id": str(task.id),
             "status": task.status,
-            "episode_number": task.result.get("episode_number") if task.result else None,
+            # 优先从 config 获取（任务运行中），其次从 result 获取（任务完成后）
+            "episode_number": (task.config.get("episode_number") if task.config else None) or (task.result.get("episode_number") if task.result else None),
             "progress": task.progress or 0,
             "current_step": task.current_step,
             "created_at": task.created_at.isoformat() if task.created_at else None
@@ -578,7 +786,7 @@ async def start_batch_scripts(
         task = AITask(
             project_id=breakdown.project_id,
             batch_id=breakdown.batch_id,
-            task_type="episode_script",
+            task_type=TaskType.EPISODE_SCRIPT,
             status=TaskStatus.QUEUED,
             config={
                 "model_config_id": request.model_config_id or (str(project.script_model_id) if project.script_model_id else None),
@@ -631,6 +839,11 @@ async def update_script(
             script.content = {}
         script.content["full_script"] = request.full_script
         script.word_count = len(request.full_script)
+
+    # 显式标记 JSONB 字段已修改
+    if request.content is not None or request.full_script is not None:
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(script, 'content')
 
     script.updated_at = datetime.now(timezone.utc)
     await db.commit()

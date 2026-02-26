@@ -33,7 +33,8 @@ class Project(Base):
     # 统计信息
     total_chapters = Column(Integer, default=0)
     total_words = Column(Integer, default=0)
-    processed_chapters = Column(Integer, default=0)
+    processed_chapters = Column(Integer, default=0)  # 剧情拆解进度
+    scripted_chapters = Column(Integer, default=0)   # 剧本生成进度
 
     # 状态
     # draft: 草稿 (初始)
