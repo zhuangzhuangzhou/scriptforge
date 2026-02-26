@@ -24,6 +24,7 @@ from app.models.ai_resource import AIResource
 from app.models.split_rule import SplitRule
 from app.models.announcement import Announcement, AnnouncementRead
 from app.models.redeem_code import RedeemCode, RedeemRecord
+from app.models.feedback import Feedback
 
 __all__ = [
     "User",
@@ -58,4 +59,5 @@ __all__ = [
     "AnnouncementRead",
     "RedeemCode",
     "RedeemRecord",
+    "Feedback",
 ]

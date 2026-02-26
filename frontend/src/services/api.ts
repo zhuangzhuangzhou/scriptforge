@@ -1406,5 +1406,43 @@ export const announcementApi = {
   },
 };
 
+// ==================== 用户反馈 API ====================
+export const feedbackApi = {
+  // 用户提交反馈
+  create: async (data: {
+    type: string;
+    content: string;
+    contact?: string;
+  }) => {
+    return api.post('/feedback', data);
+  },
+
+  // 管理端 API
+  admin: {
+    // 获取反馈列表
+    list: async (params?: {
+      page?: number;
+      page_size?: number;
+      type?: string;
+      status?: string;
+    }) => {
+      return api.get('/admin/feedbacks', { params });
+    },
+
+    // 获取反馈详情
+    get: async (id: string) => {
+      return api.get(`/admin/feedbacks/${id}`);
+    },
+
+    // 更新反馈状态/备注
+    update: async (id: string, data: {
+      status?: string;
+      admin_note?: string;
+    }) => {
+      return api.patch(`/admin/feedbacks/${id}`, data);
+    },
+  },
+};
+
 export { USE_MOCK };
 export default api;

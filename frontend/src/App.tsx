@@ -28,6 +28,7 @@ import AnalyticsPage from './pages/admin/Analytics';
 import TaskManagement from './pages/admin/TaskManagement';
 import Announcements from './pages/admin/Announcements';
 import RedeemCodes from './pages/admin/RedeemCodes';
+import Feedbacks from './pages/admin/Feedbacks';
 import { UserTier } from './types';
 
 // 加载状态组件
@@ -101,6 +102,7 @@ const AppContent: React.FC = () => {
             <Route path="/admin/analytics" element={<AnalyticsPage />} />
             <Route path="/admin/announcements" element={<Announcements />} />
             <Route path="/admin/redeem-codes" element={<RedeemCodes />} />
+            <Route path="/admin/feedbacks" element={<Feedbacks />} />
             <Route path="/admin/configurations" element={<SystemConfiguration />} />
             <Route path="/admin/settings" element={<SystemSettings />} />
           </Route>

@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { Film, LogOut, ChevronLeft, Settings, Shield, Gem, User, Lock, Bot } from 'lucide-react';
+import { Film, LogOut, ChevronLeft, Settings, Shield, Gem, User, Lock, Bot, MessageSquare } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { message, Dropdown } from 'antd';
 import GlobalSettingsModal from './modals/GlobalSettingsModal';
 import RechargeModal from './modals/RechargeModal';
 import BillingModal from './modals/BillingModal';
 import TierComparisonModal from './modals/TierComparisonModal';
+import FeedbackModal from './modals/FeedbackModal';
 import NotificationBell from './NotificationBell';
 import { UserTier } from '../types';
 import { TIER_NAMES, TIER_COLORS } from '../constants/tier';
@@ -23,6 +24,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
   const [isRechargeOpen, setIsRechargeOpen] = useState(false);
   const [isBillingOpen, setIsBillingOpen] = useState(false);
   const [isTierComparisonOpen, setIsTierComparisonOpen] = useState(false);
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
 
   const { user } = useAuth();
   const location = useLocation();
@@ -106,6 +108,15 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
               <Bot size={19} />
             </button>
           )}
+
+          {/* Feedback Button */}
+          <button
+            onClick={() => setIsFeedbackOpen(true)}
+            className="h-10 px-3 bg-slate-900/50 rounded-full flex items-center justify-center cursor-pointer hover:border-cyan-500/50 hover:bg-slate-800/80 transition-all text-slate-400 hover:text-white"
+            title="意见反馈"
+          >
+            <MessageSquare size={19} />
+          </button>
 
           <button
             onClick={() => setIsSettingsOpen(true)}
@@ -209,6 +220,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
           currentTier={userTier}
           onUpgrade={handleUpgrade}
         />
+      )}
+
+      {/* Feedback Modal */}
+      {isFeedbackOpen && (
+        <FeedbackModal onClose={() => setIsFeedbackOpen(false)} />
       )}
     </div>
   );
