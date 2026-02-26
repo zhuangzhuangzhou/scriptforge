@@ -1294,7 +1294,10 @@ class SimpleAgentExecutor:
             执行结果
         """
         steps = workflow.get("steps", [])
-        max_iterations = max_iterations_override if max_iterations_override is not None else workflow.get("max_iterations", 3)
+        max_iterations = (
+            max_iterations_override if max_iterations_override is not None
+            else workflow.get("max_iterations", 3)
+        )
         exit_condition = workflow.get("exit_condition", "false")
 
         # 不预初始化 plot_points 和 qa_result，避免空数组污染
