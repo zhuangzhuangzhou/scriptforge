@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { X, Receipt, TrendingUp, Calendar, Cpu, Zap, CreditCard, ChevronDown, Loader2 } from 'lucide-react';
+import { X, Receipt, TrendingUp, Calendar, Cpu, Zap, CreditCard, ChevronDown, Loader2, Gift } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { billingApi } from '../../services/api';
+import RedeemCodeModal from './RedeemCodeModal';
 
 interface BillingModalProps {
   onClose: () => void;
@@ -42,6 +43,7 @@ const BillingModal: React.FC<BillingModalProps> = ({ onClose }) => {
   const [creditsInfo, setCreditsInfo] = useState<CreditsInfo | null>(null);
   const [records, setRecords] = useState<BillingRecord[]>([]);
   const [hasMore, setHasMore] = useState(true);
+  const [showRedeemModal, setShowRedeemModal] = useState(false);
   const PAGE_SIZE = 20;
 
   useEffect(() => {
@@ -117,6 +119,12 @@ const BillingModal: React.FC<BillingModalProps> = ({ onClose }) => {
   // 本月消耗（从后端获取精确值）
   const monthlyConsumed = creditsInfo?.monthly_consumed || 0;
 
+  // 兑换成功后刷新数据
+  const handleRedeemSuccess = () => {
+    setShowRedeemModal(false);
+    loadData();
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" onClick={onClose} />
@@ -191,6 +199,25 @@ const BillingModal: React.FC<BillingModalProps> = ({ onClose }) => {
                   <p className="mt-2 text-[10px] text-slate-500">
                     下次发放: {creditsInfo?.next_grant_at ? new Date(creditsInfo.next_grant_at).toLocaleDateString('zh-CN') : '-'}
                   </p>
+                </div>
+              </div>
+
+              {/* 兑换码入口 */}
+              <div
+                onClick={() => setShowRedeemModal(true)}
+                className="mb-5 p-3 bg-gradient-to-r from-emerald-500/10 to-cyan-500/10 border border-emerald-500/20 rounded-lg flex items-center justify-between cursor-pointer hover:border-emerald-500/40 transition-colors group"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center">
+                    <Gift size={16} className="text-emerald-400" />
+                  </div>
+                  <div>
+                    <div className="text-sm text-white font-medium">兑换码充值</div>
+                    <div className="text-[10px] text-slate-400">输入兑换码获取积分</div>
+                  </div>
+                </div>
+                <div className="text-xs text-emerald-400 group-hover:text-emerald-300 transition-colors">
+                  立即兑换 →
                 </div>
               </div>
 
@@ -323,6 +350,14 @@ const BillingModal: React.FC<BillingModalProps> = ({ onClose }) => {
           )}
         </div>
       </motion.div>
+
+      {/* 兑换码弹窗 */}
+      {showRedeemModal && (
+        <RedeemCodeModal
+          onClose={() => setShowRedeemModal(false)}
+          onSuccess={handleRedeemSuccess}
+        />
+      )}
     </div>
   );
 };

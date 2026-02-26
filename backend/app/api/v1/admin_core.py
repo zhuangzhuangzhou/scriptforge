@@ -179,6 +179,67 @@ async def update_user(
     }
 
 
+class AdminRechargeRequest(BaseModel):
+    """管理员充值请求"""
+    model_config = {"extra": "forbid"}
+
+    credits: int = Field(..., gt=0, description="充值积分数量，必须大于0")
+    reason: str = Field(default="管理员手动充值", max_length=200, description="充值原因")
+
+
+@router.post("/users/{user_id}/recharge")
+async def admin_recharge_user(
+    user_id: str,
+    request: AdminRechargeRequest,
+    admin: User = Depends(check_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """管理员为用户充值积分（自动记录账单）"""
+    from app.models.billing import BillingRecord
+    from uuid import UUID
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="用户不存在"
+        )
+
+    # 记录充值前余额
+    balance_before = user.credits
+
+    # 增加积分
+    user.credits += request.credits
+    balance_after = user.credits
+
+    # 创建账单记录
+    record = BillingRecord(
+        user_id=UUID(user_id) if isinstance(user_id, str) else user_id,
+        type="admin_grant",
+        credits=request.credits,
+        balance_after=balance_after,
+        description=f"{request.reason}（操作员: {admin.username}）",
+        created_at=datetime.now(timezone.utc)
+    )
+    db.add(record)
+
+    await db.commit()
+    await db.refresh(user)
+
+    return {
+        "success": True,
+        "user_id": str(user.id),
+        "username": user.username,
+        "credits_added": request.credits,
+        "balance_before": balance_before,
+        "balance_after": balance_after,
+        "reason": request.reason,
+        "message": f"已为用户 {user.username} 充值 {request.credits} 积分"
+    }
+
+
 @router.get("/stats")
 async def get_system_stats(
     admin: User = Depends(check_admin),

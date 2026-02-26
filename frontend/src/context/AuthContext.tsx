@@ -19,6 +19,7 @@ interface AuthContextType {
   loading: boolean;
   login: (username: string, password: string) => Promise<User>;
   logout: () => void;
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -108,8 +109,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(null);
   };
 
+  const refreshUser = async () => {
+    if (USE_MOCK) {
+      setUser(mockUser as any);
+      return;
+    }
+
+    const storedToken = localStorage.getItem('token');
+    if (storedToken) {
+      try {
+        const response = await api.get('/auth/me');
+        setUser(response.data);
+      } catch {
+        // 刷新失败时不做处理，保持当前状态
+      }
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, token, loading, login, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );
