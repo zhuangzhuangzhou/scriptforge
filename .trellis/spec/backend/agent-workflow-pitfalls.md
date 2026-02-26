@@ -123,29 +123,49 @@ results = {
 
 ### 解决方案
 
-1. **确保字段名一致**：
-   - 在 `parse_text_qa_result()` 中添加别名映射
-   - 第 365-366 行：
-     ```python
-     result["status"] = result["qa_status"]
-     result["score"] = result["qa_score"]
-     ```
+**根本原因**：
 
-2. **添加调试日志**：
-   ```python
-   logger.info(f"[退出条件] qa_result.keys: {list(qa_result.keys())}")
-   logger.info(f"[退出条件] status={qa_result.get('status')}")
-   logger.info(f"[退出条件] 评估结果: {condition_met}")
-   ```
+1. **字段名不匹配**：
+   - 退出条件使用 `qa_result.status` 和 `qa_result.score`
+   - 但扁平化后的字段是 `qa_result.qa_status` 和 `qa_result.qa_score`
+   - 变量替换失败，`_safe_eval()` 抛出异常
+   - 异常被捕获后返回 `False`，循环永远不会停止
 
-3. **兼容列表输出**：
-   ```python
-   if output_key in ("qa_result", "qa") and isinstance(result, list):
-       if len(result) == 1 and isinstance(result[0], dict):
-           result = result[0]
-       elif len(result) == 0:
-           result = {}
-   ```
+2. **为什么之前没发现**：
+   - QA 结果中有别名 `status` 和 `score`
+   - 但扁平化时只有 `qa_status` 和 `qa_score`（带前缀）
+   - `_substitute_variables()` 无法匹配 `qa_result.status`
+
+**修复方案**：
+
+```python
+# ❌ 错误 - 字段名不匹配
+"exit_condition": "qa_result.status == 'PASS' and qa_result.score >= 70"
+
+# ✅ 正确 - 使用主字段名
+"exit_condition": "qa_result.qa_status == 'PASS' and qa_result.qa_score >= 70"
+```
+
+**添加调试日志**：
+```python
+logger.info(f"[退出条件] qa_result.keys: {list(qa_result.keys())}")
+logger.info(f"[退出条件] status={qa_result.get('status')}")
+logger.info(f"[退出条件] 评估结果: {condition_met}")
+```
+
+**兼容列表输出**：
+```python
+if output_key in ("qa_result", "qa") and isinstance(result, list):
+    if len(result) == 1 and isinstance(result[0], dict):
+        result = result[0]
+    elif len(result) == 0:
+        result = {}
+```
+
+### 修复提交
+
+- Commit: `0b9b68c` - fix: 修复退出条件字段名错误导致循环不停止
+- Date: 2026-02-26
 
 ---
 
