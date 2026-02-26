@@ -632,7 +632,7 @@ BUILTIN_AGENTS = [
         "workflow": {
             "type": "loop",
             "max_iterations": 3,
-            "exit_condition": "qa_result.status == 'PASS' and qa_result.score >= 70",
+            "exit_condition": "qa_result.qa_status == 'PASS' and qa_result.qa_score >= 70",
             "steps": [
                 {
                     "id": "breakdown",
