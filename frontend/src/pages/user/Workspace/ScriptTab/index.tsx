@@ -905,6 +905,7 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
             editedFullScript={editedFullScript}
             onStructureChange={handleStructureChange}
             onFullScriptChange={handleFullScriptChange}
+            onViewQAReport={currentScript?.qa_report ? () => setQAReportModalOpen(true) : undefined}
           />
         </div>
       </div>
@@ -928,14 +929,21 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
             report={{
               status: currentScript.qa_report.status,
               score: currentScript.qa_report.score,
-              dimensions: Object.entries(currentScript.qa_report.dimensions).map(([key, value]) => ({
-                name: key,
-                pass: value.score >= 60,
-                score: value.score,
-                issues: value.issues
-              })),
-              issues: currentScript.qa_report.fix_instructions?.map(fi => fi.issue) || [],
-              suggestions: currentScript.qa_report.fix_instructions?.map(fi => fi.suggestion) || [],
+              dimensions: Array.isArray(currentScript.qa_report.dimensions)
+                ? currentScript.qa_report.dimensions.map((dim: any) => ({
+                    name: dim.name,
+                    pass: dim.passed,
+                    score: dim.score,
+                    issues: dim.details ? [dim.details] : []
+                  }))
+                : Object.entries(currentScript.qa_report.dimensions || {}).map(([key, value]: [string, any]) => ({
+                    name: key,
+                    pass: value.score >= 60,
+                    score: value.score,
+                    issues: value.issues || []
+                  })),
+              issues: currentScript.qa_report.fix_instructions?.map((fi: any) => fi.issue || fi.action || JSON.stringify(fi)) || [],
+              suggestions: currentScript.qa_report.fix_instructions?.map((fi: any) => fi.suggestion || fi.action || '') || [],
               fix_instructions: currentScript.qa_report.fix_instructions
             }}
             onClose={() => setQAReportModalOpen(false)}

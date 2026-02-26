@@ -18,7 +18,6 @@ import { projectApi, breakdownApi } from '../../../services/api';
 import { message, Modal } from 'antd';
 import { useConsoleLogger } from '../../../hooks/useConsoleLogger';
 import { useBreakdownWebSocket } from '../../../hooks/useBreakdownWebSocket';
-import { useBreakdownLogs } from '../../../hooks/useBreakdownLogs';
 import { parseErrorMessage } from '../../../utils/errorParser';
 import ConfigTab from './ConfigTab';
 import SourceTab from './SourceTab';
@@ -311,7 +310,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
     const pollingIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const pollIntervalTimeRef = useRef<number>(2000); // 动态轮询间隔
 
-    const { isConnected: wsConnected, progress: wsProgress, currentStep: wsCurrentStep, usePolling } = useBreakdownWebSocket(
+    const { isConnected: wsConnected, progress: wsProgress, currentStep: wsCurrentStep, usePolling, currentRound, totalRounds } = useBreakdownWebSocket(
         breakdownTaskId,
         {
             onProgress: (data) => {
@@ -324,14 +323,19 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     lastStepRef.current = data.current_step;
                 }
             },
-            onComplete: () => {
+            onComplete: async () => {
                 setBreakdownTaskId(null);
                 setExecutingBatchId(null);  // 清空当前执行批次
                 message.success('拆解完成');
                 // 由 useEffect 统一触发 fetchBreakdownResults
-                fetchBatches();
+                await fetchBatches();
                 // 🔧 新增：批次完成后更新全局进度
-                fetchGlobalProgress();
+                await fetchGlobalProgress();
+                // ✅ 新增：检测是否有下一个任务（全部拆解模式）
+                console.log('[Workspace] 批次完成，检测是否有下一个任务...');
+                setTimeout(async () => {
+                    await autoDetectProcessingTask();
+                }, 1000);
             },
             onError: (error) => {
                 setBreakdownTaskId(null);
@@ -341,7 +345,85 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 // 🔧 新增：批次失败后更新全局进度
                 fetchGlobalProgress();
             },
-            fallbackToPolling: false  // 🔧 调试模式：禁用降级轮询
+            fallbackToPolling: false,  // 🔧 调试模式：禁用降级轮询
+
+            // 来自 useBreakdownLogs 的回调
+            onStepStart: (stepName, metadata) => {
+                console.log('[StreamLogs] 步骤开始:', stepName, metadata);
+                setShowConsole(true);  // 🔧 关键修复：收到第一条日志时自动打开 Console
+                addLog('thinking', `🚀 ${stepName}`);
+                setBreakdownCurrentStep(stepName);
+                const header = buildFormattedSectionHeader(stepName);
+                if (header) {
+                    addLog('formatted', header);
+                }
+            },
+            onStreamChunk: (stepName, chunk) => {
+                // RAW 模式：直接追加内容，确保 JSON 连续显示
+                appendStreamLog(chunk);
+            },
+            onFormattedChunk: (stepName, chunk) => {
+                // 实时显示格式化内容（Formatted 模式）
+                console.log('[StreamLogs] 格式化内容:', chunk);
+                addLog('formatted', chunk);
+            },
+            onStepEnd: (stepName, result) => {
+                console.log('[StreamLogs] 步骤完成:', stepName, result);
+                // 结束当前流式日志，确保下一步骤的内容不会追加到当前日志
+                finalizeStreamLog();
+                addLog('success', `✅ ${stepName} 完成`);
+            },
+            onWarning: (warning) => {
+                console.warn('[StreamLogs] 警告:', warning);
+                addLog('warning', `⚠️ ${warning}`);
+            },
+            onInfo: (info) => {
+                console.log('[StreamLogs] 信息:', info);
+                addLog('info', info);
+            },
+            onSuccess: (msg) => {
+                console.log('[StreamLogs] 成功:', msg);
+                addLog('success', `✅ ${msg}`);
+                if (msg.includes('Agent 完成')) {
+                    handleBreakdownCompleted(msg);
+                }
+            },
+            onBatchSwitch: async (switchInfo) => {
+                console.log('[Workspace] 收到批次切换消息:', switchInfo);
+
+                try {
+                    // ✅ 修复：刷新当前选中的批次数据（完成后会变为 COMPLETED）
+                    if (selectedBatch) {
+                        await refreshBatch(selectedBatch.id);
+                    }
+                    // ✅ 修复：刷新新批次数据（状态变为 IN_PROGRESS）
+                    await refreshBatch(switchInfo.newBatchId);
+
+                    // ✅ 修复：使用 switchToTaskBatch 统一处理批次切换
+                    await switchToTaskBatch({
+                        task_id: switchInfo.newTaskId,
+                        batch_id: switchInfo.newBatchId,
+                        batch_number: switchInfo.newBatchNumber
+                    }, { silent: false });
+
+                    // 更新全局进度
+                    await fetchGlobalProgress();
+                } catch (err) {
+                    console.error('[Workspace] 批次切换失败:', err);
+                    message.error('批次切换失败');
+                }
+            },
+            // ✅ 新增：WebSocket 关闭时检测是否有正在处理的任务
+            onClose: async () => {
+                console.log('[Workspace] WebSocket 关闭，检测是否有正在处理的任务...');
+                // 先清空当前任务ID，否则 autoDetectProcessingTask 会跳过检测
+                setBreakdownTaskId(null);
+                setExecutingBatchId(null);
+                // 等待一下，确保后端已经创建下一个任务
+                setTimeout(async () => {
+                    await autoDetectProcessingTask();
+                }, 2000);
+            }
         }
     );
 
@@ -380,102 +462,6 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         // 🔧 新增：批次完成后更新全局进度
         fetchGlobalProgress();
     };
-
-    // 流式日志 WebSocket（接收大模型返回的实时流式数据）
-    const {
-        isConnected: logsConnected,
-        currentStep: logsCurrentStep,
-        currentRound,
-        totalRounds
-    } = useBreakdownLogs(
-        breakdownTaskId,
-        {
-            onStepStart: (stepName, metadata) => {
-                console.log('[StreamLogs] 步骤开始:', stepName, metadata);
-                setShowConsole(true);  // 🔧 关键修复：收到第一条日志时自动打开 Console
-                addLog('thinking', `🚀 ${stepName}`);
-                setBreakdownCurrentStep(stepName);
-                const header = buildFormattedSectionHeader(stepName);
-                if (header) {
-                    addLog('formatted', header);
-                }
-            },
-            onStreamChunk: (stepName, chunk) => {
-                // RAW 模式：直接追加内容，确保 JSON 连续显示
-                appendStreamLog(chunk);
-            },
-            onFormattedChunk: (stepName, chunk) => {
-                // 实时显示格式化内容（Formatted 模式）
-                console.log('[StreamLogs] 格式化内容:', chunk);
-                addLog('formatted', chunk);
-            },
-            onStepEnd: (stepName, result) => {
-                console.log('[StreamLogs] 步骤完成:', stepName, result);
-                // 结束当前流式日志，确保下一步骤的内容不会追加到当前日志
-                finalizeStreamLog();
-                addLog('success', `✅ ${stepName} 完成`);
-            },
-            onProgress: (progress, currentStep, totalSteps) => {
-                setBreakdownProgress(progress);
-            },
-            onError: (error, errorCode) => {
-                console.error('[StreamLogs] 错误:', error, errorCode);
-                addLog('error', `❌ ${error}`);
-            },
-            onWarning: (warning) => {
-                console.warn('[StreamLogs] 警告:', warning);
-                addLog('warning', `⚠️ ${warning}`);
-            },
-            onInfo: (info) => {
-                console.log('[StreamLogs] 信息:', info);
-                addLog('info', info);
-            },
-            onSuccess: (msg) => {
-                console.log('[StreamLogs] 成功:', msg);
-                addLog('success', `✅ ${msg}`);
-                if (msg.includes('Agent 完成')) {
-                    handleBreakdownCompleted(msg);
-                }
-            },
-            onComplete: () => {
-                console.log('[StreamLogs] 任务完成');
-                handleBreakdownCompleted();
-            },
-            onBatchSwitch: async (switchInfo) => {
-                console.log('[Workspace] 收到批次切换消息:', switchInfo);
-
-                try {
-                    // ✅ 修复：刷新当前选中的批次数据（完成后会变为 COMPLETED）
-                    if (selectedBatch) {
-                        await refreshBatch(selectedBatch.id);
-                    }
-                    // ✅ 修复：刷新新批次数据（状态变为 IN_PROGRESS）
-                    await refreshBatch(switchInfo.newBatchId);
-
-                    // ✅ 修复：使用 switchToTaskBatch 统一处理批次切换
-                    await switchToTaskBatch({
-                        task_id: switchInfo.newTaskId,
-                        batch_id: switchInfo.newBatchId,
-                        batch_number: switchInfo.newBatchNumber
-                    }, { silent: false });
-
-                    // 更新全局进度
-                    await fetchGlobalProgress();
-                } catch (err) {
-                    console.error('[Workspace] 批次切换失败:', err);
-                    message.error('批次切换失败');
-                }
-            },
-            // ✅ 新增：WebSocket 关闭时检测是否有正在处理的任务
-            onClose: async () => {
-                console.log('[Workspace] WebSocket 关闭，检测是否有正在处理的任务...');
-                // 等待一下，确保后端已经创建下一个任务
-                setTimeout(async () => {
-                    await autoDetectProcessingTask();
-                }, 2000);
-            }
-        }
-    );
 
     // 监听 selectedBatch 变化，只处理状态同步和清理
     // 不触发 fetchBreakdownResults（避免重复调用）
@@ -795,18 +781,14 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                     }
                 }
 
-                // 🔧 优化：使用全局进度 API 检测任务（解决分页问题）
+                // 🔧 优化：先获取全局进度，再复用数据检测任务（避免重复调用 API）
                 if (pageNum === 1) {
-                    await autoDetectProcessingTask();
+                    const progress = await fetchGlobalProgress();
+                    await autoDetectProcessingTask(progress);
                 }
             }
 
             setBatchHasMore((pageNum * 20) < total);
-
-            // 🔧 新增：刷新批次列表后同步更新全局进度
-            if (pageNum === 1) {
-                await fetchGlobalProgress();
-            }
 
         } catch (err) {
             console.error('获取批次失败:', err);
@@ -1246,10 +1228,14 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
 
             if (res.data.total > 0) {
                 message.info(`已启动 ${res.data.total} 个拆解任务`);
-                // 刷新批次列表，显示当前正在拆解的批次
-                fetchBatches();
-                // 🔧 新增：立即获取一次全局进度
-                await fetchGlobalProgress();
+
+                // ✅ 设置 taskId 以触发 WebSocket 连接
+                if (res.data.task_ids && res.data.task_ids.length > 0) {
+                    setBreakdownTaskId(res.data.task_ids[0]);  // 监听第一个任务
+                }
+
+                // 刷新批次列表，显示当前正在拆解的批次（fetchBatches 内部已包含全局进度获取）
+                await fetchBatches();
                 // ✅ 修复：移除轮询，完全依赖 WebSocket 推送
             } else {
                 setIsBatchRunning(false);

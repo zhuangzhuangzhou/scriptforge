@@ -18,7 +18,7 @@ WebSocket 消息回调中需要使用最新的批次列表:
 // ❌ 错误: 闭包陷阱
 const [batches, setBatches] = useState([]);
 
-const { ... } = useBreakdownLogs(taskId, {
+const { ... } = useBreakdownWebSocket(taskId, {
     onBatchSwitch: async (switchInfo) => {
         // 问题: 这里的 batches 是创建回调时的值,不是最新值
         const newBatch = batches.find(b => b.id === switchInfo.newBatchId);
@@ -47,7 +47,7 @@ callback();  // 输出: [batch1, batch2]
 
 ```typescript
 // ✅ 正确: 直接调用 API 获取最新数据
-const { ... } = useBreakdownLogs(taskId, {
+const { ... } = useBreakdownWebSocket(taskId, {
     onBatchSwitch: async (switchInfo) => {
         // 直接调用 API,不依赖闭包变量
         const res = await projectApi.getBatches(projectId!, 1, 20);
@@ -75,7 +75,7 @@ useEffect(() => {
     batchesRef.current = batches;
 }, [batches]);
 
-const { ... } = useBreakdownLogs(taskId, {
+const { ... } = useBreakdownWebSocket(taskId, {
     onBatchSwitch: async (switchInfo) => {
         // 使用 ref.current 获取最新值
         const newBatch = batchesRef.current.find(b => b.id === switchInfo.newBatchId);
@@ -87,7 +87,7 @@ const { ... } = useBreakdownLogs(taskId, {
 
 ```typescript
 // ✅ 正确: 使用函数式 setState
-const { ... } = useBreakdownLogs(taskId, {
+const { ... } = useBreakdownWebSocket(taskId, {
     onBatchSwitch: async (switchInfo) => {
         // 使用函数式更新,可以访问最新的 state
         setBatches(prevBatches => {
@@ -127,7 +127,7 @@ interface UseBreakdownLogsOptions {
 
 // 用户被迫这样用:
 const [batches, setBatches] = useState([]);
-useBreakdownLogs(taskId, {
+useBreakdownWebSocket(taskId, {
     onBatchSwitch: (batchNumber) => {
         // 必须使用闭包变量 batches (可能是旧值)
         const batch = batches.find(b => b.batch_number === batchNumber);
@@ -144,7 +144,7 @@ interface UseBreakdownLogsOptions {
 }
 
 // 用户可以直接使用回调参数:
-useBreakdownLogs(taskId, {
+useBreakdownWebSocket(taskId, {
     onBatchSwitch: async (switchInfo) => {
         // 所有信息都在参数中,不需要闭包变量
         const res = await api.getBatch(switchInfo.newBatchId);
@@ -575,6 +575,7 @@ test('回调应该使用最新的 state', async () => {
 
 | 日期 | 更新内容 | 作者 |
 |------|----------|------|
+| 2026-02-26 | 更新: useBreakdownLogs 合并到 useBreakdownWebSocket，统一使用 /ws/breakdown 端点 | Claude Opus 4.6 |
 | 2026-02-26 | 新增: 异步错误类型处理模式 (unknown + 类型断言) | Claude Opus 4.6 |
 | 2026-02-25 | 新增: 状态粒度控制模式 (避免全局状态影响局部 UI) | Claude Opus 4.6 |
 | 2026-02-25 | 新增: 双数据源进度合并模式 (WebSocket + HTTP 轮询) | Claude Opus 4.6 |

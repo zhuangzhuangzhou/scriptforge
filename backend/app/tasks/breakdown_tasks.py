@@ -1099,9 +1099,32 @@ def _execute_breakdown_sync(
             # 从 Agent 结果中提取数据
             plot_points = results.get("plot_points", [])
             qa_result = results.get("qa_result", {})
-            qa_status = qa_result.get("qa_status", "pending")
-            qa_score = qa_result.get("qa_score")
+
+            # 添加诊断日志：记录 results 的所有键名
+            logger.info(f"[breakdown_tasks] results 所有键: {list(results.keys())}")
+
+            # 尝试从 breakdown 中获取 plot_points
+            breakdown_data = results.get("breakdown", {})
+            if breakdown_data and isinstance(breakdown_data, dict):
+                breakdown_plot_points = breakdown_data.get("plot_points", [])
+                logger.info(f"[breakdown_tasks] breakdown.plot_points 长度: {len(breakdown_plot_points)}")
+                # 如果 plot_points 为空但 breakdown 有数据，使用 breakdown 的数据
+                if (not plot_points or len(plot_points) == 0) and breakdown_plot_points:
+                    logger.info(f"[breakdown_tasks] 使用 breakdown.plot_points 作为最终结果")
+                    plot_points = breakdown_plot_points
+
+            logger.info(f"[breakdown_tasks] qa_result 类型: {type(qa_result).__name__}, qa_result 内容: {qa_result}")
+
+            # 兼容 qa_result 可能存储在 qa 键下
+            if not qa_result:
+                qa_result = results.get("qa", {})
+                logger.info(f"[breakdown_tasks] 从 qa 键获取: {qa_result}")
+
+            qa_status = qa_result.get("qa_status", qa_result.get("status", "pending"))
+            qa_score = qa_result.get("qa_score", qa_result.get("score"))
             qa_report = qa_result
+
+            logger.info(f"[breakdown_tasks] 提取后的 qa_status={qa_status}, qa_score={qa_score}")
 
             # 检查 plot_points 是否为空，为空则抛出异常
             if not plot_points or len(plot_points) == 0:
@@ -1334,6 +1357,9 @@ def _execute_breakdown_sync(
             normalized_qa_status_for_db = "pending"
     else:
         normalized_qa_status_for_db = "pending"
+
+    # 诊断日志：记录保存到数据库的值
+    logger.info(f"[breakdown_tasks] 保存数据库: plot_points={len(plot_points)}, qa_status={normalized_qa_status_for_db}, qa_score={qa_score}")
 
     # 获取 model_config_id 用于保存拆解记录（便于后续数据分析）
     model_config_id = task_config.get("model_config_id")

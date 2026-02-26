@@ -340,7 +340,7 @@ async def list_scripts(
     """获取剧本列表（只返回当前版本）"""
     query = select(Script).join(Project).where(
         Project.user_id == current_user.id,
-        Script.is_current == True  # 只返回当前版本
+        Script.is_current  # 只返回当前版本
     )
 
     if project_id:
@@ -699,6 +699,7 @@ async def get_episode_script(
         select(Script).join(Project).where(
             Script.plot_breakdown_id == breakdown_id,
             Script.episode_number == episode_number,
+            Script.is_current.is_(True),  # 只获取当前版本
             Project.user_id == current_user.id
         )
     )

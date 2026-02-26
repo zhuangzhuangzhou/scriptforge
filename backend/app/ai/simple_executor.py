@@ -629,8 +629,13 @@ def parse_llm_response(
             except json.JSONDecodeError:
                 pass
 
-    # 策略5：检查是否包含空响应关键词
-    if any(keyword in response for keyword in ['没有', '无', '空', 'null', 'None', '[]', '{}']):
+    # 策略5：检查是否是明确的空响应（整行只有空值标记）
+    # 避免误判：响应中只包含关键词但还有其他内容时，不应返回空数组
+    response_clean = response.strip()
+    if response_clean in ['[]', '{}', 'null', 'None', '']:
+        return []
+    # 额外检查：如果响应就是简单的"没有"、"无"等单一词汇
+    if response_clean in ['没有', '无', '空']:
         return []
 
     # 解析失败
@@ -948,6 +953,13 @@ class SimpleSkillExecutor:
             # 6. 解析 JSON 响应
             result = self._parse_json(full_response)
 
+            # 添加诊断日志：记录解析后的结果
+            logger.info(f"[execute_skill] skill={skill.name} 解析后 result 类型={type(result).__name__}")
+            if isinstance(result, list):
+                logger.info(f"[execute_skill] result 长度={len(result)}")
+            elif isinstance(result, dict):
+                logger.info(f"[execute_skill] result keys={list(result.keys())}")
+
             # 若流式未产出任何格式化内容，则补发格式化日志，保证 Console 可见
             # 注意：不要重复发送原始内容，因为流式输出已经发送过了
             if formatted_index == 0 and self.log_publisher and task_id:
@@ -984,6 +996,12 @@ class SimpleSkillExecutor:
                     {"status": "success"}
                 )
 
+            # 添加诊断日志：记录最终返回结果
+            logger.info(f"[execute_skill] skill={skill.name} 最终返回 result 类型={type(result).__name__}")
+            if isinstance(result, list):
+                logger.info(f"[execute_skill] result 长度={len(result)}")
+            elif isinstance(result, dict):
+                logger.info(f"[execute_skill] result keys={list(result.keys())}")
             return result
 
         except Exception as e:
@@ -1336,6 +1354,15 @@ class SimpleAgentExecutor:
                     logger.info(f"[退出条件] status={qa_result.get('status')}, qa_status={qa_result.get('qa_status')}")
                     logger.info(f"[退出条件] score={qa_result.get('score')}, qa_score={qa_result.get('qa_score')}")
 
+            # 调试日志：记录 plot_points 状态
+            if "plot_points" in results:
+                plot_points = results["plot_points"]
+                logger.info(f"[退出条件] plot_points 类型: {type(plot_points)}, 长度: {len(plot_points) if isinstance(plot_points, list) else 'N/A'}")
+            if "breakdown" in results:
+                breakdown = results["breakdown"]
+                if isinstance(breakdown, dict) and "plot_points" in breakdown:
+                    logger.info(f"[退出条件] breakdown.plot_points 长度: {len(breakdown.get('plot_points', []))}")
+
             condition_met = self._evaluate_condition(exit_condition, results)
             logger.info(f"[退出条件] 条件: {exit_condition}")
             logger.info(f"[退出条件] 评估结果: {condition_met}")
@@ -1467,7 +1494,17 @@ class SimpleAgentExecutor:
                     elif len(result) == 0:
                         result = {}
 
-                # 6. 返回结果
+                # 6. 返回结果 - 添加诊断日志
+                logger.info(f"[_execute_step] 步骤 {step_id} 返回 output_key={output_key}, result 类型={type(result).__name__}")
+                if isinstance(result, dict):
+                    logger.info(f"[_execute_step] result keys: {list(result.keys())}")
+                    # 针对 breakdown 和 qa_result 特殊处理，记录详细数据
+                    if output_key == "breakdown" and "plot_points" in result:
+                        logger.info(f"[_execute_step] breakdown.plot_points 长度: {len(result.get('plot_points', []))}")
+                    if output_key in ("qa_result", "qa"):
+                        logger.info(f"[_execute_step] qa_result 内容: qa_status={result.get('qa_status')}, qa_score={result.get('qa_score')}")
+                elif isinstance(result, list):
+                    logger.info(f"[_execute_step] result 长度: {len(result)}")
                 return {
                     output_key: result,
                     step_id: result
@@ -1527,12 +1564,16 @@ class SimpleAgentExecutor:
         try:
             # 构建安全的评估环境
             eval_context = self._flatten_results(results)
+            logger.info(f"[_evaluate_condition] 扁平化后的上下文 keys: {list(eval_context.keys())[:20]}...")
 
             # 替换变量引用为实际值
             evaluated_condition = self._substitute_variables(condition, eval_context)
+            logger.info(f"[_evaluate_condition] 替换后的表达式: {evaluated_condition}")
 
             # 安全评估
-            return self._safe_eval(evaluated_condition, eval_context)
+            result = self._safe_eval(evaluated_condition, eval_context)
+            logger.info(f"[_evaluate_condition] 评估结果: {result}")
+            return result
         except Exception as e:
             logger.warning(f"条件评估失败 '{condition}': {e}")
             return False

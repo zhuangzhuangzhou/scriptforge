@@ -25,6 +25,7 @@ interface ScriptDetailProps {
   editedFullScript?: string;
   onStructureChange?: (key: keyof ScriptStructure, content: string) => void;
   onFullScriptChange?: (content: string) => void;
+  onViewQAReport?: () => void;
 }
 
 // 四段式结构标签
@@ -52,7 +53,8 @@ const ScriptDetail: React.FC<ScriptDetailProps> = ({
   editedStructure,
   editedFullScript,
   onStructureChange,
-  onFullScriptChange
+  onFullScriptChange,
+  onViewQAReport
 }) => {
   const [viewMode, setViewMode] = useState<'structure' | 'full'>('structure');
 
@@ -275,6 +277,14 @@ const ScriptDetail: React.FC<ScriptDetailProps> = ({
                     {currentScript.qa_status === 'pending' && <Clock className="w-3 h-3" />}
                     {currentScript.qa_status === 'PASS' ? '通过' : currentScript.qa_status === 'FAIL' ? '未通过' : '待质检'}
                   </div>
+                  {currentScript.qa_report && onViewQAReport && (
+                    <button
+                      onClick={onViewQAReport}
+                      className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded-lg border border-slate-600 transition-colors"
+                    >
+                      查看报告
+                    </button>
+                  )}
                 </div>
               </>
             )}
