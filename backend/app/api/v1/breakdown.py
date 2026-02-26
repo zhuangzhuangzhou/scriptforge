@@ -17,7 +17,7 @@ from app.api.v1.auth import get_current_user
 from app.core.celery_app import celery_app
 from app.tasks.breakdown_tasks import run_breakdown_task
 from app.core.quota import QuotaService, refund_episode_quota_sync
-from app.core.status import normalize_task_status, TaskStatus, BatchStatus
+from app.core.status import normalize_task_status, TaskStatus, BatchStatus, TaskType
 
 router = APIRouter()
 
@@ -283,7 +283,7 @@ async def start_breakdown(
     task = AITask(
         project_id=batch.project_id,
         batch_id=batch.id,
-        task_type="breakdown",
+        task_type=TaskType.BREAKDOWN,
         status=TaskStatus.QUEUED,
         depends_on=[],
         config=task_config
@@ -778,7 +778,7 @@ async def start_all_breakdowns(
             task = AITask(
                 project_id=batch.project_id,
                 batch_id=batch.id,
-                task_type="breakdown",
+                task_type=TaskType.BREAKDOWN,
                 status=TaskStatus.QUEUED,
                 depends_on=[],
                 config={
@@ -1007,7 +1007,7 @@ async def start_continue_breakdown(
     task = AITask(
         project_id=batch.project_id,
         batch_id=batch.id,
-        task_type="breakdown",
+        task_type=TaskType.BREAKDOWN,
         status=TaskStatus.QUEUED,
         depends_on=[],
         config={
@@ -1186,7 +1186,10 @@ async def update_plot_point_status(
         )
 
     # 更新 plot_points
+    from sqlalchemy.orm.attributes import flag_modified
     breakdown.plot_points = updated_points
+    # 显式标记 JSONB 字段已修改，确保 SQLAlchemy 检测到变更
+    flag_modified(breakdown, 'plot_points')
     await db.commit()
     await db.refresh(breakdown)
 
@@ -1346,9 +1349,9 @@ async def start_batch_breakdown(
                 batch = batch_result.scalar_one_or_none()
                 if batch:
                     # 根据任务类型恢复批次状态
-                    if stuck_task.task_type == "breakdown":
+                    if stuck_task.task_type == TaskType.BREAKDOWN:
                         batch.breakdown_status = BatchStatus.PENDING
-                    elif stuck_task.task_type in ("script", "episode_script"):
+                    elif stuck_task.task_type == TaskType.EPISODE_SCRIPT:
                         batch.script_status = BatchStatus.PENDING
 
             cleaned_count += 1
@@ -1457,7 +1460,7 @@ async def start_batch_breakdown(
         task = AITask(
             project_id=project_id,
             batch_id=first_batch["batch_id"],
-            task_type="breakdown",
+            task_type=TaskType.BREAKDOWN,
             status=TaskStatus.QUEUED,
             depends_on=[],
             config={
@@ -1579,7 +1582,7 @@ async def get_batch_progress(
             select(AITask.id, AITask.batch_id, AITask.status)
             .where(
                 AITask.batch_id == in_progress_batch.id,
-                AITask.task_type == "breakdown",
+                AITask.task_type == TaskType.BREAKDOWN,
                 AITask.status.in_([TaskStatus.RUNNING, TaskStatus.IN_PROGRESS, TaskStatus.QUEUED])
             )
             .order_by(AITask.created_at.desc())
@@ -1701,7 +1704,7 @@ async def retry_failed_task(
             new_task = AITask(
                 project_id=task.project_id,
                 batch_id=task.batch_id,
-                task_type="breakdown",
+                task_type=TaskType.BREAKDOWN,
                 status=TaskStatus.QUEUED,
                 retry_count=task.retry_count + 1,
                 depends_on=[],
@@ -1792,7 +1795,7 @@ async def get_breakdown_detail(
     task_result = await db.execute(
         select(AITask).where(
             AITask.batch_id == batch_id,
-            AITask.task_type == "breakdown"
+            AITask.task_type == TaskType.BREAKDOWN
         ).order_by(AITask.created_at.desc())
     )
     task = task_result.scalars().first()
@@ -2303,7 +2306,7 @@ async def stop_breakdown_task(
                         db=sync_db,
                         user_id=str(current_user.id),
                         task_id=task_id,
-                        task_type="breakdown",
+                        task_type=TaskType.BREAKDOWN,
                         model_config_id=model_config_id
                     )
                     token_deducted = token_result.get("token_credits", 0)

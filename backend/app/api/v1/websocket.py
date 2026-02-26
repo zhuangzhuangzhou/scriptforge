@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import AsyncSessionLocal
 from app.models.ai_task import AITask
-from app.core.status import normalize_task_status, TaskStatus
+from app.core.status import normalize_task_status, TaskStatus, TaskType
 from typing import Optional
 import asyncio
 import json
@@ -330,7 +330,7 @@ async def websocket_batch_simple(websocket: WebSocket, project_id: str):
                 task_result = await db.execute(
                     select(AITask).where(
                         AITask.batch_id.in_(batch_ids),
-                        AITask.task_type == "breakdown"
+                        AITask.task_type == TaskType.BREAKDOWN
                     )
                 )
                 tasks = task_result.scalars().all()

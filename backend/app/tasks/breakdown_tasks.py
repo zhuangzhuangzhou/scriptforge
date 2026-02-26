@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.celery_app import celery_app
 from app.core.database import SyncSessionLocal
 from app.core.progress import update_task_progress_sync
-from app.core.status import map_task_status_to_batch, TaskStatus, BatchStatus
+from app.core.status import map_task_status_to_batch, TaskStatus, BatchStatus, TaskType
 from app.core.credits import consume_credits_for_task_sync, consume_token_credits_sync
 from app.core.exceptions import (
     AITaskException,
@@ -23,6 +23,7 @@ from app.core.exceptions import (
 )
 from app.models.ai_task import AITask
 from app.models.batch import Batch
+from app.models.project import Project
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -108,7 +109,7 @@ def _trigger_next_task_sync(db: Session, completed_task_id: str, project_id: str
         new_task = AITask(
             project_id=project_id,
             batch_id=next_batch.id,
-            task_type="breakdown",
+            task_type=TaskType.BREAKDOWN,
             status=TaskStatus.QUEUED,
             depends_on=[],
             config=task_config  # 继承配置（包含 auto_continue 标记）
@@ -271,8 +272,18 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
 
         # 批次状态与任务状态保持同步：任务完成 => batch.completed
         if batch_record:
+            # 检查是否首次完成（避免重试时重复累加）
+            is_first_completion = not batch_record.ai_processed
+
             batch_record.breakdown_status = map_task_status_to_batch(TaskStatus.COMPLETED) or BatchStatus.COMPLETED
             batch_record.ai_processed = True  # 标记为已处理
+
+            # 仅首次完成时更新项目的已处理章节数
+            if is_first_completion:
+                project = db.query(Project).filter(Project.id == batch_record.project_id).first()
+                if project:
+                    project.processed_chapters = (project.processed_chapters or 0) + batch_record.total_chapters
+                    logger.info(f"项目 {project.id} 已处理章节数更新为 {project.processed_chapters}")
 
         # Token 计费：从 LLMCallLog 汇总该任务的 token 使用量并扣费
         # 从 task_config 中获取 model_config_id，用于查询 AIModelPricing
@@ -280,7 +291,7 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
             db=db,
             user_id=user_id,
             task_id=task_id,
-            task_type="breakdown",
+            task_type=TaskType.BREAKDOWN,
             model_config_id=task_config.get("model_config_id")
         )
 
@@ -744,7 +755,7 @@ def _handle_task_failure_sync(
             db=db,
             user_id=user_id,
             task_id=task_id,
-            task_type="breakdown",
+            task_type=TaskType.BREAKDOWN,
             model_config_id=task_config.get("model_config_id")
         )
 
@@ -1404,7 +1415,7 @@ def _handle_task_cancelled_sync(
                 db=db,
                 user_id=user_id,
                 task_id=task_id,
-                task_type="breakdown",
+                task_type=TaskType.BREAKDOWN,
                 model_config_id=task_config.get("model_config_id")
             )
 
@@ -1587,21 +1598,21 @@ def _update_batch_status_safely(
         db: 数据库会话
         logger: 日志对象
     """
-    from app.core.status import BatchStatus, TaskStatus
+    from app.core.status import BatchStatus, TaskStatus, TaskType
 
     # 1. 根据任务类型确定要更新的字段
     task_type = task.task_type
 
-    if task_type == "breakdown":
+    if task_type == TaskType.BREAKDOWN:
         status_field = "breakdown_status"
-    elif task_type in ("script", "episode_script"):
+    elif task_type == TaskType.EPISODE_SCRIPT:
         status_field = "script_status"
     else:
         logger.warning(f"未知任务类型: {task_type}，默认更新 breakdown_status")
         status_field = "breakdown_status"
 
     # 2. 如果要设置为 failed，检查是否有之前的成功结果（仅对 breakdown 任务）
-    if new_status == BatchStatus.FAILED and task_type == "breakdown":
+    if new_status == BatchStatus.FAILED and task_type == TaskType.BREAKDOWN:
         has_success = _check_previous_breakdown_success(db, batch.id, task.id)
         if has_success:
             new_status = BatchStatus.COMPLETED
@@ -1626,12 +1637,12 @@ def _validate_status_consistency(batch, task, logger) -> None:
         task: 任务对象
         logger: 日志对象
     """
-    from app.core.status import BatchStatus, TaskStatus
+    from app.core.status import BatchStatus, TaskStatus, TaskType
 
     task_type = task.task_type
     task_status = task.status
 
-    if task_type == "breakdown":
+    if task_type == TaskType.BREAKDOWN:
         # 拆解任务应该更新 breakdown_status
         if task_status == TaskStatus.COMPLETED:
             if batch.breakdown_status == BatchStatus.COMPLETED:
@@ -1648,7 +1659,7 @@ def _validate_status_consistency(batch, task, logger) -> None:
                     f"⚠️ 批次 {batch.id} 拆解任务失败，但 breakdown_status 为 {batch.breakdown_status}"
                 )
 
-    elif task_type in ("script", "episode_script"):
+    elif task_type == TaskType.EPISODE_SCRIPT:
         # 剧本任务应该更新 script_status
         if task_status == TaskStatus.COMPLETED:
             if batch.script_status == BatchStatus.COMPLETED:

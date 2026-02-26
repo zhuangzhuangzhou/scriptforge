@@ -1,6 +1,7 @@
 import React from 'react';
 import { Modal } from 'antd';
 import { Crown, TrendingUp, Zap, CreditCard } from 'lucide-react';
+import { TIER_NAMES } from '../../constants/tier';
 
 interface CreditsLimitModalProps {
   isOpen: boolean;
@@ -19,13 +20,6 @@ const QuotaLimitModal: React.FC<CreditsLimitModalProps> = ({
   requiredCredits,
   taskType = '任务'
 }) => {
-  const tierNames: Record<string, string> = {
-    'free': '免费版',
-    'creator': '创作者版',
-    'studio': '工作室版',
-    'enterprise': '企业版'
-  };
-
   const upgradeTiers = [
     { name: 'creator', displayName: '创作者版', credits: 3000, price: '¥49/月', icon: Zap, color: '#1677ff' },
     { name: 'studio', displayName: '工作室版', credits: 15000, price: '¥199/月', icon: TrendingUp, color: '#722ed1' },
@@ -79,7 +73,7 @@ const QuotaLimitModal: React.FC<CreditsLimitModalProps> = ({
         </div>
 
         <p className="text-slate-400 text-sm mb-4">
-          您的 <span className="text-cyan-400 font-semibold">{tierNames[currentTier.toLowerCase()] || '当前等级'}</span> 积分不足，可以选择：
+          您的 <span className="text-cyan-400 font-semibold">{TIER_NAMES[currentTier.toUpperCase()] || '当前等级'}</span> 积分不足，可以选择：
         </p>
 
         <div className="space-y-3 mb-6">

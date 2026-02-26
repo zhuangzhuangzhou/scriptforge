@@ -1,6 +1,6 @@
 import React from 'react';
 import { DatePicker } from 'antd';
-import type { RangePickerProps } from 'antd/es/date-picker';
+import type { RangePickerProps, DatePickerProps } from 'antd/es/date-picker';
 
 const { RangePicker } = DatePicker;
 
@@ -137,6 +137,18 @@ export const GlassRangePicker: React.FC<RangePickerProps> = (props) => {
     <div className="glass-datepicker-wrapper">
       <style>{GLASS_DATEPICKER_STYLES}</style>
       <RangePicker
+        {...props}
+        popupClassName={`${props.popupClassName || ''} ${dropdownClassName}`}
+      />
+    </div>
+  );
+};
+
+export const GlassDatePicker: React.FC<DatePickerProps> = (props) => {
+  return (
+    <div className="glass-datepicker-wrapper">
+      <style>{GLASS_DATEPICKER_STYLES}</style>
+      <DatePicker
         {...props}
         popupClassName={`${props.popupClassName || ''} ${dropdownClassName}`}
       />
