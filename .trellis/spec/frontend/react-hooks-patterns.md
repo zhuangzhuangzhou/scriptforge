@@ -455,6 +455,87 @@ const isCurrentItemLoading = loadingItemId === selectedItemId;
 
 ---
 
+## Pattern: 异步错误类型处理
+
+### 问题
+在 try-catch 中使用 `any` 类型处理错误，违反 TypeScript 严格模式，且无法获得类型提示。
+
+### 场景
+```typescript
+// ❌ 错误: 使用 any 类型
+const handleSubmit = async () => {
+  try {
+    await api.create(data);
+  } catch (error: any) {  // ESLint: Unexpected any
+    message.error(error.response?.data?.detail || '操作失败');
+  }
+};
+```
+
+### 解决方案: 使用 unknown + 类型断言
+
+```typescript
+// ✅ 正确: 使用 unknown 并进行类型断言
+const handleSubmit = async () => {
+  try {
+    await api.create(data);
+  } catch (error: unknown) {
+    const err = error as { response?: { data?: { detail?: string } } };
+    message.error(err.response?.data?.detail || '操作失败');
+  }
+};
+```
+
+### 为什么这样做?
+
+1. **类型安全**: `unknown` 是类型安全的 `any`，强制进行类型检查
+2. **ESLint 合规**: 避免 `@typescript-eslint/no-explicit-any` 警告
+3. **可维护性**: 类型断言明确表达了期望的错误结构
+
+### 常用错误类型断言
+
+```typescript
+// Axios 错误响应
+type AxiosErrorResponse = {
+  response?: {
+    data?: {
+      detail?: string;
+      message?: string;
+    };
+    status?: number;
+  };
+};
+
+// 使用
+catch (error: unknown) {
+  const err = error as AxiosErrorResponse;
+  const errorMsg = err.response?.data?.detail
+    || err.response?.data?.message
+    || '操作失败';
+  message.error(errorMsg);
+}
+```
+
+### 进阶: 类型守卫函数
+
+```typescript
+// 定义类型守卫
+function isAxiosError(error: unknown): error is AxiosErrorResponse {
+  return typeof error === 'object' && error !== null && 'response' in error;
+}
+
+// 使用
+catch (error: unknown) {
+  if (isAxiosError(error)) {
+    message.error(error.response?.data?.detail || '操作失败');
+  } else {
+    message.error('未知错误');
+  }
+}
+```
+
+---
+
 ## 测试建议
 
 ### 测试闭包陷阱
@@ -494,6 +575,7 @@ test('回调应该使用最新的 state', async () => {
 
 | 日期 | 更新内容 | 作者 |
 |------|----------|------|
+| 2026-02-26 | 新增: 异步错误类型处理模式 (unknown + 类型断言) | Claude Opus 4.6 |
 | 2026-02-25 | 新增: 状态粒度控制模式 (避免全局状态影响局部 UI) | Claude Opus 4.6 |
 | 2026-02-25 | 新增: 双数据源进度合并模式 (WebSocket + HTTP 轮询) | Claude Opus 4.6 |
 | 2026-02-23 | 初始版本: React Hooks 最佳实践 | Claude Opus 4.6 |
