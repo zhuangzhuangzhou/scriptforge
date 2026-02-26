@@ -458,7 +458,7 @@ def _handle_retryable_error_sync(
         update_task_progress_sync(
             db, task_id,
             status=TaskStatus.RETRYING,
-            error_message=json.dumps(error_info)
+            error_message=json.dumps(error_info, ensure_ascii=False)
         )
 
         if batch_record:
@@ -524,7 +524,7 @@ def _handle_quota_exceeded_sync(
         update_task_progress_sync(
             db, task_id,
             status=TaskStatus.FAILED,
-            error_message=json.dumps(error_info)
+            error_message=json.dumps(error_info, ensure_ascii=False)
         )
 
         # 更新批次状态（智能回滚机制）
@@ -724,7 +724,7 @@ def _handle_task_failure_sync(
         update_task_progress_sync(
             db, task_id,
             status=TaskStatus.FAILED,
-            error_message=json.dumps(error_info)
+            error_message=json.dumps(error_info, ensure_ascii=False)
         )
 
         # 更新批次状态（智能回滚机制）
