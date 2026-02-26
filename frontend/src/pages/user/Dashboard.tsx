@@ -280,17 +280,35 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
 
                         <div className="space-y-5">
                             <div>
-                                <div className="flex justify-between text-[10px] font-bold text-slate-500 mb-2 uppercase tracking-widest">
-                                    <span>处理进度</span>
-                                    <span className="bg-gradient-to-r from-pink-500 to-violet-500 bg-clip-text text-transparent font-black font-mono">{project.processed_chapters}/{project.total_chapters} 章</span>
-                                </div>
-                                <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden shadow-inner border border-slate-800/50">
-                                    <motion.div
-                                        initial={{ width: 0 }}
-                                        animate={{ width: `${(project.processed_chapters / (project.total_chapters || 1)) * 100}%` }}
-                                        className="h-full bg-gradient-to-r from-blue-600 via-cyan-500 to-blue-400 rounded-full"
-                                    />
-                                </div>
+                                {(() => {
+                                    // 根据状态显示不同的进度
+                                    const isScripting = project.status === 'scripting' || project.status === 'completed';
+                                    const progressLabel = isScripting ? '剧本进度' : '拆解进度';
+                                    const current = isScripting ? (project.scripted_chapters || 0) : (project.processed_chapters || 0);
+                                    const total = project.total_chapters || 1;
+                                    const progressPercent = (current / total) * 100;
+                                    const gradientClass = isScripting
+                                        ? 'bg-gradient-to-r from-purple-600 via-pink-500 to-purple-400'
+                                        : 'bg-gradient-to-r from-blue-600 via-cyan-500 to-blue-400';
+
+                                    return (
+                                        <>
+                                            <div className="flex justify-between text-[10px] font-bold text-slate-500 mb-2 uppercase tracking-widest">
+                                                <span>{progressLabel}</span>
+                                                <span className="bg-gradient-to-r from-pink-500 to-violet-500 bg-clip-text text-transparent font-black font-mono">
+                                                    {current}/{project.total_chapters} {isScripting ? '集' : '章'}
+                                                </span>
+                                            </div>
+                                            <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden shadow-inner border border-slate-800/50">
+                                                <motion.div
+                                                    initial={{ width: 0 }}
+                                                    animate={{ width: `${progressPercent}%` }}
+                                                    className={`h-full ${gradientClass} rounded-full`}
+                                                />
+                                            </div>
+                                        </>
+                                    );
+                                })()}
                             </div>
 
                             <div className="flex items-center justify-between pt-5 border-t border-slate-800/50">
@@ -325,7 +343,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userTier }) => {
         <div className="flex items-center gap-4">
             <span>© 2026 AI ScriptFlow Core</span>
             <div className="w-1 h-1 rounded-full bg-slate-800" />
-            <span className="text-slate-400">Release v2.4.0-Final</span>
+            <span className="text-slate-400">v1.0.0</span>
         </div>
       </footer>
 

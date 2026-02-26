@@ -153,7 +153,7 @@ const Login: React.FC = () => {
                <span className="w-1 h-1 rounded-full bg-slate-700" />
                <button className="hover:text-cyan-400 transition-colors">隐私政策</button>
                <span className="w-1 h-1 rounded-full bg-slate-700" />
-               <span className="font-mono">v2.4.0</span>
+               <span className="font-mono">v1.0.0</span>
             </div>
           </motion.div>
         </div>

@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import MainLayout from './components/MainLayout';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminRoute from './components/AdminRoute';
+import Landing from './pages/Landing';
 import Login from './pages/auth/Login';
 import Register from './pages/auth/Register';
 import Dashboard from './pages/user/Dashboard';
@@ -25,6 +26,8 @@ import SystemSettings from './pages/admin/SystemSettings';
 import SystemConfiguration from './pages/admin/ModelManagement/SystemConfiguration';
 import AnalyticsPage from './pages/admin/Analytics';
 import TaskManagement from './pages/admin/TaskManagement';
+import Announcements from './pages/admin/Announcements';
+import RedeemCodes from './pages/admin/RedeemCodes';
 import { UserTier } from './types';
 
 // 加载状态组件
@@ -54,8 +57,14 @@ const AppContent: React.FC = () => {
     return <LoadingScreen />;
   }
 
+  // 未登录用户访问根路径时显示 Landing 页面
+  const isAuthenticated = !!user;
+
   return (
     <Routes>
+      {/* Landing Page - 未登录用户的首页 */}
+      <Route path="/" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Landing />} />
+
       {/* Auth Routes */}
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
@@ -90,14 +99,16 @@ const AppContent: React.FC = () => {
             <Route path="/admin/resources" element={<ResourcesPage />} />
             <Route path="/admin/split-rules" element={<SplitRulesPage />} />
             <Route path="/admin/analytics" element={<AnalyticsPage />} />
+            <Route path="/admin/announcements" element={<Announcements />} />
+            <Route path="/admin/redeem-codes" element={<RedeemCodes />} />
             <Route path="/admin/configurations" element={<SystemConfiguration />} />
             <Route path="/admin/settings" element={<SystemSettings />} />
           </Route>
         </Route>
       </Route>
 
-      {/* Default Redirect */}
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      {/* Default Redirect - 已登录用户访问未知路径时跳转到 dashboard */}
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );
 };
