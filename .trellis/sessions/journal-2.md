@@ -562,3 +562,75 @@ has_success = await _check_previous_breakdown_success_async(db, ...)
 
 ---
 
+
+## [20260226-231259] Script Tab 添加查看质检报告功能
+
+**时间**: 2026-02-26 23:12:59
+
+**提交**:
+- `dc4bf3e` - fix: 修复拆解成功但提示错误的问题及优化重复API调用
+
+
+**摘要**: 在 Script Tab 剧集生成后的评分区域添加查看质检报告按钮，修复前后端数据格式不一致问题
+
+---
+
+
+## [20260226-232337] WebSocket 整合与前端优化
+
+**时间**: 2026-02-26 23:23:37
+
+**提交**:
+- `fdde82c` - docs: 更新规范文档记录修复经验
+- `dc4bf3e` - fix: 修复拆解成功但提示错误的问题及优化重复API调用
+- `4230bbd` - docs: 添加 Unicode 转义序列陷阱到规范文档
+- `13b96ae` - fix: 修复错误消息中的 Unicode 转义问题
+- `ccdce04` - feat: 增强错误消息的人性化提示
+
+
+## 主要工作
+
+### 1. WebSocket 架构优化
+- **合并 Hook**: 将 `useBreakdownLogs` 合并到 `useBreakdownWebSocket`
+- **统一端点**: 前端统一使用 `/ws/breakdown` WebSocket 端点
+- **减少复杂度**: 删除冗余的 `useBreakdownLogs.ts` 文件
+- **修复连接问题**: 修复"全部拆解"按钮点击后 WebSocket 不自动连接的问题
+
+### 2. 前端 UI 优化
+- **Provider 标识**: 支持大写字母输入（正则从 `/^[a-z0-9_-]+$/` 改为 `/^[a-zA-Z0-9_-]+$/`）
+- **计费价格**: 限制小数位为 1 位（添加 `precision={1}` 和 `toFixed(1)`）
+
+### 3. 后端代码规范修复
+- **SQLAlchemy 布尔比较**: 修复 `scripts.py` 中的 `== True` 为 `.is_(True)` 或省略
+- **查询优化**: 添加 `is_current` 条件避免查询到重复剧本记录
+
+### 4. 文档更新
+- **前端规范**: 更新 `react-hooks-patterns.md` 中的示例代码
+- **后端规范**: 添加 Unicode 转义序列陷阱、子字符串匹配陷阱等章节
+
+## 技术要点
+
+| 问题 | 解决方案 |
+|------|----------|
+| WebSocket 重复连接 | 后端 `/ws/breakdown` 已订阅 progress + logs 两个频道，前端无需两个 hook |
+| SQLAlchemy 布尔比较 | 使用 `.is_(True)` 或直接使用字段名，避免 `== True` |
+| 批量拆解 WebSocket 不连接 | 在 `handleAllBreakdown` 中设置 `breakdownTaskId` 触发连接 |
+
+## 修改的文件
+
+**前端**:
+- `frontend/src/hooks/useBreakdownWebSocket.ts` - 扩展功能
+- `frontend/src/hooks/useBreakdownLogs.ts` - 已删除
+- `frontend/src/pages/user/Workspace/index.tsx` - 统一使用单个 WebSocket
+- `frontend/src/pages/admin/ModelManagement/ProviderManagement.tsx` - 支持大写
+- `frontend/src/pages/admin/ModelManagement/PricingManagement.tsx` - 小数位限制
+
+**后端**:
+- `backend/app/api/v1/scripts.py` - 布尔比较修复
+
+**文档**:
+- `.trellis/spec/frontend/react-hooks-patterns.md` - 示例代码更新
+- `.trellis/spec/backend/index.md` - 新增陷阱章节
+
+---
+
