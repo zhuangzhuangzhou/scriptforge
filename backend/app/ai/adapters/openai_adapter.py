@@ -170,6 +170,8 @@ class OpenAIAdapter(BaseModelAdapter):
         collected_content = []
         error_msg = None
         raw_response = None
+        prompt_tokens = None
+        response_tokens = None
 
         try:
             stream = self.client.chat.completions.create(
@@ -177,7 +179,8 @@ class OpenAIAdapter(BaseModelAdapter):
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                stream=True
+                stream=True,
+                stream_options={"include_usage": True}  # 请求在流式响应中包含 usage
             )
 
             for chunk in stream:
@@ -187,11 +190,19 @@ class OpenAIAdapter(BaseModelAdapter):
                     collected_content.append(content)
                     yield content
 
+                # 提取 token 统计（OpenAI 在最后一个 chunk 中包含 usage）
+                if hasattr(chunk, 'usage') and chunk.usage:
+                    prompt_tokens = getattr(chunk.usage, 'prompt_tokens', None)
+                    response_tokens = getattr(chunk.usage, 'completion_tokens', None)
+
             # 流结束后获取完整响应
             raw_response = {
                 "model": self.model_name,
                 "choices": [{"message": {"content": "".join(collected_content)}}],
-                "usage": None  # 流式响应不包含 usage
+                "usage": {
+                    "prompt_tokens": prompt_tokens or 0,
+                    "completion_tokens": response_tokens or 0
+                } if prompt_tokens or response_tokens else None
             }
 
         except Exception as e:
@@ -205,6 +216,8 @@ class OpenAIAdapter(BaseModelAdapter):
             self._log_call_sync(
                 prompt=prompt,
                 response=full_response if full_response else None,
+                prompt_tokens=prompt_tokens,
+                response_tokens=response_tokens,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 latency_ms=latency_ms,

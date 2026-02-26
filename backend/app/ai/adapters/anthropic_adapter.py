@@ -52,14 +52,6 @@ class AnthropicAdapter(BaseModelAdapter):
                 # 尝试自动补全路径
                 # 常见的第三方代理可能使用 /anthropic/v1 或 /v1
                 # 这里默认使用 /v1 路径
-                if 'anthropic' in base_url.lower():
-                    # 如果域名包含 anthropic，尝试 /anthropic/v1
-                    test_url = f"{base_url}/anthropic/v1/messages"
-                else:
-                    # 其他情况默认使用 /v1/messages
-                    test_url = f"{base_url}/v1/messages"
-
-                # 检测哪个路径有效（只检测，不保存）
                 # 用户可以手动提供完整路径来避免自动检测
                 self.base_url = base_url
             else:
@@ -230,6 +222,8 @@ class AnthropicAdapter(BaseModelAdapter):
         start_time = time.time()
         collected_content = []
         error_msg = None
+        prompt_tokens = None
+        response_tokens = None
 
         try:
             # 构建 API URL：根据 base_url 自动适配路径
@@ -291,6 +285,7 @@ class AnthropicAdapter(BaseModelAdapter):
 
                         try:
                             data = json.loads(data_str)
+
                             # 提取文本内容
                             if data.get("type") == "content_block_delta":
                                 delta = data.get("delta", {})
@@ -298,6 +293,21 @@ class AnthropicAdapter(BaseModelAdapter):
                                 if text:
                                     collected_content.append(text)
                                     yield text
+
+                            # 提取 token 统计
+                            elif data.get("type") == "message_start":
+                                # 消息开始，获取输入 tokens
+                                message = data.get("message", {})
+                                usage = message.get("usage", {})
+                                if usage:
+                                    prompt_tokens = usage.get("input_tokens")
+
+                            elif data.get("type") == "message_delta":
+                                # 消息增量，获取输出 tokens
+                                usage = data.get("usage", {})
+                                if usage:
+                                    response_tokens = usage.get("output_tokens")
+
                         except json.JSONDecodeError:
                             continue
 
@@ -348,6 +358,8 @@ class AnthropicAdapter(BaseModelAdapter):
             self._log_call_sync(
                 prompt=prompt,
                 response=full_response if full_response else None,
+                prompt_tokens=prompt_tokens,
+                response_tokens=response_tokens,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 latency_ms=latency_ms,
@@ -355,7 +367,13 @@ class AnthropicAdapter(BaseModelAdapter):
                 error_message=error_msg,
                 metadata={
                     "request": request_body,
-                    "response": {"content": full_response} if full_response else None,
+                    "response": {
+                        "content": full_response,
+                        "usage": {
+                            "input_tokens": prompt_tokens or 0,
+                            "output_tokens": response_tokens or 0
+                        }
+                    } if full_response else None,
                     "stream": True
                 }
             )

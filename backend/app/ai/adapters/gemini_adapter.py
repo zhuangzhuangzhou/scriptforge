@@ -8,7 +8,7 @@
 """
 import httpx
 import json
-from typing import Dict, Any, List, Optional, Iterator
+from typing import Dict, Any, List, Iterator
 from app.ai.adapters.base import BaseModelAdapter
 
 
@@ -177,7 +177,6 @@ class GeminiAdapter(BaseModelAdapter):
             response.raise_for_status()
 
             # Gemini SSE 格式: data: {...json...}
-            buffer = ""
             for line in response.iter_lines():
                 if not line:
                     continue
@@ -231,6 +230,8 @@ class GeminiAdapter(BaseModelAdapter):
         Yields:
             流式响应的每个文本块
         """
+        import time
+
         system_prompt = kwargs.get('system_prompt')
         # 将 prompt 转换为消息格式
         messages = [{"role": "user", "content": prompt}]
@@ -240,16 +241,66 @@ class GeminiAdapter(BaseModelAdapter):
         temperature = kwargs.pop('temperature', 0.7)
         max_tokens = kwargs.pop('max_tokens', 100000)
 
-        # 调用流式生成方法
-        for chunk in self.generate_content_stream(
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            **kwargs
-        ):
-            text = self.extract_text_from_response(chunk)
-            if text:
-                yield text
+        start_time = time.time()
+        collected_content = []
+        error_msg = None
+        prompt_tokens = None
+        response_tokens = None
+        last_usage = None
+
+        try:
+            # 调用流式生成方法
+            for chunk in self.generate_content_stream(
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs
+            ):
+                text = self.extract_text_from_response(chunk)
+                if text:
+                    collected_content.append(text)
+                    yield text
+
+                # 提取 token 统计（Gemini 在每个 chunk 中都可能包含 usageMetadata）
+                usage = chunk.get("usageMetadata")
+                if usage:
+                    last_usage = usage
+                    prompt_tokens = usage.get("promptTokenCount")
+                    response_tokens = usage.get("candidatesTokenCount")
+
+        except Exception as e:
+            error_msg = str(e)
+            raise
+
+        finally:
+            latency_ms = int((time.time() - start_time) * 1000)
+            full_response = "".join(collected_content)
+
+            # 记录日志
+            self._log_call_sync(
+                prompt=prompt,
+                response=full_response if full_response else None,
+                prompt_tokens=prompt_tokens,
+                response_tokens=response_tokens,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                latency_ms=latency_ms,
+                status="error" if error_msg else "success",
+                error_message=error_msg,
+                metadata={
+                    "request": {
+                        "model": self.model_name,
+                        "messages": messages,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens
+                    },
+                    "response": {
+                        "content": full_response,
+                        "usage": last_usage
+                    } if full_response else None,
+                    "stream": True
+                }
+            )
 
     def get_usage_info(self, response: Dict[str, Any]) -> Dict[str, int]:
         """获取 token 使用信息
