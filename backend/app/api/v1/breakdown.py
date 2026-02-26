@@ -25,6 +25,64 @@ router = APIRouter()
 _normalize_task_status = normalize_task_status
 
 
+async def _check_previous_breakdown_success_async(
+    db: AsyncSession,
+    batch_id: str,
+    current_task_id: str
+) -> bool:
+    """检查批次是否有之前成功的拆解结果（异步版本）
+
+    Args:
+        db: 异步数据库会话
+        batch_id: 批次 ID
+        current_task_id: 当前任务 ID
+
+    Returns:
+        bool: 如果有之前成功的拆解结果返回 True，否则返回 False
+    """
+    from app.models.plot_breakdown import PlotBreakdown
+
+    try:
+        # 查找该批次下所有成功完成的任务（排除当前任务）
+        result = await db.execute(
+            select(AITask).where(
+                AITask.batch_id == batch_id,
+                AITask.id != current_task_id,
+                AITask.status == TaskStatus.COMPLETED
+            )
+        )
+        successful_tasks = result.scalars().all()
+
+        if not successful_tasks:
+            return False
+
+        # 检查是否有对应的有效拆解结果
+        for task in successful_tasks:
+            breakdown_result = await db.execute(
+                select(PlotBreakdown).where(
+                    PlotBreakdown.batch_id == batch_id,
+                    PlotBreakdown.task_id == task.id,
+                    PlotBreakdown.plot_points.isnot(None)
+                )
+            )
+            breakdown = breakdown_result.scalar_one_or_none()
+
+            if breakdown and breakdown.plot_points:
+                # 检查剧情点数量是否合理（至少有1个）
+                if isinstance(breakdown.plot_points, list) and len(breakdown.plot_points) > 0:
+                    logger.info(
+                        f"批次 {batch_id} 找到之前的成功结果: "
+                        f"breakdown_id={breakdown.id}, "
+                        f"plot_points={len(breakdown.plot_points)}"
+                    )
+                    return True
+
+        return False
+    except Exception as e:
+        logger.warning(f"检查批次历史成功记录失败: {e}")
+        return False
+
+
 class BreakdownStartRequest(BaseModel):
     """启动拆解请求"""
     batch_id: str
@@ -2180,9 +2238,9 @@ async def stop_breakdown_task(
             celery_app.control.revoke(task.celery_task_id, terminate=True)
             print(f"已撤销 Celery 任务: {task.celery_task_id}")
 
-        # 2. 标记任务正在取消，并设置标记防止 Celery 回调重复扣费
-        task.status = TaskStatus.CANCELLING
-        task.current_step = "正在停止"
+        # 2. 直接标记任务为已取消，并设置标记防止 Celery 回调重复扣费
+        task.status = TaskStatus.CANCELED
+        task.current_step = "已取消"
         task.error_message = None  # 清除错误信息
         # 在 result 字段中标记已在 API 端处理过积分，防止 Celery 回调重复扣费
         task.result = {"api_handled_credits": True}
@@ -2197,93 +2255,82 @@ async def stop_breakdown_task(
         if batch:
             # 🔧 智能回滚：检查是否有之前的成功拆解结果
             # 如果有，保持 completed 状态；否则才回滚到 pending
-            from app.core.database import SyncSessionLocal
-            from app.tasks.breakdown_tasks import _check_previous_breakdown_success
-            import logging
+            has_previous_success = await _check_previous_breakdown_success_async(
+                db=db,
+                batch_id=str(batch.id),
+                current_task_id=task_id
+            )
 
-            breakdown_logger = logging.getLogger(__name__)
-
-            # 创建同步会话用于智能回滚检查
-            check_db = SyncSessionLocal()
-            try:
-                # 检查当前批次
-                has_previous_success = _check_previous_breakdown_success(
-                    db=check_db,
-                    batch_id=str(batch.id),
-                    current_task_id=task_id
+            if has_previous_success:
+                # 有之前的成功结果，保持 completed 状态
+                batch.breakdown_status = BatchStatus.COMPLETED
+                logger.info(
+                    f"批次 {batch.id} 有之前的成功拆解结果，保持 completed 状态"
+                )
+            else:
+                # 无之前的成功结果，回滚到 pending
+                batch.breakdown_status = BatchStatus.PENDING
+                logger.info(
+                    f"批次 {batch.id} 无之前的成功拆解结果，回滚到 pending 状态"
                 )
 
-                if has_previous_success:
-                    # 有之前的成功结果，保持 completed 状态
-                    batch.breakdown_status = BatchStatus.COMPLETED
-                    breakdown_logger.info(
-                        f"批次 {batch.id} 有之前的成功拆解结果，保持 completed 状态"
-                    )
-                else:
-                    # 无之前的成功结果，回滚到 pending
-                    batch.breakdown_status = BatchStatus.PENDING
-                    breakdown_logger.info(
-                        f"批次 {batch.id} 无之前的成功拆解结果，回滚到 pending 状态"
-                    )
-
-                # 4. 取消该批次之后所有进行中的任务
-                subsequent_tasks_result = await db.execute(
-                    select(AITask).join(Batch).where(
-                        Batch.project_id == batch.project_id,
-                        Batch.batch_number > batch.batch_number,
-                        AITask.status.in_([TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLING])
-                    )
+            # 4. 取消该批次之后所有进行中的任务
+            subsequent_tasks_result = await db.execute(
+                select(AITask).join(Batch).where(
+                    Batch.project_id == batch.project_id,
+                    Batch.batch_number > batch.batch_number,
+                    AITask.status.in_([TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS, TaskStatus.CANCELLING])
                 )
-                subsequent_tasks = subsequent_tasks_result.scalars().all()
+            )
+            subsequent_tasks = subsequent_tasks_result.scalars().all()
 
-                for subsequent_task in subsequent_tasks:
-                    # 撤销 Celery 任务
-                    if subsequent_task.celery_task_id:
-                        celery_app.control.revoke(subsequent_task.celery_task_id, terminate=True)
-                        print(f"已撤销后续排队任务: {subsequent_task.celery_task_id}")
+            for subsequent_task in subsequent_tasks:
+                # 撤销 Celery 任务
+                if subsequent_task.celery_task_id:
+                    celery_app.control.revoke(subsequent_task.celery_task_id, terminate=True)
+                    print(f"已撤销后续排队任务: {subsequent_task.celery_task_id}")
 
-                    # 更新任务状态
-                    subsequent_task.status = TaskStatus.CANCELED
-                    subsequent_task.current_step = "因前置任务停止而被取消"
-                    subsequent_task.error_message = None
+                # 更新任务状态
+                subsequent_task.status = TaskStatus.CANCELED
+                subsequent_task.current_step = "因前置任务停止而被取消"
+                subsequent_task.error_message = None
+                # 标记已在 API 端处理过积分
+                subsequent_task.result = {"api_handled_credits": True}
 
-                    # 🔧 智能回滚：检查后续批次是否有之前的成功拆解结果
-                    subsequent_batch_result = await db.execute(
-                        select(Batch).where(Batch.id == subsequent_task.batch_id)
-                    )
-                    subsequent_batch = subsequent_batch_result.scalar_one_or_none()
-                    if subsequent_batch:
-                        try:
-                            has_subsequent_success = _check_previous_breakdown_success(
-                                db=check_db,
-                                batch_id=str(subsequent_batch.id),
-                                current_task_id=str(subsequent_task.id)
+                # 🔧 智能回滚：检查后续批次是否有之前的成功拆解结果
+                subsequent_batch_result = await db.execute(
+                    select(Batch).where(Batch.id == subsequent_task.batch_id)
+                )
+                subsequent_batch = subsequent_batch_result.scalar_one_or_none()
+                if subsequent_batch:
+                    try:
+                        has_subsequent_success = await _check_previous_breakdown_success_async(
+                            db=db,
+                            batch_id=str(subsequent_batch.id),
+                            current_task_id=str(subsequent_task.id)
+                        )
+
+                        if has_subsequent_success:
+                            subsequent_batch.breakdown_status = BatchStatus.COMPLETED
+                            logger.info(
+                                f"后续批次 {subsequent_batch.id} 有之前的成功结果，保持 completed"
                             )
-
-                            if has_subsequent_success:
-                                subsequent_batch.breakdown_status = BatchStatus.COMPLETED
-                                breakdown_logger.info(
-                                    f"后续批次 {subsequent_batch.id} 有之前的成功结果，保持 completed"
-                                )
-                            else:
-                                subsequent_batch.breakdown_status = BatchStatus.PENDING
-                                breakdown_logger.info(
-                                    f"后续批次 {subsequent_batch.id} 无之前的成功结果，回滚到 pending"
-                                )
-                        except Exception as e:
-                            # 检查失败，默认回滚到 pending
+                        else:
                             subsequent_batch.breakdown_status = BatchStatus.PENDING
-                            breakdown_logger.warning(f"检查后续批次失败: {e}")
+                            logger.info(
+                                f"后续批次 {subsequent_batch.id} 无之前的成功结果，回滚到 pending"
+                            )
+                    except Exception as e:
+                        # 检查失败，默认回滚到 pending
+                        subsequent_batch.breakdown_status = BatchStatus.PENDING
+                        logger.warning(f"检查后续批次失败: {e}")
 
-                    cancelled_count += 1
+                cancelled_count += 1
 
-                if subsequent_tasks:
-                    print(f"已取消 {len(subsequent_tasks)} 个后续排队任务")
+            if subsequent_tasks:
+                print(f"已取消 {len(subsequent_tasks)} 个后续排队任务")
 
-            finally:
-                check_db.close()
-
-        # 5. 先提交任务状态变更（确保状态更新成功）
+        # 5. 提交任务状态变更（确保状态更新成功）
         await db.commit()
 
         # 6. 处理积分（在主事务提交后进行，使用独立事务）
@@ -2300,8 +2347,9 @@ async def stop_breakdown_task(
 
             sync_db = SyncSessionLocal()
             try:
-                # 6.1 如果任务已开始执行，先扣除 Token 费用
+                # 6.1 处理主任务积分
                 if original_status in [TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS]:
+                    # 任务已开始执行，尝试扣除 Token 费用
                     token_result = consume_token_credits_sync(
                         db=sync_db,
                         user_id=str(current_user.id),
@@ -2311,39 +2359,44 @@ async def stop_breakdown_task(
                     )
                     token_deducted = token_result.get("token_credits", 0)
                     if token_deducted > 0:
+                        # 有 Token 消耗，扣除费用，不返还配额
                         sync_db.commit()
                         print(f"已扣除 Token 费用: {token_deducted} 积分")
                     else:
-                        # 无 Token 消耗，返还预扣积分
+                        # 无 Token 消耗（任务刚启动就被取消），返还预扣配额
                         refund_episode_quota_sync(sync_db, str(current_user.id), 1)
                         sync_db.commit()
                         refund_success = True
                         print(f"无 Token 消耗，已返还配额: user_id={current_user.id}")
                 else:
-                    # QUEUED 状态的任务还没开始执行，直接返还积分
+                    # QUEUED 状态的任务还没开始执行，直接返还配额
                     refund_episode_quota_sync(sync_db, str(current_user.id), 1)
                     sync_db.commit()
                     refund_success = True
                     print(f"任务未执行，已返还配额: user_id={current_user.id}")
+
+                # 6.2 处理后续任务积分（都是 QUEUED 或刚启动，直接返还配额）
+                subsequent_refund_count = cancelled_count - 1  # 减去主任务
+                if subsequent_refund_count > 0:
+                    refund_episode_quota_sync(sync_db, str(current_user.id), subsequent_refund_count)
+                    sync_db.commit()
+                    print(f"已返还后续任务配额: {subsequent_refund_count} 个")
             finally:
                 sync_db.close()
         except Exception as credits_error:
             print(f"积分处理失败: {credits_error}")
+            logger.error(f"积分处理失败: task_id={task_id}, error={credits_error}")
             # 积分处理失败不影响任务取消结果，但需要记录日志
 
         # 构建返回消息
         message_parts = ["已停止任务"]
         if cancelled_count > 1:
             message_parts.append(f"（含 {cancelled_count - 1} 个后续排队任务）")
-        if token_deducted > 0:
-            message_parts.append(f"，已扣除 Token 费用 {token_deducted} 积分")
-        elif refund_success:
-            message_parts.append("，已返还积分")
         message = "".join(message_parts)
 
         return {
             "task_id": str(task.id),
-            "status": TaskStatus.CANCELLING,
+            "status": TaskStatus.CANCELED,
             "cancelled_count": cancelled_count,
             "message": message,
             "token_deducted": token_deducted

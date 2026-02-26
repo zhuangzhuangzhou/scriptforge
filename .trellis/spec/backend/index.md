@@ -1064,4 +1064,141 @@ async def get_announcement(announcement_id: UUID):
 
 ---
 
+### 8.12 异步/同步会话混用导致数据不一致
+
+**问题**: 在异步会话中查询 ORM 对象，在同步会话中查询数据，然后修改异步会话的对象，导致数据不一致
+
+**场景**: 停止任务接口中，从异步会话查询 `batch` 对象，创建同步会话检查历史记录，根据同步会话的查询结果修改异步会话的对象
+
+**错误信息**: 可能出现数据不一致、`DetachedInstanceError`、或事务冲突
+
+**根本原因**:
+1. **ORM 对象会话绑定**: SQLAlchemy 的 ORM 对象绑定到创建它的会话
+2. **事务隔离**: 两个会话可能看到不同的数据快照
+3. **跨会话修改**: 在会话 A 查询数据，在会话 B 修改对象，违反了 ORM 原则
+
+**错误示例**:
+
+```python
+# ❌ 错误：会话混用
+async def stop_task(task_id: str, db: AsyncSession):
+    # 1. 从异步会话查询 batch 对象
+    batch_result = await db.execute(select(Batch).where(Batch.id == batch_id))
+    batch = batch_result.scalar_one_or_none()  # batch 绑定到异步会话 db
+
+    # 2. 创建同步会话查询数据
+    check_db = SyncSessionLocal()
+    has_success = _check_previous_breakdown_success(
+        db=check_db,  # 使用同步会话查询
+        batch_id=str(batch.id),
+        current_task_id=task_id
+    )
+    check_db.close()
+
+    # 3. 根据同步会话的查询结果，修改异步会话的对象
+    if has_success:
+        batch.breakdown_status = BatchStatus.COMPLETED  # ❌ 问题：batch 属于 db，但判断来自 check_db
+
+    await db.commit()
+```
+
+**问题分析**:
+
+| 问题 | 说明 |
+|------|------|
+| **数据一致性** | 两个会话可能看到不同的数据快照（取决于事务隔离级别） |
+| **ORM 状态** | `batch` 对象属于 `db` 会话，但决策依据来自 `check_db` 会话 |
+| **事务管理** | 需要管理两个独立的事务，增加复杂度 |
+| **性能开销** | 创建额外的数据库连接和会话 |
+
+**正确做法**:
+
+```python
+# ✅ 正确：使用单一异步会话
+async def _check_previous_breakdown_success_async(
+    db: AsyncSession,
+    batch_id: str,
+    current_task_id: str
+) -> bool:
+    """检查批次是否有之前成功的拆解结果（异步版本）"""
+    from app.models.plot_breakdown import PlotBreakdown
+
+    try:
+        # 在同一个异步会话中查询
+        result = await db.execute(
+            select(AITask).where(
+                AITask.batch_id == batch_id,
+                AITask.id != current_task_id,
+                AITask.status == TaskStatus.COMPLETED
+            )
+        )
+        successful_tasks = result.scalars().all()
+
+        if not successful_tasks:
+            return False
+
+        # 检查是否有对应的有效拆解结果
+        for task in successful_tasks:
+            breakdown_result = await db.execute(
+                select(PlotBreakdown).where(
+                    PlotBreakdown.batch_id == batch_id,
+                    PlotBreakdown.task_id == task.id,
+                    PlotBreakdown.plot_points.isnot(None)
+                )
+            )
+            breakdown = breakdown_result.scalar_one()
+
+            if breakdown and breakdown.plot_points and len(breakdown.plot_points) > 0:
+                return True
+
+        return False
+    except Exception as e:
+        logger.warning(f"检查批次历史成功记录失败: {e}")
+        return False
+
+
+async def stop_task(task_id: str, db: AsyncSession):
+    # 1. 从异步会话查询 batch 对象
+    batch_result = await db.execute(select(Batch).where(Batch.id == batch_id))
+    batch = batch_result.scalar_one_or_none()
+
+    # 2. 在同一个异步会话中查询历史数据
+    has_success = await _check_previous_breakdown_success_async(
+        db=db,  # ✅ 使用同一个异步会话
+        batch_id=str(batch.id),
+    task_id=task_id
+    )
+
+    # 3. 在同一个会话中修改对象
+    if has_success:
+        batch.breakdown_status = BatchStatus.COMPLETED  # ✅ 正确：同一个会话
+
+    await db.commit()
+```
+
+**优势对比**:
+
+| 方面 | 会话混用 | 单一会话 |
+|------|---------|---------|
+| **数据一致性** | 两个会话可能看到不同数据 | 同一事务内数据一致 |
+| **ORM 状态** | 可能出现 DetachedInstanceError | ORM 对象状态正常 |
+| **事务管理** | 需要管理两个事务 | 只需管理一个事务 |
+| **性能** | 创建额外会话有开销 | 复用现有会话 |
+| **代码复杂度** | 需要手动关闭同步会话 | 由依赖注入自动管理 |
+
+**预防措施**:
+1. **优先创建异步版本**: 如果需要在异步代码中调用辅助函数，优先创建异步版本
+2. **避免混用会话**: 在异步代码中不要创建同步会话
+3. **单一会话原则**: 所有相关的数据库操作使用同一个会话
+4. **代码审查**: 检查是否有 `SyncSessionLocal()` 在异步函数中被调用
+
+**相关错误**:
+- 8.6 节的 `PendingRollbackError`（事务回滚后访问对象）
+- 8.7 节的 `MissingGreenlet`（对象过期访问）
+
+**实际案例**:
+- 2026-02-26: 修复停止任务接口的会话混用问题，创建了 `_check_previous_breakdown_success_async()` 异步版本
+
+---
+
 **最后更新**: 2026-02-26
