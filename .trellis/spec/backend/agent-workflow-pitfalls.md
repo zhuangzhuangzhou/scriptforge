@@ -266,6 +266,64 @@ if output_key in ("qa_result", "qa") and isinstance(result, list):
 
 ---
 
+## 5. Unicode 转义序列问题
+
+### 问题描述
+
+**症状**：
+- 后端返回的错误消息中，中文字符显示为 Unicode 转义序列
+- 例如：`"message": "\u62c6\u89e3\u7ed3\u679c\u4e3a\u7a7a..."`
+- 前端显示为原始的转义字符串，用户无法阅读
+
+**根本原因**：
+
+`json.dumps()` 默认会将非 ASCII 字符转换为 Unicode 转义序列：
+
+```python
+# ❌ 错误 - 中文字符变成 \uXXXX
+json.dumps({"message": "拆解结果为空"})
+# 输出: '{"message": "\\u62c6\\u89e3\\u7ed3\\u679c\\u4e3a\\u7a7a"}'
+
+# ✅ 正确 - 中文字符正常显示
+json.dumps({"message": "拆解结果为空"}, ensure_ascii=False)
+# 输出: '{"message": "拆解结果为空"}'
+```
+
+**影响位置**：
+
+- `backend/app/tasks/breakdown_tasks.py` 中的错误消息存储
+- 数据库中存储的错误信息
+- WebSocket 推送的错误消息
+
+### 解决方案
+
+在所有 `json.dumps()` 调用中添加 `ensure_ascii=False` 参数：
+
+```python
+# 错误消息存储
+error_info = error.to_dict()
+error_message = json.dumps(error_info, ensure_ascii=False)
+
+# API 响应
+return JSONResponse(content=json.dumps(data, ensure_ascii=False))
+```
+
+### 最佳实践
+
+1. **统一错误消息格式**：
+   - 使用包含 `code`、`message`、`suggestion` 字段的结构
+   - 中文字符直接存储，不使用转义
+
+2. **前端解析**：
+   - 后端返回 JSON 时确保 `ensure_ascii=False`
+   - 前端直接解析 JSON，无需额外处理
+
+### 修复提交
+
+- Commit: `13b96ae` - fix: 修复错误消息中的 Unicode 转义问题
+
+---
+
 ## 总结
 
 ### 核心原则
