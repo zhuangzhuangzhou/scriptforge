@@ -435,6 +435,80 @@ const breakdowns = breakdownsResponse.data.items || [];
 | 添加分页 | 支持大项目分页加载 |
 | 指定字段查询 | 减少数据库 IO |
 
+## Pattern: 任务完成后的单条数据刷新
+
+### 问题
+
+异步任务（如 AI 生成）完成后，需要刷新列表显示最新数据。如果用户正在浏览第 5 页，重新加载第 1 页会丢失当前浏览位置。
+
+### 错误做法
+
+```typescript
+// ❌ 错误：任务完成后重新加载整个列表
+const onComplete = () => {
+  setIsRunning(false);
+  loadEpisodes(1, false);  // 用户在第 5 页，却刷新第 1 页
+};
+```
+
+### 正确做法
+
+```typescript
+// ✅ 正确：只刷新变更的单条数据
+const refreshEpisode = useCallback(async (episodeNumber: number) => {
+  const episode = episodes.find(ep => ep.episode === episodeNumber);
+  if (!episode?.breakdownId) return;
+
+  try {
+    const response = await scriptApi.getEpisodeScript(episode.breakdownId, episodeNumber);
+    const scriptData = response.data;
+
+    // 只更新列表中的该条数据
+    setEpisodes(prev => prev.map(ep => {
+      if (ep.episode !== episodeNumber) return ep;
+      return {
+        ...ep,
+        status: 'completed',
+        script: scriptData ? {
+          id: scriptData.id,
+          title: scriptData.title,
+          word_count: scriptData.word_count,
+          qa_status: scriptData.qa_status,
+        } : undefined
+      };
+    }));
+  } catch (err) {
+    // 失败时至少更新状态
+    setEpisodes(prev => prev.map(ep =>
+      ep.episode === episodeNumber ? { ...ep, status: 'completed' } : ep
+    ));
+  }
+}, [episodes]);
+
+// 任务完成回调
+const onComplete = () => {
+  setIsRunning(false);
+  if (generatingEpisode) {
+    refreshEpisode(generatingEpisode);  // 只刷新生成的那一条
+  }
+};
+```
+
+### 适用场景
+
+| 场景 | 刷新策略 |
+|------|---------|
+| 单条数据变更（任务完成） | 单条刷新 |
+| 批量任务完成 | 每完成一条刷新一条 |
+| 用户手动刷新 | 重新加载当前页 |
+| 切换项目/Tab | 重新加载第一页 |
+
+### 为什么这样做
+
+1. **保持用户位置**: 用户在第 5 页浏览时，不会被跳回第 1 页
+2. **减少请求**: 只请求一条数据，而不是整页 20 条
+3. **更快响应**: 单条数据请求比整页请求更快
+
 ## 性能检查清单
 
 实现数据加载时，检查以下项目：

@@ -57,9 +57,10 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
   const [exporting, setExporting] = useState(false);
   const [consoleVisible, setConsoleVisible] = useState(false);
 
-  // 分页状态
+  // 无限滚动状态
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const PAGE_SIZE = 20;
 
   // 剧本历史弹窗状态
@@ -160,12 +161,9 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
   } = useScriptQueue({
     novelType,
     onTaskComplete: (episodeNumber, index, total) => {
-      // addLog 在后面定义，这里用 console.log 替代
       console.log(`[ScriptTab] ✅ 第 ${episodeNumber} 集完成 (${index + 1}/${total})`);
-      // 更新剧集状态
-      setEpisodes(prev => prev.map(ep =>
-        ep.episode === episodeNumber ? { ...ep, status: 'completed' } : ep
-      ));
+      // 刷新该集数据
+      refreshEpisode(episodeNumber);
     },
     onQueueComplete: () => {
       console.log('[ScriptTab] 🎉 所有剧本生成完成');
@@ -201,13 +199,12 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     pollInterval: 999999,
     taskType: 'script',
     onComplete: () => {
-      // WebSocket 收到完成消息时，重置生成状态
+      // WebSocket 收到完成消息时，重置生成状态并刷新该集数据
       setIsRunning(false);
       setCurrentTaskId(null);
+      // 刷新当前生成的那一集数据
       if (generatingEpisode) {
-        setEpisodes(prev => prev.map(ep =>
-          ep.episode === generatingEpisode ? { ...ep, status: 'completed' } : ep
-        ));
+        refreshEpisode(generatingEpisode);
       }
     },
     onError: (error) => {
@@ -225,17 +222,21 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
     }
   });
 
-  // 加载剧集列表（使用聚合接口，支持分页）
-  const loadEpisodes = useCallback(async (page: number = 1) => {
+  // 加载剧集列表（使用聚合接口，支持无限滚动）
+  const loadEpisodes = useCallback(async (page: number = 1, append: boolean = false) => {
     if (!projectId) return;
 
     try {
-      setLoading(true);
+      if (append) {
+        setLoadingMore(true);
+      } else {
+        setLoading(true);
+      }
 
       const response = await scriptApi.getEpisodesSummary(projectId, page, PAGE_SIZE);
       const { episodes: episodeList, running_task, progress: progressData, pagination } = response.data;
 
-      // 转换为前端格式（注意：后端不再返回 structure、full_script、qa_report）
+      // 转换为前端格式
       const formattedEpisodes = episodeList.map((ep: any) => ({
         episode: ep.episode_number,
         status: ep.status,
@@ -249,7 +250,6 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
           status: ep.status,
           qa_status: ep.script.qa_status,
           qa_score: ep.script.qa_score,
-          // 大字段需要单独加载
           structure: undefined,
           full_script: undefined,
           scenes: [],
@@ -259,17 +259,22 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         } : undefined
       }));
 
-      setEpisodes(formattedEpisodes);
+      if (append) {
+        setEpisodes(prev => [...prev, ...formattedEpisodes]);
+      } else {
+        setEpisodes(formattedEpisodes);
+      }
+
       setCurrentPage(pagination.page);
-      setTotalPages(pagination.total_pages);
+      setHasMore(pagination.page < pagination.total_pages);
 
       // 更新进度信息
       if (onProgressUpdate) {
         onProgressUpdate(progressData);
       }
 
-      // 恢复正在运行的任务
-      if (running_task) {
+      // 恢复正在运行的任务（仅首次加载）
+      if (!append && running_task) {
         console.log(`[ScriptTab] 检测到正在运行的任务: ${running_task.task_id.slice(0, 8)}, 第 ${running_task.episode_number} 集`);
 
         setCurrentTaskId(running_task.task_id);
@@ -280,8 +285,8 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         addLog('info', `🔄 已恢复第 ${running_task.episode_number} 集的生成任务`);
       }
 
-      // 默认选中第一集
-      if (!selectedEpisodeRef.current && formattedEpisodes.length > 0) {
+      // 默认选中第一集（仅首次加载）
+      if (!append && !selectedEpisodeRef.current && formattedEpisodes.length > 0) {
         selectedEpisodeRef.current = true;
         setSelectedEpisode(formattedEpisodes[0].episode);
       }
@@ -290,9 +295,54 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
       showErrorModal(err, '加载剧集列表失败');
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  // 加载更多
+  const loadMore = useCallback(() => {
+    if (hasMore && !loadingMore) {
+      loadEpisodes(currentPage + 1, true);
+    }
+  }, [hasMore, loadingMore, currentPage, loadEpisodes]);
+
+  // 刷新单集数据（生成完成后调用）
+  const refreshEpisode = useCallback(async (episodeNumber: number) => {
+    if (!projectId) return;
+
+    const episode = episodes.find(ep => ep.episode === episodeNumber);
+    if (!episode?.breakdownId) return;
+
+    try {
+      const response = await scriptApi.getEpisodeScript(episode.breakdownId, episodeNumber);
+      const scriptData = response.data;
+
+      // 更新列表中的该集数据
+      setEpisodes(prev => prev.map(ep => {
+        if (ep.episode !== episodeNumber) return ep;
+        return {
+          ...ep,
+          status: 'completed',
+          script: scriptData ? {
+            id: scriptData.id,
+            episode_number: episodeNumber,
+            title: scriptData.title,
+            word_count: scriptData.word_count,
+            status: 'completed' as const,
+            qa_status: scriptData.qa_status,
+            qa_score: scriptData.qa_score,
+          } as EpisodeScript : undefined
+        };
+      }));
+    } catch (err) {
+      console.error(`刷新第 ${episodeNumber} 集数据失败:`, err);
+      // 失败时至少更新状态
+      setEpisodes(prev => prev.map(ep =>
+        ep.episode === episodeNumber ? { ...ep, status: 'completed' } : ep
+      ));
+    }
+  }, [projectId, episodes]);
 
   // 合并进度
   const effectiveProgress = wsProgress > 0 ? wsProgress : progress;
@@ -830,9 +880,9 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         selectedEpisode={selectedEpisode}
         onSelectEpisode={setSelectedEpisode}
         loading={loading}
-        currentPage={currentPage}
-        totalPages={totalPages}
-        onPageChange={(page) => loadEpisodes(page)}
+        hasMore={hasMore}
+        onLoadMore={loadMore}
+        loadingMore={loadingMore}
       />
 
       {/* 右侧主内容区 */}

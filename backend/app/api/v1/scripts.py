@@ -97,99 +97,115 @@ async def get_episodes_summary(
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
 
-    # 1. 获取所有拆解结果（只取 episode 和 breakdown_id）
+    # 1. 获取拆解结果（只查必要字段，不加载整个对象）
     breakdowns_result = await db.execute(
-        select(PlotBreakdown).join(Batch).where(
+        select(
+            PlotBreakdown.id,
+            PlotBreakdown.batch_id,
+            PlotBreakdown.plot_points
+        ).join(Batch).where(
             Batch.project_id == project_id
         )
     )
-    breakdowns = breakdowns_result.scalars().all()
+    breakdowns = breakdowns_result.all()
 
     # 建立 episode -> breakdown 映射
     episode_map: dict[int, dict[str, Any]] = {}
-    for breakdown in breakdowns:
-        if breakdown.plot_points:
-            for pp in breakdown.plot_points:
+    for breakdown_id, batch_id, plot_points in breakdowns:
+        if plot_points:
+            for pp in plot_points:
                 ep = pp.get("episode")
                 if ep and ep > 0 and ep not in episode_map:
                     episode_map[ep] = {
                         "episode_number": ep,
                         "status": "pending",
-                        "breakdown_id": str(breakdown.id),
-                        "batch_id": str(breakdown.batch_id),
+                        "breakdown_id": str(breakdown_id),
+                        "batch_id": str(batch_id),
                         "script": None
                     }
 
-    # 2. 获取已生成的剧本（只取当前版本）
+    # 2. 获取已生成的剧本（只查必要字段，排除 content 大字段）
     scripts_result = await db.execute(
-        select(Script).where(
+        select(
+            Script.id,
+            Script.episode_number,
+            Script.title,
+            Script.word_count,
+            Script.qa_status,
+            Script.qa_score,
+            Script.plot_breakdown_id,
+            Script.batch_id
+        ).where(
             Script.project_id == project_id,
-            Script.is_current == True
+            Script.is_current.is_(True)
         )
     )
-    scripts = scripts_result.scalars().all()
+    scripts = scripts_result.all()
 
-    for script in scripts:
-        ep = script.episode_number
+    for script_id, ep, title, word_count, qa_status, qa_score, plot_breakdown_id, batch_id in scripts:
         script_info = EpisodeScriptInfo(
-            id=str(script.id),
-            title=script.title,
-            word_count=script.word_count or 0,
-            qa_status=script.qa_status,
-            qa_score=script.qa_score
+            id=str(script_id),
+            title=title,
+            word_count=word_count or 0,
+            qa_status=qa_status,
+            qa_score=qa_score
         )
 
         if ep in episode_map:
             episode_map[ep]["status"] = "completed"
             episode_map[ep]["script"] = script_info
         else:
-            # 剧本存在但没有对应的拆解记录（边缘情况）
             episode_map[ep] = {
                 "episode_number": ep,
                 "status": "completed",
-                "breakdown_id": str(script.plot_breakdown_id) if script.plot_breakdown_id else None,
-                "batch_id": str(script.batch_id) if script.batch_id else None,
+                "breakdown_id": str(plot_breakdown_id) if plot_breakdown_id else None,
+                "batch_id": str(batch_id) if batch_id else None,
                 "script": script_info
             }
 
-    # 3. 获取正在运行的任务
+    # 3. 获取正在运行的任务（只查必要字段）
     running_task_result = await db.execute(
-        select(AITask).where(
+        select(
+            AITask.id,
+            AITask.config,
+            AITask.result,
+            AITask.progress,
+            AITask.current_step
+        ).where(
             AITask.project_id == project_id,
             AITask.task_type == TaskType.EPISODE_SCRIPT,
             AITask.status.in_([TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.IN_PROGRESS, TaskStatus.RETRYING])
         ).order_by(AITask.created_at.desc()).limit(1)
     )
-    running_task = running_task_result.scalar_one_or_none()
+    running_task = running_task_result.first()
 
     running_task_info = None
     if running_task:
-        ep_num = (running_task.config.get("episode_number") if running_task.config else None) or \
-                 (running_task.result.get("episode_number") if running_task.result else None)
+        task_id, config, task_result, task_progress, current_step = running_task
+        ep_num = (config.get("episode_number") if config else None) or \
+                 (task_result.get("episode_number") if task_result else None)
         running_task_info = RunningTaskInfo(
-            task_id=str(running_task.id),
+            task_id=str(task_id),
             episode_number=ep_num or 0,
-            progress=running_task.progress or 0,
-            current_step=running_task.current_step
+            progress=task_progress or 0,
+            current_step=current_step
         )
-        # 更新对应剧集状态为 in_progress
         if ep_num and ep_num in episode_map:
             episode_map[ep_num]["status"] = "in_progress"
 
-    # 4. 检查失败的任务（最近的）
+    # 4. 检查失败的任务（只查必要字段）
     failed_tasks_result = await db.execute(
-        select(AITask).where(
+        select(AITask.config).where(
             AITask.project_id == project_id,
             AITask.task_type == TaskType.EPISODE_SCRIPT,
             AITask.status == TaskStatus.FAILED
         ).order_by(AITask.created_at.desc())
     )
-    failed_tasks = failed_tasks_result.scalars().all()
+    failed_tasks = failed_tasks_result.all()
 
-    for task in failed_tasks:
-        ep_num = (task.config.get("episode_number") if task.config else None)
+    for (config,) in failed_tasks:
+        ep_num = config.get("episode_number") if config else None
         if ep_num and ep_num in episode_map:
-            # 只有当该集没有成功的剧本时才标记为 failed
             if episode_map[ep_num]["status"] == "pending":
                 episode_map[ep_num]["status"] = "failed"
 

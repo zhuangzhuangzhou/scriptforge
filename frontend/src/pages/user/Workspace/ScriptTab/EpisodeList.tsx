@@ -1,6 +1,5 @@
-import React from 'react';
-import { FileEdit } from 'lucide-react';
-import { Pagination } from 'antd';
+import React, { useRef, useCallback } from 'react';
+import { FileEdit, Loader2 } from 'lucide-react';
 import EpisodeCard from './EpisodeCard';
 import type { EpisodeScript } from '../../../../types';
 
@@ -15,10 +14,10 @@ interface EpisodeListProps {
   selectedEpisode: number | null;
   onSelectEpisode: (episode: number) => void;
   loading: boolean;
-  // 分页相关
-  currentPage?: number;
-  totalPages?: number;
-  onPageChange?: (page: number) => void;
+  // 无限滚动相关
+  hasMore?: boolean;
+  onLoadMore?: () => void;
+  loadingMore?: boolean;
 }
 
 const EpisodeList: React.FC<EpisodeListProps> = ({
@@ -26,10 +25,23 @@ const EpisodeList: React.FC<EpisodeListProps> = ({
   selectedEpisode,
   onSelectEpisode,
   loading,
-  currentPage = 1,
-  totalPages = 1,
-  onPageChange
+  hasMore = false,
+  onLoadMore,
+  loadingMore = false
 }) => {
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // 滚动到底部时加载更多
+  const handleScroll = useCallback(() => {
+    if (!listRef.current || !hasMore || loadingMore || !onLoadMore) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = listRef.current;
+    // 距离底部 100px 时触发加载
+    if (scrollHeight - scrollTop - clientHeight < 100) {
+      onLoadMore();
+    }
+  }, [hasMore, loadingMore, onLoadMore]);
+
   // 骨架屏组件
   const EpisodeSkeleton = () => (
     <div className="px-4 py-3 bg-slate-800/30 border-l-2 border-transparent animate-pulse">
@@ -44,7 +56,11 @@ const EpisodeList: React.FC<EpisodeListProps> = ({
 
   return (
     <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col z-10 shadow-2xl">
-      <div className="flex-1 overflow-y-auto divide-y divide-slate-800/30">
+      <div
+        ref={listRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto divide-y divide-slate-800/30"
+      >
         {/* 剧集列表 */}
         {loading ? (
           <div className="space-y-0">
@@ -68,25 +84,24 @@ const EpisodeList: React.FC<EpisodeListProps> = ({
                 onClick={() => onSelectEpisode(episode.episode)}
               />
             ))}
+
+            {/* 加载更多指示器 */}
+            {loadingMore && (
+              <div className="flex items-center justify-center py-4 text-slate-500">
+                <Loader2 size={16} className="animate-spin mr-2" />
+                <span className="text-xs">加载中...</span>
+              </div>
+            )}
+
+            {/* 已加载全部 */}
+            {!hasMore && episodes.length > 0 && (
+              <div className="py-3 text-center text-xs text-slate-600">
+                已加载全部 {episodes.length} 集
+              </div>
+            )}
           </>
         )}
       </div>
-
-      {/* 分页控件 */}
-      {totalPages > 1 && (
-        <div className="px-3 py-2 border-t border-slate-800 bg-slate-900/80">
-          <Pagination
-            current={currentPage}
-            total={totalPages * 20}
-            pageSize={20}
-            onChange={onPageChange}
-            size="small"
-            showSizeChanger={false}
-            showQuickJumper={totalPages > 10}
-            className="flex justify-center [&_.ant-pagination-item]:!bg-slate-800 [&_.ant-pagination-item]:!border-slate-700 [&_.ant-pagination-item-active]:!bg-cyan-600 [&_.ant-pagination-item-active]:!border-cyan-600 [&_.ant-pagination-item_a]:!text-slate-300 [&_.ant-pagination-item-active_a]:!text-white [&_.ant-pagination-prev_.ant-pagination-item-link]:!bg-slate-800 [&_.ant-pagination-prev_.ant-pagination-item-link]:!border-slate-700 [&_.ant-pagination-next_.ant-pagination-item-link]:!bg-slate-800 [&_.ant-pagination-next_.ant-pagination-item-link]:!border-slate-700 [&_.ant-pagination-jump-prev]:!text-slate-500 [&_.ant-pagination-jump-next]:!text-slate-500"
-          />
-        </div>
-      )}
     </div>
   );
 };
