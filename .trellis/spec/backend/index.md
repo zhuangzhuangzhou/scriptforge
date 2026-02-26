@@ -69,6 +69,7 @@ backend/
 - 在 `app/api/v1/router.py` 中统一注册。
 - URL 路径使用连字符格式 (e.g., `/users/me/change-password`)。
 - **类型同步**: 确保 API 定义能正确生成 OpenAPI Schema，以便前端通过工具自动生成 TypeScript 类型定义。
+- **路由顺序**: 具体路由必须在参数路由之前定义 (详见 8.11)
 
 ### 4.2 依赖注入
 - 获取当前用户: `current_user: User = Depends(get_current_active_user)`
@@ -279,7 +280,47 @@ db.expire_all()
 - `await db.refresh(obj)`
 - `await db.flush()`
 
-### 8.2 WebSocket 双通道同步
+### 8.3 SQLAlchemy 布尔比较
+
+**问题**: 直接使用 `== True` 或 `== False` 会触发 flake8 警告，且不符合 SQLAlchemy 最佳实践
+
+**错误示例**:
+
+```python
+# ❌ 错误：触发 E712 警告
+stmt = select(Announcement).where(Announcement.is_published == True)
+stmt = select(Announcement).where(Announcement.is_deleted == False)
+```
+
+**正确做法**:
+
+```python
+# ✅ 正确：使用 .is_() 方法
+stmt = select(Announcement).where(Announcement.is_published.is_(True))
+stmt = select(Announcement).where(Announcement.is_deleted.is_(False))
+
+# ✅ 更简洁：对于 True 可以省略
+stmt = select(Announcement).where(Announcement.is_published)
+
+# ✅ 更简洁：对于 False 使用 not_
+from sqlalchemy import not_
+stmt = select(Announcement).where(not_(Announcement.is_deleted))
+```
+
+**为什么这样做**:
+1. **符合 PEP 8**: 避免 `== True` 和 `== False` 的反模式
+2. **SQLAlchemy 推荐**: `.is_()` 是 SQLAlchemy 提供的专用方法
+3. **代码检查**: 通过 flake8 的 E712 检查
+4. **可读性**: 更符合 Python 的惯用写法
+
+**批量修复**:
+```bash
+# 使用 sed 批量修复（macOS）
+sed -i '' 's/== False/.is_(False)/g' app/api/v1/your_file.py
+sed -i '' 's/== True/.is_(True)/g' app/api/v1/your_file.py
+```
+
+### 8.4 WebSocket 双通道同步
 
 **问题**: 任务完成消息只发送到一个 Redis 频道，导致另一个 WebSocket 连接无法收到完成通知
 
@@ -942,4 +983,85 @@ def _update_batch_status_safely(
 
 ---
 
-**最后更新**: 2026-02-23
+### 8.11 FastAPI 路由顺序错误
+
+**问题**: 具体路由被参数路由拦截，导致 UUID 解析错误
+
+**场景**: 定义了 `/announcements/{announcement_id}` 和 `/announcements/unread-count` 两个路由
+
+**错误信息**:
+```json
+{
+  "detail": [{
+    "type": "uuid_parsing",
+    "msg": "Input should be a valid UUID, invalid character: expected an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-], found `u` at 1",
+    "input": "unread-count"
+  }]
+}
+```
+
+**根本原因**:
+- FastAPI 按照路由定义的顺序进行匹配
+- 如果 `/announcements/{announcement_id}` 在前，`unread-count` 会被当作 UUID 参数解析
+- 导致 Pydantic 验证失败
+
+**错误示例**:
+
+```python
+# ❌ 错误：参数路由在前，拦截了具体路由
+@router.get("/announcements/{announcement_id}")
+async def get_announcement(announcement_id: UUID):
+    ...
+
+@router.get("/announcements/unread-count")  # 永远不会被匹配到！
+async def get_unread_count():
+    ...
+```
+
+**正确做法**:
+
+```python
+# ✅ 正确：具体路由在前，参数路由在后
+@router.get("/announcements/unread-count")
+async def get_unread_count():
+    ...
+
+@router.get("/announcements/{announcement_id}")
+async def get_announcement(announcement_id: UUID):
+    ...
+```
+
+**路由顺序规则**:
+
+1. **最具体的路由放在最前面**
+   ```python
+   /users/me/profile          # 最具体
+   /users/me                  # 较具体
+   /users/{user_id}           # 通用参数路由
+   ```
+
+2. **固定路径优先于参数路径**
+   ```python
+   /items/search              # 固定路径
+   /items/{item_id}           # 参数路径
+   ```
+
+3. **多段路径的具体性判断**
+   ```python
+   /api/v1/users/admin        # 更具体
+   /api/v1/users/{role}       # 较通用
+   /api/v1/{resource}/{id}    # 最通用
+   ```
+
+**预防措施**:
+1. 在添加新路由时，检查是否有类似的参数路由
+2. 将所有固定路径的路由放在文件前面
+3. 使用更明确的路径名称，避免歧义（如 `/stats/unread` 而非 `/unread-count`）
+4. 测试时检查路由是否被正确匹配
+
+**相关错误**:
+- 类似的问题也会出现在 `/users/me` vs `/users/{user_id}` 等场景
+
+---
+
+**最后更新**: 2026-02-26
