@@ -213,6 +213,9 @@ def parse_text_plot_points(response: str) -> List[Dict[str, Any]]:
         # 记录更详细的调试信息
         sample_lines = [l.strip() for l in response.split('\n') if '|' in l][:3]
         logger.warning(f"检测到管道符但解析失败，示例行: {sample_lines}")
+        logger.warning(f"响应文本前500字符: {response[:500]}")
+    else:
+        logger.warning(f"未检测到管道符，响应文本前200字符: {response[:200]}")
 
     return plot_points
 
@@ -232,7 +235,10 @@ def format_plot_points_to_text(plot_points: List[Dict[str, Any]]) -> str:
         str: 管道符分隔的文本
     """
     if not plot_points:
+        logger.warning(f"[格式化] plot_points 为空，返回空字符串")
         return ""
+
+    logger.info(f"[格式化] 开始格式化 {len(plot_points)} 个剧情点")
 
     lines = []
     for i, point in enumerate(plot_points):
@@ -1311,7 +1317,20 @@ class SimpleAgentExecutor:
                     results.update(step_result)
 
             # 检查退出条件
-            if self._evaluate_condition(exit_condition, results):
+            # 调试日志：记录 qa_result 的内容
+            if "qa_result" in results:
+                qa_result = results["qa_result"]
+                logger.info(f"[退出条件] qa_result 类型: {type(qa_result)}")
+                if isinstance(qa_result, dict):
+                    logger.info(f"[退出条件] qa_result.keys: {list(qa_result.keys())}")
+                    logger.info(f"[退出条件] status={qa_result.get('status')}, qa_status={qa_result.get('qa_status')}")
+                    logger.info(f"[退出条件] score={qa_result.get('score')}, qa_score={qa_result.get('qa_score')}")
+
+            condition_met = self._evaluate_condition(exit_condition, results)
+            logger.info(f"[退出条件] 条件: {exit_condition}")
+            logger.info(f"[退出条件] 评估结果: {condition_met}")
+
+            if condition_met:
                 if self.log_publisher and task_id:
                     self.log_publisher.publish_success(
                         task_id,
