@@ -673,6 +673,52 @@ import { GiftOutlined } from '@ant-design/icons';
 
 ---
 
+## Pattern: Tailwind 动态类名处理
+
+### 问题
+
+Tailwind JIT 编译器在构建时扫描静态类名，模板字符串中的动态类名不会被识别：
+
+```typescript
+// ❌ 错误：动态类名不会被编译
+const color = 'blue';
+<div className={`bg-${color}-500/10 text-${color}-500`}>
+
+// 构建后这些类不存在，样式不生效
+```
+
+### 解决方案：颜色映射表
+
+预定义完整的类名字符串：
+
+```typescript
+// ✅ 正确：使用映射表
+const colorClasses: Record<string, { bg: string; text: string }> = {
+  blue: { bg: 'bg-blue-500/10', text: 'text-blue-500' },
+  cyan: { bg: 'bg-cyan-500/10', text: 'text-cyan-500' },
+  purple: { bg: 'bg-purple-500/10', text: 'text-purple-500' },
+  // ... 其他颜色
+};
+
+// 使用
+const colors = colorClasses[color] || colorClasses.blue;
+<div className={`${colors.bg} ${colors.text}`}>
+```
+
+### 适用场景
+
+- 数据驱动的卡片/按钮渲染（如 Dashboard 快速操作）
+- 状态指示器（不同状态不同颜色）
+- 标签/徽章组件
+
+### 为什么这样做？
+
+1. **构建时可见** - 所有类名都是完整字符串，Tailwind 能正确扫描
+2. **类型安全** - TypeScript 可以检查颜色键是否存在
+3. **易于维护** - 新增颜色只需在映射表中添加一行
+
+---
+
 ## 检查清单
 
 在实现 UI 功能时，使用此清单确保质量：
@@ -688,11 +734,13 @@ import { GiftOutlined } from '@ant-design/icons';
 - [ ] 表格是否需要序号列？（可选，根据实际需求决定）
 - [ ] 重复使用的常量是否提取到 `constants/` 目录？
 - [ ] 管理功能是否在 Dashboard 添加了卡片入口？
+- [ ] 动态颜色是否使用映射表而非模板字符串？
 
 ---
 
 ## 更新日志
 
+- 2026-02-26: 新增：Tailwind 动态类名处理模式（基于 Dashboard 重构经验）
 - 2026-02-26: 新增：共享常量提取规范、管理员 Dashboard 菜单入口规范
 - 2026-02-25: 新增：GlassTable 使用规范、表格序号列标准实现
 - 2026-02-25: 创建文档，记录 Script Tab 重构中的 UI 一致性经验

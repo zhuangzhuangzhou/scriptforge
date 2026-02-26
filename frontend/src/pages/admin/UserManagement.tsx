@@ -22,6 +22,21 @@ interface User {
   last_login_at?: string;
 }
 
+// 相对时间格式化
+const formatRelativeTime = (dateStr: string): string => {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 0) return '今天';
+  if (diffDays === 1) return '昨天';
+  if (diffDays < 7) return `${diffDays}天前`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)}周前`;
+  if (diffDays < 365) return `${Math.floor(diffDays / 30)}个月前`;
+  return `${Math.floor(diffDays / 365)}年前`;
+};
+
 const UserManagement: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
@@ -132,6 +147,26 @@ const UserManagement: React.FC = () => {
       title: '积分',
       dataIndex: 'credits',
       render: (val: number) => <span className="font-mono text-emerald-400">{val?.toLocaleString() ?? 0}</span>,
+    },
+    {
+      title: '注册时间',
+      dataIndex: 'created_at',
+      width: 120,
+      render: (val: string) => val ? (
+        <span className="text-slate-400 text-sm" title={new Date(val).toLocaleString('zh-CN')}>
+          {formatRelativeTime(val)}
+        </span>
+      ) : '-'
+    },
+    {
+      title: '最近登录',
+      dataIndex: 'last_login_at',
+      width: 120,
+      render: (val: string) => val ? (
+        <span className="text-slate-400 text-sm" title={new Date(val).toLocaleString('zh-CN')}>
+          {formatRelativeTime(val)}
+        </span>
+      ) : <span className="text-slate-600 text-sm">从未登录</span>
     },
     {
       title: '状态',
