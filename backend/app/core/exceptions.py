@@ -16,17 +16,21 @@ from typing import Optional
 class AITaskException(Exception):
     """AI任务基础异常"""
 
-    def __init__(self, message: str, code: str = "TASK_ERROR"):
+    def __init__(self, message: str, code: str = "TASK_ERROR", suggestion: str = ""):
         self.message = message
         self.code = code
+        self.suggestion = suggestion
         super().__init__(message)
 
     def to_dict(self) -> dict:
         """转换为字典格式，便于JSON序列化"""
-        return {
+        result = {
             "code": self.code,
             "message": self.message
         }
+        if self.suggestion:
+            result["suggestion"] = self.suggestion
+        return result
 
 
 class RetryableError(AITaskException):

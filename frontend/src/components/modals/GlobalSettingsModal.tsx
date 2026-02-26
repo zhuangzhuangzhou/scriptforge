@@ -1,14 +1,16 @@
-import React, { useState } from 'react';
-import { Cpu, Scissors, Save, Server, Key, Plus, Sliders, Globe, Check, Crown, Info, Lock, Edit2, Trash2, Library } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Cpu, Scissors, Save, Server, Key, Plus, Sliders, Globe, Check, Crown, Info, Lock, Edit2, Trash2, Library, FileText, Copy, ArrowLeft } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { message } from 'antd';
 import { UserTier } from '../../types';
+import api from '../../services/api';
 
 interface GlobalSettingsModalProps {
   onClose: () => void;
   userTier: UserTier;
 }
 
-type SettingsTab = 'MODEL' | 'SKILL_LIB' | 'SPLIT';
+type SettingsTab = 'MODEL' | 'SKILL_LIB' | 'SPLIT' | 'PROMPTS';
 
 const MODEL_RATES: Record<string, { in: number; out: number }> = {
   'DeepNarrative-Pro-v2 (Recommended)': { in: 10.00, out: 30.00 },
@@ -42,6 +44,79 @@ const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({ onClose, user
   ]);
 
   const [editingLib, setEditingLib] = useState<number | null>(null);
+
+  // 提示词模板状态
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<any | null>(null);
+  const [templateContent, setTemplateContent] = useState('');
+
+  // 加载提示词模板
+  useEffect(() => {
+    if (activeTab === 'PROMPTS') {
+      loadTemplates();
+    }
+  }, [activeTab]);
+
+  const loadTemplates = async () => {
+    setLoadingTemplates(true);
+    try {
+      const response = await api.get('/ai-resources', { params: { category: 'breakdown_prompt' } });
+      setTemplates(response.data.items || response.data || []);
+    } catch (error: unknown) {
+      console.error('Failed to load templates:', error);
+    } finally {
+      setLoadingTemplates(false);
+    }
+  };
+
+  const handleCloneTemplate = async (template: any) => {
+    try {
+      await api.post(`/ai-resources/${template.id}/clone`);
+      message.success('已复制，可以开始编辑');
+      loadTemplates();
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { detail?: string } } };
+      message.error(err.response?.data?.detail || '复制失败');
+    }
+  };
+
+  const handleEditTemplate = async (template: any) => {
+    try {
+      const response = await api.get(`/ai-resources/${template.id}`);
+      setEditingTemplate(response.data);
+      setTemplateContent(response.data.content || '');
+    } catch (error: unknown) {
+      message.error('加载模板失败');
+    }
+  };
+
+  const handleSaveTemplate = async () => {
+    if (!editingTemplate) return;
+    try {
+      await api.put(`/ai-resources/${editingTemplate.id}`, {
+        ...editingTemplate,
+        content: templateContent,
+      });
+      message.success('保存成功');
+      setEditingTemplate(null);
+      loadTemplates();
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { detail?: string } } };
+      message.error(err.response?.data?.detail || '保存失败');
+    }
+  };
+
+  const handleDeleteTemplate = async (template: any) => {
+    if (!confirm('确定要删除这个模板吗？')) return;
+    try {
+      await api.delete(`/ai-resources/${template.id}`);
+      message.success('删除成功');
+      loadTemplates();
+    } catch (error: unknown) {
+      message.error('删除失败');
+    }
+  };
 
   const toggleLib = (id: number) => {
     setSkillLibs(prev => prev.map(lib => lib.id === id ? { ...lib, enabled: !lib.enabled } : lib));
@@ -120,16 +195,28 @@ const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({ onClose, user
             技能库配置
           </button>
           
-          <button 
+          <button
             onClick={() => setActiveTab('SPLIT')}
             className={`flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium transition-all ${
-              activeTab === 'SPLIT' 
-                ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20' 
+              activeTab === 'SPLIT'
+                ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
                 : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
             }`}
           >
             <Scissors size={18} />
             拆分配置
+          </button>
+
+          <button
+            onClick={() => setActiveTab('PROMPTS')}
+            className={`flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium transition-all ${
+              activeTab === 'PROMPTS'
+                ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+            }`}
+          >
+            <FileText size={18} />
+            提示词模板
           </button>
 
           <div className="mt-auto pt-4 border-t border-slate-800">
@@ -146,6 +233,7 @@ const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({ onClose, user
               {activeTab === 'MODEL' && '大模型与推理引擎'}
               {activeTab === 'SKILL_LIB' && '技能库 (Skill Libraries)'}
               {activeTab === 'SPLIT' && '智能文本拆分策略'}
+              {activeTab === 'PROMPTS' && (editingTemplate ? '编辑提示词模板' : '提示词模板管理')}
             </h3>
             <button 
               className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm shadow-lg shadow-cyan-500/20 transition-all"
@@ -432,6 +520,152 @@ const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({ onClose, user
                         <p className="text-xs text-slate-600">匹配到的行将在拆分前被自动过滤。</p>
                     </div>
                 </div>
+              </div>
+            )}
+
+            {/* PROMPTS TAB */}
+            {activeTab === 'PROMPTS' && (
+              <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                {editingTemplate ? (
+                  /* 编辑模式 */
+                  <div className="space-y-4">
+                    <button
+                      onClick={() => setEditingTemplate(null)}
+                      className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors"
+                    >
+                      <ArrowLeft size={16} /> 返回列表
+                    </button>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-xs text-slate-400 uppercase font-bold">显示名称</label>
+                        <input
+                          type="text"
+                          value={editingTemplate.display_name}
+                          onChange={(e) => setEditingTemplate({...editingTemplate, display_name: e.target.value})}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-cyan-500 outline-none"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs text-slate-400 uppercase font-bold">描述</label>
+                        <input
+                          type="text"
+                          value={editingTemplate.description || ''}
+                          onChange={(e) => setEditingTemplate({...editingTemplate, description: e.target.value})}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-cyan-500 outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs text-slate-400 uppercase font-bold">模板内容</label>
+                        <span className="text-[10px] text-slate-500">可用变量: {'{{chapters_text}}'}</span>
+                      </div>
+                      <textarea
+                        value={templateContent}
+                        onChange={(e) => setTemplateContent(e.target.value)}
+                        rows={12}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-sm text-slate-300 font-mono focus:ring-1 focus:ring-cyan-500 outline-none resize-none"
+                        placeholder="输入提示词内容..."
+                      />
+                    </div>
+
+                    <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
+                      <button
+                        onClick={() => setEditingTemplate(null)}
+                        className="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors"
+                      >
+                        取消
+                      </button>
+                      <button
+                        onClick={handleSaveTemplate}
+                        className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm flex items-center gap-2"
+                      >
+                        <Save size={14} /> 保存
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* 列表模式 */
+                  <>
+                    <div className="flex justify-between items-end">
+                      <div>
+                        <h4 className="text-sm font-medium text-white">拆解提示词模板</h4>
+                        <p className="text-xs text-slate-500 mt-1">自定义剧情拆解各步骤的提示词</p>
+                      </div>
+                    </div>
+
+                    {loadingTemplates ? (
+                      <div className="text-center py-8 text-slate-500">加载中...</div>
+                    ) : (
+                      <div className="space-y-3">
+                        {templates.map((template) => (
+                          <div key={template.id} className="bg-slate-900 border border-slate-800 rounded-xl p-4 hover:border-slate-700 transition-all">
+                            <div className="flex items-start justify-between">
+                              <div className="flex items-start gap-3">
+                                <div className={`mt-1 w-8 h-8 rounded flex items-center justify-center text-xs font-bold ${
+                                  template.is_builtin ? 'bg-indigo-500/10 text-indigo-400' : 'bg-cyan-500/10 text-cyan-400'
+                                }`}>
+                                  <FileText size={14} />
+                                </div>
+                                <div>
+                                  <h5 className="text-sm font-medium text-slate-200 flex items-center gap-2">
+                                    {template.display_name}
+                                    {template.is_builtin && <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 text-[10px]">系统</span>}
+                                  </h5>
+                                  <p className="text-xs text-slate-500 mt-1">{template.description}</p>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                {template.is_builtin ? (
+                                  <button
+                                    onClick={() => handleCloneTemplate(template)}
+                                    className="p-1.5 text-slate-500 hover:text-cyan-400 hover:bg-slate-800 rounded flex items-center gap-1"
+                                    title="复制为我的模板"
+                                  >
+                                    <Copy size={12} />
+                                  </button>
+                                ) : (
+                                  <>
+                                    <button
+                                      onClick={() => handleEditTemplate(template)}
+                                      className="p-1.5 text-slate-500 hover:text-white hover:bg-slate-800 rounded"
+                                      title="编辑"
+                                    >
+                                      <Edit2 size={12} />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteTemplate(template)}
+                                      className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-slate-800 rounded"
+                                      title="删除"
+                                    >
+                                      <Trash2 size={12} />
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+
+                        {templates.length === 0 && (
+                          <div className="text-center py-8 text-slate-500">
+                            暂无提示词模板
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="p-4 bg-slate-900/50 border border-slate-800 rounded-xl">
+                      <h5 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">使用说明</h5>
+                      <p className="text-xs text-slate-400 leading-relaxed">
+                        系统内置提示词不可直接编辑，点击复制按钮创建自己的版本后即可自定义。在项目配置中可以选择使用哪个提示词版本。
+                      </p>
+                    </div>
+                  </>
+                )}
               </div>
             )}
 

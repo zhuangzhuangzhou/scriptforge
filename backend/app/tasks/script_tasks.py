@@ -315,16 +315,28 @@ def _execute_episode_script_sync(
                 message=f"剧本结构缺少 {section} 段落"
             )
 
-    # 6.2 重新计算字数
+    # 6.2 重新计算字数（包括 structure 各段落和总字数）
     full_script = script_result.get("full_script", "")
+
+    # 重新计算 structure 中每个段落的字数
+    for section in required_sections:
+        section_data = structure.get(section, {})
+        if isinstance(section_data, dict) and "content" in section_data:
+            section_content = section_data["content"]
+            # 使用统一的字数计算函数
+            recalculated_word_count = calculate_word_count(section_content)
+            structure[section]["word_count"] = recalculated_word_count
+
+    # 计算总字数
     if full_script:
         word_count = calculate_word_count(full_script)
 
         if log_publisher:
             llm_word_count = script_result.get("word_count", 0)
+            structure_total = sum(structure[s].get("word_count", 0) for s in required_sections)
             log_publisher.publish_info(
                 task_id,
-                f"📊 字数统计：LLM 估算 {llm_word_count} 字，实际计算 {word_count} 字"
+                f"📊 字数统计：LLM 估算 {llm_word_count} 字，实际计算 {word_count} 字（四段式总和 {structure_total} 字）"
             )
     else:
         word_count = 0

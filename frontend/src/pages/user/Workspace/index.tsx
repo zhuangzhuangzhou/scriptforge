@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Settings, FileEdit, Play,
@@ -373,15 +373,10 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
             addLog('formatted', messageText);
         }
         message.success('拆解完成');
-        // 只更新 selectedBatch 状态，由 useEffect 统一触发 fetchBreakdownResults
-        // 避免多个地方同时调用导致重复请求
+        // ✅ 修复：使用 refreshBatch 精准刷新当前批次
         if (selectedBatch) {
-            setSelectedBatch({
-                ...selectedBatch,
-                breakdown_status: BATCH_STATUS.COMPLETED
-            });
+            refreshBatch(selectedBatch.id);
         }
-        fetchBatches();
         // 🔧 新增：批次完成后更新全局进度
         fetchGlobalProgress();
     };
@@ -450,27 +445,34 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 console.log('[Workspace] 收到批次切换消息:', switchInfo);
 
                 try {
-                    // 刷新批次列表，获取最新状态
-                    const res = await projectApi.getBatches(projectId!, 1, 20);
-                    const freshBatches = res.data?.items || [];
-                    setBatches(freshBatches);
-
-                    // 切换到新批次
-                    const newBatch = freshBatches.find((b: any) => b.id === switchInfo.newBatchId);
-                    if (newBatch) {
-                        setSelectedBatch(newBatch);
-                        setBreakdownTaskId(switchInfo.newTaskId);
-                        message.info(`已自动切换到批次 ${switchInfo.newBatchNumber}`);
-                    } else {
-                        console.warn('[Workspace] 未找到新批次:', switchInfo.newBatchId);
+                    // ✅ 修复：刷新当前选中的批次数据（完成后会变为 COMPLETED）
+                    if (selectedBatch) {
+                        await refreshBatch(selectedBatch.id);
                     }
+                    // ✅ 修复：刷新新批次数据（状态变为 IN_PROGRESS）
+                    await refreshBatch(switchInfo.newBatchId);
 
-                    // 🔧 新增：批次切换后更新全局进度
+                    // ✅ 修复：使用 switchToTaskBatch 统一处理批次切换
+                    await switchToTaskBatch({
+                        task_id: switchInfo.newTaskId,
+                        batch_id: switchInfo.newBatchId,
+                        batch_number: switchInfo.newBatchNumber
+                    }, { silent: false });
+
+                    // 更新全局进度
                     await fetchGlobalProgress();
                 } catch (err) {
                     console.error('[Workspace] 批次切换失败:', err);
                     message.error('批次切换失败');
                 }
+            },
+            // ✅ 新增：WebSocket 关闭时检测是否有正在处理的任务
+            onClose: async () => {
+                console.log('[Workspace] WebSocket 关闭，检测是否有正在处理的任务...');
+                // 等待一下，确保后端已经创建下一个任务
+                setTimeout(async () => {
+                    await autoDetectProcessingTask();
+                }, 2000);
             }
         }
     );
@@ -668,6 +670,32 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
         }
     };
 
+    // 🔧 新增：刷新单个批次数据（精准刷新，不影响分页）
+    const refreshBatch = useCallback(async (batchId: string) => {
+        if (!projectId) return;
+
+        try {
+            // 使用 getBatches 获取当前页数据，然后找到目标批次
+            const res = await projectApi.getBatches(projectId, batchPage, 20);
+            const freshBatches = res.data?.items || [];
+
+            // 找到目标批次
+            const updatedBatch = freshBatches.find((b: any) => b.id === batchId);
+
+            if (updatedBatch) {
+                // 更新批次列表中的该批次数据
+                setBatches(prev => prev.map(b =>
+                    b.id === batchId ? updatedBatch : b
+                ));
+                console.log(`[Workspace] 已刷新批次 ${batchId} 的数据`);
+            } else {
+                console.warn(`[Workspace] 批次 ${batchId} 不在当前页面`);
+            }
+        } catch (err) {
+            console.error(`[Workspace] 刷新批次 ${batchId} 失败:`, err);
+        }
+    }, [projectId, batchPage]);
+
     // 🔧 提取：根据 current_task 切换到目标批次（统一逻辑，解决分页问题）
     const switchToTaskBatch = async (currentTask: any, options: { silent?: boolean } = {}) => {
         if (!currentTask || !currentTask.task_id) return;
@@ -705,6 +733,11 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 console.error('[Workspace] 加载批次页面失败:', err);
                 return;
             }
+        } else if (targetBatch) {
+            // ✅ 修复：批次在当前列表中，刷新该批次数据获取最新状态
+            await refreshBatch(currentTask.batch_id);
+            // 重新获取 targetBatch（已更新）
+            targetBatch = batches.find((b: Batch) => b.id === currentTask.batch_id);
         }
 
         if (targetBatch) {
@@ -1217,8 +1250,7 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 fetchBatches();
                 // 🔧 新增：立即获取一次全局进度
                 await fetchGlobalProgress();
-                // 开始轮询批量进度
-                pollBatchProgress();
+                // ✅ 修复：移除轮询，完全依赖 WebSocket 推送
             } else {
                 setIsBatchRunning(false);
                 message.info('没有待拆解的批次');
@@ -1235,56 +1267,6 @@ const Workspace: React.FC<ProjectWorkspaceProps> = () => {
                 canRetry: true
             });
         }
-    };
-
-    // 轮询批量进度（30秒间隔）
-    const pollBatchProgress = () => {
-        if (!projectId) return;
-
-        // 🔧 修复：定义轮询函数
-        const fetchProgress = async () => {
-            try {
-                const res = await breakdownApi.getBatchProgress(projectId);
-                const progress = res.data;
-
-                setBatchProgress({
-                    total_batches: progress.total_batches,
-                    completed: progress.completed,
-                    in_progress: progress.in_progress,
-                    pending: progress.pending,
-                    failed: progress.failed,
-                    overall_progress: progress.overall_progress
-                });
-
-                // 🔧 优化：使用统一的批次切换逻辑（静默模式，避免频繁提示）
-                if (progress.current_task) {
-                    await switchToTaskBatch(progress.current_task, { silent: true });
-                }
-
-                // 检查是否全部完成
-                const allDone = progress.completed + progress.failed === progress.total_batches;
-                if (allDone) {
-                    setIsBatchRunning(false);
-
-                    if (progress.failed > 0) {
-                        message.warning(`批量拆解完成，${progress.failed} 个任务失败`);
-                    } else {
-                        message.success(`全部 ${progress.completed} 个批次拆解完成`);
-                    }
-                    // 🔧 修复：避免重复调用 fetchBatches
-                    // fetchBatches();
-                }
-            } catch (err) {
-                console.error('获取批量进度失败:', err);
-            }
-        };
-
-        // 🔧 修复：立即执行一次，然后每30秒执行一次
-        fetchProgress();
-        const interval = setInterval(fetchProgress, 30000);
-
-        // 保存 interval ID 以便取消
-        return interval;
     };
 
     // 取消批量拆解

@@ -72,6 +72,14 @@ RESOURCE_CATEGORIES = {
         "order": 6,
         "default_select_all": True,
     },
+    "breakdown_prompt": {
+        "label": "拆解提示词",
+        "icon": "MessageSquare",
+        "color": "indigo",
+        "description": "剧情拆解各步骤的提示词模板，控制 AI 如何分析小说内容",
+        "order": 7,
+        "default_select_all": False,
+    },
 }
 
 

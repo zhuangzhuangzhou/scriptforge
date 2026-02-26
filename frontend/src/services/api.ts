@@ -1444,5 +1444,31 @@ export const feedbackApi = {
   },
 };
 
+// ==================== 用户认证 API ====================
+export const authApi = {
+  // 更新用户资料
+  updateProfile: async (data: {
+    username?: string;
+    full_name?: string;
+    avatar_url?: string;
+  }) => {
+    return api.put('/auth/profile', data);
+  },
+
+  // 修改密码
+  changePassword: async (data: {
+    current_password: string;
+    new_password: string;
+    confirm_password: string;
+  }) => {
+    return api.put('/auth/password', data);
+  },
+
+  // 获取当前用户信息
+  getCurrentUser: async () => {
+    return api.get('/auth/me');
+  },
+};
+
 export { USE_MOCK };
 export default api;

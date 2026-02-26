@@ -1039,6 +1039,15 @@ def _execute_breakdown_sync(
             logger.error(f"Skill 执行失败: {e}")
             raise AITaskException(code="SKILL_EXECUTION_ERROR", message=str(e))
 
+        # 检查 plot_points 是否为空
+        if not plot_points or len(plot_points) == 0:
+            logger.error(f"skill_only 模式返回空 plot_points！")
+            raise AITaskException(
+                code="EMPTY_RESULT",
+                message="AI 未能生成有效的剧情拆解结果",
+                suggestion="这可能是由于章节内容太少或格式问题导致的。建议：1) 检查章节内容是否足够长；2) 尝试重新运行任务；3) 如果问题持续，请联系技术支持。"
+            )
+
         update_task_progress_sync(db, task_id, progress=50, current_step="剧集拆解 Agent 拆解结束 (50%)")
 
 
@@ -1101,7 +1110,8 @@ def _execute_breakdown_sync(
                     logger.error(f"plot_points 值: {results.get('plot_points')}")
                 raise AITaskException(
                     code="EMPTY_RESULT",
-                    message="拆解结果为空，请检查章节内容或重试"
+                    message="AI 未能生成有效的剧情拆解结果",
+                    suggestion="这可能是由于章节内容太少或格式问题导致的。建议：1) 检查章节内容是否足够长；2) 尝试重新运行任务；3) 如果问题持续，请联系技术支持。"
                 )
 
             update_task_progress_sync(db, task_id, progress=50, current_step="剧集拆解 Agent 拆解结束 (50%)")
@@ -1133,6 +1143,15 @@ def _execute_breakdown_sync(
             except Exception as e2:
                 logger.error(f"Skill 执行失败: {e2}")
                 raise AITaskException(code="SKILL_EXECUTION_ERROR", message=str(e2))
+
+            # 检查 plot_points 是否为空
+            if not plot_points or len(plot_points) == 0:
+                logger.error(f"Skill 回退模式返回空 plot_points！原始 Agent 错误: {agent_error_msg}")
+                raise AITaskException(
+                    code="EMPTY_RESULT",
+                    message="AI 未能生成有效的剧情拆解结果",
+                    suggestion="这可能是由于章节内容太少或格式问题导致的。建议：1) 检查章节内容是否足够长；2) 尝试重新运行任务；3) 如果问题持续，请联系技术支持。"
+                )
 
             update_task_progress_sync(db, task_id, progress=50, current_step="[Skill回退模式] 拆解结束 (50%)")
             # 执行 QA 质检

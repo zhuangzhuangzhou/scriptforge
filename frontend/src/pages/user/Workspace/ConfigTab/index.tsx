@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Hash, Type, CheckCircle2, Activity, BookOpen, LayoutTemplate, FileEdit,
   Sliders, BrainCircuit, Cpu, Database, Upload, Loader2, SplitSquareVertical,
-  RefreshCw, Trash2, Lightbulb, BookText
+  RefreshCw, Trash2, Lightbulb, BookText, MessageSquare, RotateCcw
 } from 'lucide-react';
 import { modelsApi } from '../../../../services/api';
+import api from '../../../../services/api';
 
 interface ConfigTabProps {
   project: any;
@@ -54,6 +55,9 @@ const ConfigTab: React.FC<ConfigTabProps> = ({
 }) => {
   const [models, setModels] = useState<any[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
+  const [availablePrompts, setAvailablePrompts] = useState<any[]>([]);
+  const [promptConfig, setPromptConfig] = useState<any>({});
+  const [loadingPrompts, setLoadingPrompts] = useState(false);
 
   useEffect(() => {
     const fetchModels = async () => {
@@ -61,7 +65,7 @@ const ConfigTab: React.FC<ConfigTabProps> = ({
       try {
         const response = await modelsApi.getModels();
         setModels(response.data || []);
-      } catch (error) {
+      } catch (error: unknown) {
         console.error('Failed to fetch models:', error);
       } finally {
         setLoadingModels(false);
@@ -69,6 +73,48 @@ const ConfigTab: React.FC<ConfigTabProps> = ({
     };
     fetchModels();
   }, []);
+
+  // 加载可用的拆解提示词和当前配置
+  useEffect(() => {
+    const fetchPromptData = async () => {
+      if (!project?.id) return;
+      setLoadingPrompts(true);
+      try {
+        const [availableRes, configRes] = await Promise.all([
+          api.get('/prompt-config/available'),
+          api.get('/prompt-config', { params: { project_id: project.id } })
+        ]);
+        setAvailablePrompts(availableRes.data?.prompts || []);
+        setPromptConfig(configRes.data || {});
+      } catch (error: unknown) {
+        console.error('Failed to fetch prompt config:', error);
+      } finally {
+        setLoadingPrompts(false);
+      }
+    };
+    fetchPromptData();
+  }, [project?.id]);
+
+  // 更新提示词配置
+  const handlePromptChange = useCallback(async (field: string, value: string) => {
+    try {
+      const newConfig = { ...promptConfig, [field]: value || null, project_id: project.id };
+      await api.put('/prompt-config', newConfig);
+      setPromptConfig((prev: any) => ({ ...prev, [field]: value || null }));
+    } catch (error: unknown) {
+      console.error('Failed to update prompt config:', error);
+    }
+  }, [promptConfig, project?.id]);
+
+  // 重置提示词配置
+  const handleResetPrompts = useCallback(async () => {
+    try {
+      await api.post('/prompt-config/reset', null, { params: { project_id: project.id } });
+      setPromptConfig({});
+    } catch (error: unknown) {
+      console.error('Failed to reset prompt config:', error);
+    }
+  }, [project?.id]);
 
   return (
     <div className="flex flex-col lg:flex-row gap-6 h-full">
@@ -148,6 +194,51 @@ const ConfigTab: React.FC<ConfigTabProps> = ({
               onChange={(e) => onFormChange('description', e.target.value)}
               placeholder="请输入小说简介..."
             />
+          </div>
+        </div>
+
+        {/* 提示词配置卡片 */}
+        <div className="bg-slate-900/50 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <h3 className="text-xs font-bold text-white flex items-center gap-2 uppercase tracking-wider">
+              <MessageSquare size={14} className="text-indigo-400"/> 拆解提示词配置
+            </h3>
+            <button
+              onClick={handleResetPrompts}
+              className="text-[10px] text-slate-500 hover:text-slate-300 flex items-center gap-1 transition-colors"
+              title="重置为系统默认"
+            >
+              <RotateCcw size={12} /> 重置
+            </button>
+          </div>
+          <p className="text-[10px] text-slate-500">
+            自定义各拆解步骤的提示词，留空则使用系统默认。可在「提示词模板」页面创建自定义提示词。
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+            {[
+              { key: 'conflict_prompt_id', label: '冲突提取' },
+              { key: 'character_prompt_id', label: '人物分析' },
+              { key: 'scene_prompt_id', label: '场景识别' },
+              { key: 'emotion_prompt_id', label: '情绪提取' },
+              { key: 'plot_hook_prompt_id', label: '剧情钩子' },
+            ].map(({ key, label }) => (
+              <div key={key} className="space-y-1">
+                <label className="text-[10px] text-slate-400 uppercase font-bold">{label}</label>
+                <select
+                  value={promptConfig[key] || ''}
+                  onChange={(e) => handlePromptChange(key, e.target.value)}
+                  disabled={loadingPrompts}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-[10px] text-white focus:ring-1 focus:ring-indigo-500 outline-none"
+                >
+                  <option value="">系统默认</option>
+                  {availablePrompts.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.display_name} {p.is_builtin ? '' : '(自定义)'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
           </div>
         </div>
 

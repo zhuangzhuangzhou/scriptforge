@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Film, LogOut, ChevronLeft, Settings, Shield, Gem, User, Lock, Bot, MessageSquare } from 'lucide-react';
+import { Film, LogOut, ChevronLeft, Settings, Shield, Gem, User, Lock, Bot, MessageSquare, FileText } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { message, Dropdown } from 'antd';
 import GlobalSettingsModal from './modals/GlobalSettingsModal';
@@ -7,6 +7,8 @@ import RechargeModal from './modals/RechargeModal';
 import BillingModal from './modals/BillingModal';
 import TierComparisonModal from './modals/TierComparisonModal';
 import FeedbackModal from './modals/FeedbackModal';
+import ProfileEditModal from './modals/ProfileEditModal';
+import PasswordChangeModal from './modals/PasswordChangeModal';
 import NotificationBell from './NotificationBell';
 import { UserTier } from '../types';
 import { TIER_NAMES, TIER_COLORS } from '../constants/tier';
@@ -25,6 +27,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
   const [isBillingOpen, setIsBillingOpen] = useState(false);
   const [isTierComparisonOpen, setIsTierComparisonOpen] = useState(false);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
+  const [isProfileEditOpen, setIsProfileEditOpen] = useState(false);
+  const [isPasswordChangeOpen, setIsPasswordChangeOpen] = useState(false);
 
   const { user } = useAuth();
   const location = useLocation();
@@ -149,14 +153,14 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
             dropdownRender={() => (
               <div className="bg-slate-900/95 border border-slate-700/50 rounded-xl shadow-2xl backdrop-blur-xl p-1 w-48 mt-2 overflow-hidden animate-in fade-in zoom-in duration-200">
                 <button
-                  onClick={() => message.info('编辑资料功能即将上线')}
+                  onClick={() => setIsProfileEditOpen(true)}
                   className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800/80 hover:text-white transition-colors rounded-lg text-left"
                 >
                   <User size={14} className="text-slate-400" />
                   <span>编辑资料</span>
                 </button>
                 <button
-                  onClick={() => message.info('修改密码功能即将上线')}
+                  onClick={() => setIsPasswordChangeOpen(true)}
                   className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800/80 hover:text-white transition-colors rounded-lg text-left"
                 >
                   <Lock size={14} className="text-slate-400" />
@@ -181,7 +185,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
               </span>
               <div className="w-8 h-8 rounded-full border border-white/10 bg-slate-900 overflow-hidden shadow-inner group-hover:border-cyan-500/50 transition-colors">
                 <img
-                  src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.username || 'Alex'}`}
+                  src={user?.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.username || 'Alex'}`}
                   className="w-full h-full object-cover"
                   alt="avatar"
                 />
@@ -225,6 +229,16 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
       {/* Feedback Modal */}
       {isFeedbackOpen && (
         <FeedbackModal onClose={() => setIsFeedbackOpen(false)} />
+      )}
+
+      {/* Profile Edit Modal */}
+      {isProfileEditOpen && (
+        <ProfileEditModal onClose={() => setIsProfileEditOpen(false)} />
+      )}
+
+      {/* Password Change Modal */}
+      {isPasswordChangeOpen && (
+        <PasswordChangeModal onClose={() => setIsPasswordChangeOpen(false)} />
       )}
     </div>
   );

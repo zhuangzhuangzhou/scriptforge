@@ -171,21 +171,21 @@ const PricingManagement: React.FC = () => {
       dataIndex: 'input_credits_per_1k_tokens',
       key: 'input_credits_per_1k_tokens',
       width: 120,
-      render: (value: number) => `${value} 积分/1K`,
+      render: (value: number) => `${Number(value).toFixed(1)} 积分/1K`,
     },
     {
       title: '输出价格',
       dataIndex: 'output_credits_per_1k_tokens',
       key: 'output_credits_per_1k_tokens',
       width: 120,
-      render: (value: number) => `${value} 积分/1K`,
+      render: (value: number) => `${Number(value).toFixed(1)} 积分/1K`,
     },
     {
       title: '最低消费',
       dataIndex: 'min_credits_per_request',
       key: 'min_credits_per_request',
       width: 100,
-      render: (value: number) => `${value} 积分`,
+      render: (value: number) => `${Number(value).toFixed(1)} 积分`,
     },
     {
       title: '生效时间',
@@ -329,6 +329,7 @@ const PricingManagement: React.FC = () => {
               className="w-full"
               min={0}
               step={0.1}
+              precision={1}
               addonAfter="积分"
             />
           </Form.Item>
@@ -343,6 +344,7 @@ const PricingManagement: React.FC = () => {
               className="w-full"
               min={0}
               step={0.1}
+              precision={1}
               addonAfter="积分"
             />
           </Form.Item>

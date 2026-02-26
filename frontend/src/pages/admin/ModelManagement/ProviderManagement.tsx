@@ -269,7 +269,7 @@ const ProviderManagement: React.FC = () => {
             name="provider_key"
             rules={[
               { required: true, message: '请输入提供商标识' },
-              { pattern: /^[a-z0-9_-]+$/, message: '只能包含小写字母、数字、下划线和连字符' },
+              { pattern: /^[a-zA-Z0-9_-]+$/, message: '只能包含字母、数字、下划线和连字符' },
             ]}
           >
             <GlassInput

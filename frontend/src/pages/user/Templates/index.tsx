@@ -26,6 +26,7 @@ const categoryMap: Record<string, string> = {
   output_style: '输出风格',
   qa_rules: '质检标准',
   template: '模板案例',
+  breakdown_prompt: '拆解提示词',
 };
 
 const categoryColorMap: Record<string, string> = {
@@ -33,6 +34,7 @@ const categoryColorMap: Record<string, string> = {
   output_style: 'purple',
   qa_rules: 'orange',
   template: 'cyan',
+  breakdown_prompt: 'indigo',
 };
 
 const TemplatesPage: React.FC = () => {
@@ -216,6 +218,7 @@ const TemplatesPage: React.FC = () => {
     { key: 'output_style', label: '输出风格' },
     { key: 'qa_rules', label: '质检标准' },
     { key: 'template', label: '模板案例' },
+    { key: 'breakdown_prompt', label: '拆解提示词' },
   ];
 
   return (

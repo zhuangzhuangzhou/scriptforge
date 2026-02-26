@@ -149,6 +149,92 @@ BUILTIN_RESOURCES = [
         "category": "qa_rules",
         "file_path": "qa-dimensions.md",
     },
+    # ========== 拆解提示词（breakdown_prompt）==========
+    {
+        "name": "breakdown_conflict_extraction",
+        "display_name": "冲突提取提示词",
+        "description": "从小说章节中提取主要冲突点的提示词模板",
+        "category": "breakdown_prompt",
+        "content_inline": """请分析以下小说章节，提取其中的主要冲突点。
+
+## 章节内容
+{{chapters_text}}
+
+## 输出要求
+请以 JSON 格式返回冲突点列表，每个冲突点包含：
+- type: 冲突类型（人物冲突、内心冲突、环境冲突等）
+- description: 冲突描述
+- characters: 涉及的人物
+- intensity: 冲突强度（1-10）""",
+    },
+    {
+        "name": "breakdown_character_analysis",
+        "display_name": "人物分析提示词",
+        "description": "分析小说章节中人物及其关系的提示词模板",
+        "category": "breakdown_prompt",
+        "content_inline": """请分析以下小说章节中的人物及其关系。
+
+## 章节内容
+{{chapters_text}}
+
+## 输出要求
+请以 JSON 格式返回人物列表，每个人物包含：
+- name: 姓名
+- role: 角色定位（主角、配角等）
+- traits: 性格特点
+- relationships: 与其他人物的关系""",
+    },
+    {
+        "name": "breakdown_scene_identification",
+        "display_name": "场景识别提示词",
+        "description": "识别小说章节中主要场景的提示词模板",
+        "category": "breakdown_prompt",
+        "content_inline": """请识别以下小说章节中的主要场景。
+
+## 章节内容
+{{chapters_text}}
+
+## 输出要求
+请以 JSON 格式返回场景列表，每个场景包含：
+- location: 地点
+- time: 时间（日/夜）
+- atmosphere: 氛围
+- key_events: 关键事件""",
+    },
+    {
+        "name": "breakdown_emotion_extraction",
+        "display_name": "情绪提取提示词",
+        "description": "识别小说章节中情绪点的提示词模板",
+        "category": "breakdown_prompt",
+        "content_inline": """请识别以下小说章节中的情绪点。
+
+## 章节内容
+{{chapters_text}}
+
+## 输出要求
+请以 JSON 格式返回情绪点列表，每个情绪点包含：
+- position: 位置（章节号）
+- emotion: 情绪类型（喜悦、悲伤、愤怒、恐惧等）
+- intensity: 强度（1-10）
+- trigger: 触发原因""",
+    },
+    {
+        "name": "breakdown_plot_hooks",
+        "display_name": "剧情钩子提示词",
+        "description": "识别小说章节中剧情钩子的提示词模板",
+        "category": "breakdown_prompt",
+        "content_inline": """请分析以下小说章节，识别其中的剧情钩子（吸引读者继续阅读的关键点）。
+
+## 章节内容
+{{chapters_text}}
+
+## 输出要求
+请以 JSON 格式返回剧情钩子列表，每个钩子包含：
+- position: 位置（章节号）
+- type: 类型（悬念、转折、冲突升级等）
+- description: 描述
+- impact: 影响力（1-10）""",
+    },
 ]
 
 # 小说类型映射表（用于动态加载类型专属文档）
@@ -197,8 +283,11 @@ async def init_builtin_resources(db: AsyncSession):
             print(f"  - 资源已存在: {res_def['display_name']}")
             continue
 
-        # 加载 Markdown 内容
-        content = _load_resource_content(res_def["file_path"])
+        # 加载内容：优先使用 content_inline，否则从文件加载
+        if "content_inline" in res_def:
+            content = res_def["content_inline"]
+        else:
+            content = _load_resource_content(res_def["file_path"])
 
         resource = AIResource(
             id=uuid.uuid4(),

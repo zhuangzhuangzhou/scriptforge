@@ -395,3 +395,170 @@
 
 ---
 
+
+## [20260226-150212] 修复任务取消状态和会话混用问题
+
+**时间**: 2026-02-26 15:02:12
+
+**提交**:
+- `8204d1b` - fix: 修复任务取消状态和会话混用问题
+
+
+
+## 问题背景
+
+用户报告任务取消后状态停留在 `cancelling`，导致：
+- `/batch/{batch_id}/current-task` 接口仍返回已取消的任务
+- 新任务无法启动
+- 前端显示异常
+
+## 根本原因分析
+
+1. **状态转换不完整**
+   - API 端设置 `CANCELLING` 状态
+   - 依赖 Celery 回调更新为 `CANCELED`
+   - `revoke(terminate=True)` 强制终止进程，回调无法执行
+
+2. **会话混用问题**
+   - 异步会话查询 `batch` 对象
+   - 创建同步会话检查历史记录
+   - 根据同步会话结果修改异步会话对象
+   - 导致数据不一致和 ORM 状态问题
+
+## 解决方案
+
+### 1. 状态管理简化
+```python
+# 修改前：两步转换
+task.status = TaskStatus.CANCELLING  # 中间状态
+# ... 等待 Celery 回调 ...
+task.status = TaskStatus.CANCELED    # 最终状态
+
+# 修改后：直接设置最终状态
+task.status = TaskStatus.CANCELED    # 一步到位
+task.current_step = "已取消"
+```
+
+### 2. 会话管理优化
+```python
+# 修改前：会话混用
+check_db = SyncSessionLocal()  # 创建同步会话
+has_success = _check_previous_breakdown_success(check_db, ...)
+check_db.close()
+batch.breakdown_status = ...  # 修改异步会话对象
+
+# 修改后：单一异步会话
+async def _check_previous_breakdown_success_async(
+    db: AsyncSession,  # 使用同一个异步会话
+    batch_id: str,
+    current_task_id: str
+) -> bool:
+    # 所有查询在同一会话中完成
+    ...
+
+has_success = await _check_previous_breakdown_success_async(db, ...)
+```
+
+### 3. 积分处理完整
+- **主任务**：根据状态和 Token 消耗正确处理
+  - `RUNNING` 且 Token>0 → 扣除 Token 费用
+  - `RUNNING` 且 Token=0 → 返还配额
+  - `QUEUED` → 返还配额
+- **后续任务**：批量返还配额
+- **防重复扣费**：添加 `api_handled_credits` 标记
+
+## 技术亮点
+
+| 改进项 | 修改前 | 修改后 |
+|--------|--------|--------|
+| **会话管理** | 异步+同步混用 | 单一异步会话 |
+| **状态转换** | 两步（CANCELLING→CANCELED） | 一步（直接CANCELED） |
+| **积分处理** | 只处理主任务 | 主任务+后续任务 |
+| **代码行数** | 2,506 行 | 新增 60 行辅助函数 |
+
+## 修改文件
+
+**核心修改**：
+- `backend/app/api/v1/breakdown.py`
+  - 新增 `_check_previous_breakdown_success_async()` 函数（60行）
+  - 修复 `stop_breakdown_task()` 接口逻辑
+  - 移除未使用的 `AsyncSessionLocal` 导入
+
+**规范更新**：
+- `.trellis/spec/backend/index.md`
+  - 新增 8.12 节：异步/同步会话混用问题
+  - 包含完整的错误示例、正确做法和预防措施
+
+## 代码统计
+
+- **新增**：279 行
+- **删除**：89 行
+- **净增加**：190 行
+
+## 测试验证
+
+手动修复了卡在 `cancelling` 状态的任务：
+```bash
+任务 ID: f9d41419-b6fd-4ccb-9a7d-b3c5560efb7d
+修复前: status=cancelling, current_step="正在停止"
+修复后: status=canceled, current_step="已取消"
+批次状态: pending（智能回滚检查后）
+```
+
+## 知识沉淀
+
+在规范文档中记录了：
+1. **问题定义**：会话混用的场景和症状
+2. **根本原因**：ORM 对象绑定、事务隔离、跨会话修改
+3. **解决方案**：创建异步版本、单一会话原则
+4. **预防措施**：4 条具体建议
+5. **相关错误**：链接到 8.6、8.7 节
+
+## 影响范围
+
+- ✅ 后端 API 层（停止任务接口）
+- ✅ 无前端修改（接口契约未变）
+- ✅ 无数据库 schema 变更
+- ✅ 向后兼容
+
+---
+
+
+## [20260226-213208] 修复 Token 计费不匹配问题
+
+**时间**: 2026-02-26 21:32:08
+
+**提交**:
+- `925b2b9` - fix: 修复 LLM adapter 流式响应中 Token 统计缺失问题
+
+
+## 问题诊断
+
+1. **后台任务检查**：Celery 任务正常运行，无卡住
+2. **Token 计费分析**：
+   - 发现 MiniMax-M2.1 模型定价为 4000 积分/1K（默认值 2 积分/1K 的 2000 倍）
+   - LLMCallLog 中 prompt_tokens 和 response_tokens 为 None
+   - 计费系统降级到文本长度估算，导致计费不准确
+
+## 修复内容
+
+| 文件 | 修改 |
+|------|------|
+| anthropic_adapter.py | 添加流式响应 token 提取逻辑 |
+| openai_adapter.py | 添加 stream_options={"include_usage": True} 和 token 提取 |
+| gemini_adapter.py | 添加完整的日志记录和 token 提取 |
+| llm-token-tracking.md | 新增规范文档 |
+
+## 技术细节
+
+- Anthropic: 监听 message_start 和 message_delta 事件
+- OpenAI: 使用 stream_options 参数在最后返回 usage
+- Gemini: 从每个 chunk 的 usageMetadata 提取
+
+## 待验证
+
+- [ ] 重启 Celery Worker
+- [ ] 创建测试任务验证 token 字段正确记录
+
+---
+

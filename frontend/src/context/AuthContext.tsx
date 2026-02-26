@@ -7,6 +7,7 @@ interface User {
   email: string;
   username: string;
   full_name?: string;
+  avatar_url?: string;
   role: string;
   credits: number;  // 积分余额
   is_active: boolean;

@@ -51,7 +51,7 @@ echo "Worker PID: $WORKER_PID"
 sleep 3
 
 # 使用 nohup 启动 Beat
-nohup celery -A app.core.celery_app b-loglevel=info > "$LOG_DIR/celery_beat.log" 2>&1 &
+nohup celery -A app.core.celery_app beat --loglevel=info > "$LOG_DIR/celery_beat.log" 2>&1 &
 BEAT_PID=$!
 echo "Beat PID: $BEAT_PID"
 

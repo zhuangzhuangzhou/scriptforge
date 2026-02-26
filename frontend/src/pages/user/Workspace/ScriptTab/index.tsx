@@ -14,6 +14,7 @@ import { useConsoleLogger } from '../../../../hooks/useConsoleLogger';
 import { useScriptPolling, useScriptQueue } from './hooks';
 import { scriptApi, exportApi } from '../../../../services/api';
 import { parseErrorMessage } from '../../../../utils/errorParser';
+import { calculateWordCount } from '../../../../utils/wordCount';
 import type { EpisodeScript, ScriptStructure } from '../../../../types';
 
 interface ScriptTabProps {
@@ -527,11 +528,8 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
         content: newContent
       });
 
-      const structureWordCount = Object.values(editedStructure).reduce(
-        (sum, s) => sum + (s?.word_count || 0), 0
-      );
-      const fullScriptWordCount = editedFullScript.length;
-      const totalWordCount = fullScriptWordCount > 0 ? fullScriptWordCount : structureWordCount;
+      // 使用统一的字数计算函数
+      const totalWordCount = calculateWordCount(editedFullScript || '');
 
       setCurrentScript({
         ...currentScript,
@@ -602,7 +600,8 @@ const ScriptTab: React.FC<ScriptTabProps> = ({
   const handleStructureChange = (key: keyof ScriptStructure, content: string) => {
     if (!editedStructure) return;
 
-    const wordCount = content.length;
+    // 使用统一的字数计算函数（去除格式标记）
+    const wordCount = calculateWordCount(content);
     const updatedStructure = {
       ...editedStructure,
       [key]: {

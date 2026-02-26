@@ -1,0 +1,9 @@
+{
+  "title": "用户资料编辑与密码修改功能完善",
+  "slug": "user-profile-settings",
+  "status": "pending",
+  "priority": "P1",
+  "created_at": "2026-02-26T12:50:00+08:00",
+  "estimated_hours": 8,
+  "tags": ["用户体验", "前端", "后端"]
+}

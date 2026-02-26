@@ -42,6 +42,7 @@ interface UseBreakdownLogsOptions {
     newBatchId: string;
     newBatchNumber: number;
   }) => void;
+  onClose?: () => void;  // 新增：WebSocket 关闭回调
 }
 
 /**
@@ -69,7 +70,8 @@ export const useBreakdownLogs = (
     onInfo,
     onSuccess,
     onComplete,
-    onBatchSwitch
+    onBatchSwitch,
+    onClose
   } = options;
 
   const [isConnected, setIsConnected] = useState(false);
@@ -217,6 +219,7 @@ export const useBreakdownLogs = (
     onClose: () => {
       console.log('[BreakdownLogs] WebSocket 关闭');
       setIsConnected(false);
+      onClose?.();  // 触发回调，让父组件处理
     },
     onOpen: () => {
       console.log('[BreakdownLogs] WebSocket 打开');

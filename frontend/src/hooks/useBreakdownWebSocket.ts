@@ -88,14 +88,20 @@ export const useBreakdownWebSocket = (
         // 任务失败
         if (message.status === TASK_STATUS.FAILED) {
           // 优先使用 error_display（人性化错误信息），否则解析 error_message
-          let errorMsg = '任务失败';
+          let errorMsg = '任务执行失败，请稍后重试';
+          let errorSuggestion = '';
           if (message.error_message) {
             try {
               const errorData = typeof message.error_message === 'string' ? JSON.parse(message.error_message) : message.error_message;
               errorMsg = errorData.message || errorData.description || message.error_message;
+              errorSuggestion = errorData.suggestion || '';
             } catch {
               errorMsg = message.error_message;
             }
+          }
+          // 如果有建议，显示更友好的错误提示
+          if (errorSuggestion) {
+            errorMsg = `${errorMsg}\n\n💡 建议: ${errorSuggestion}`;
           }
           onError?.(errorMsg);
         }
