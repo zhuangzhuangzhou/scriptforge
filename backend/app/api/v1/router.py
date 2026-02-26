@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import auth, projects, breakdown, scripts, export, admin, websocket, skills_admin, skills_user, skills_code, agent_definition, quota, billing, subscription, models, skills, simple_agents, ai_resources, system_config, admin_analytics
+from app.api.v1 import auth, projects, breakdown, scripts, export, admin, websocket, skills_admin, skills_user, skills_code, agent_definition, quota, billing, subscription, models, skills, simple_agents, ai_resources, system_config, admin_analytics, announcements, redeem
 
 api_router = APIRouter()
 
@@ -24,3 +24,5 @@ api_router.include_router(ai_resources.router, tags=["AI资源文档"])
 api_router.include_router(system_config.router, prefix="/system", tags=["系统配置"])
 api_router.include_router(websocket.router, tags=["WebSocket"])
 api_router.include_router(admin_analytics.router, prefix="/admin/analytics", tags=["数据分析"])
+api_router.include_router(announcements.router, tags=["通知公告"])
+api_router.include_router(redeem.router, tags=["兑换码"])

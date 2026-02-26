@@ -65,14 +65,37 @@ const GLASS_INPUT_STYLES = `
   }
 `;
 
-export const GlassInput: React.FC<InputProps> = (props) => {
-  return (
-    <div className="glass-input-wrapper">
-      <style>{GLASS_INPUT_STYLES}</style>
-      <Input {...props} />
-    </div>
-  );
-};
+export const GlassInput: React.FC<InputProps> & {
+  Search: React.FC<any>;
+  TextArea: React.FC<TextAreaProps>;
+} = Object.assign(
+  (props: InputProps) => {
+    return (
+      <div className="glass-input-wrapper">
+        <style>{GLASS_INPUT_STYLES}</style>
+        <Input {...props} />
+      </div>
+    );
+  },
+  {
+    Search: (props: any) => {
+      return (
+        <div className="glass-input-wrapper">
+          <style>{GLASS_INPUT_STYLES}</style>
+          <Input.Search {...props} />
+        </div>
+      );
+    },
+    TextArea: (props: TextAreaProps) => {
+      return (
+        <div className="glass-input-wrapper">
+          <style>{GLASS_INPUT_STYLES}</style>
+          <Input.TextArea {...props} />
+        </div>
+      );
+    },
+  }
+);
 
 export const GlassTextArea: React.FC<TextAreaProps> = (props) => {
   return (

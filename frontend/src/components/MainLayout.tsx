@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
-import { Film, Bell, LogOut, ChevronLeft, Settings, Shield, Gem, User, Lock, Bot } from 'lucide-react';
+import { Film, LogOut, ChevronLeft, Settings, Shield, Gem, User, Lock, Bot } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { message, Dropdown } from 'antd';
 import GlobalSettingsModal from './modals/GlobalSettingsModal';
 import RechargeModal from './modals/RechargeModal';
 import BillingModal from './modals/BillingModal';
 import TierComparisonModal from './modals/TierComparisonModal';
+import NotificationBell from './NotificationBell';
 import { UserTier } from '../types';
+import { TIER_NAMES, TIER_COLORS } from '../constants/tier';
 import { useAuth } from '../context/AuthContext';
 
 interface MainLayoutProps {
@@ -47,20 +49,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
     setIsRechargeOpen(true);
   };
 
-  const tierNames: Record<UserTier, string> = {
-    'FREE': '免费版',
-    'CREATOR': '创作者版',
-    'STUDIO': '工作室版',
-    'ENTERPRISE': '企业版'
-  };
-
-  const tierColors: Record<UserTier, string> = {
-    'FREE': 'from-slate-500 to-slate-700',
-    'CREATOR': 'from-blue-500 to-cyan-500',
-    'STUDIO': 'from-purple-500 to-pink-500',
-    'ENTERPRISE': 'from-amber-500 to-orange-500'
-  };
-
   return (
     <div className="flex flex-col h-screen bg-slate-950">
       {/* Top Header */}
@@ -89,9 +77,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
             onClick={() => setIsTierComparisonOpen(true)}
             className="hidden md:flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-800/80 border border-slate-700 hover:border-cyan-500/50 transition-all group cursor-pointer"
           >
-            <div className={`w-1.5 h-1.5 rounded-full bg-gradient-to-r ${tierColors[userTier]}`} />
+            <div className={`w-1.5 h-1.5 rounded-full bg-gradient-to-r ${TIER_COLORS[userTier]}`} />
             <span className="text-[10px] font-bold text-slate-400 group-hover:text-cyan-400 transition-colors uppercase tracking-wider">
-              {tierNames[userTier]}
+              {TIER_NAMES[userTier]}
             </span>
           </button>
         </div>
@@ -128,10 +116,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children, onLogout, userTier, s
           </button>
 
           {/* Notifications */}
-          <button className="h-10 px-3 bg-slate-900/50 rounded-full flex items-center justify-center cursor-pointer hover:border-cyan-500/50 hover:bg-slate-800/80 transition-all text-slate-400 hover:text-white relative">
-            <Bell size={19} />
-            <span className="absolute top-2.5 right-3 w-2 h-2 rounded-full bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.6)] ring-1 ring-slate-900" />
-          </button>
+          <NotificationBell />
 
           {/* Points */}
           <div

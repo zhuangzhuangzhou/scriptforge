@@ -22,6 +22,8 @@ from app.models.system_model_config import SystemModelConfig
 from app.models.ai_resource import AIResource
 
 from app.models.split_rule import SplitRule
+from app.models.announcement import Announcement, AnnouncementRead
+from app.models.redeem_code import RedeemCode, RedeemRecord
 
 __all__ = [
     "User",
@@ -52,4 +54,8 @@ __all__ = [
     "SystemModelConfig",
     "AIResource",
     "SplitRule",
+    "Announcement",
+    "AnnouncementRead",
+    "RedeemCode",
+    "RedeemRecord",
 ]

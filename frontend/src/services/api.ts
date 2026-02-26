@@ -74,7 +74,8 @@ export const projectApi = {
         status: 'draft',
         progress: 0,
         total_chapters: data.batch_size || 10,
-        processed_chapters: 0
+        processed_chapters: 0,
+        scripted_chapters: 0
       };
       mockProjects.push(newProject);
       return { data: newProject };
@@ -662,19 +663,20 @@ export const aiResourceApi = {
 
 // 单集剧本 API
 export const scriptApi = {
-  // 获取剧集摘要（Script Tab 专用聚合接口）
-  getEpisodesSummary: async (projectId: string) => {
+  // 获取剧集摘要（Script Tab 专用聚合接口，支持分页）
+  getEpisodesSummary: async (projectId: string, page: number = 1, pageSize: number = 20) => {
     if (USE_MOCK) {
       await delay(300);
       return {
         data: {
           episodes: [],
           running_task: null,
-          progress: { total: 0, completed: 0, in_progress: 0, pending: 0, failed: 0 }
+          progress: { total: 0, completed: 0, in_progress: 0, pending: 0, failed: 0 },
+          pagination: { page: 1, page_size: pageSize, total_pages: 1 }
         }
       };
     }
-    return api.get('/scripts/episodes/summary', { params: { project_id: projectId } });
+    return api.get('/scripts/episodes/summary', { params: { project_id: projectId, page, page_size: pageSize } });
   },
 
   // 按项目获取所有剧本列表
@@ -1247,6 +1249,161 @@ export const adminAnalyticsApi = {
     }
     return api.get('/admin/analytics/breakdown/retry-stats', { params: { period } });
   }
+};
+
+// ==================== 兑换码 API ====================
+export const redeemApi = {
+  // 用户使用兑换码
+  useCode: async (code: string) => {
+    return api.post('/redeem/use', { code });
+  },
+
+  // 管理端 API
+  admin: {
+    // 获取兑换码列表
+    list: async (params?: {
+      page?: number;
+      page_size?: number;
+      type?: string;
+      is_active?: boolean;
+    }) => {
+      return api.get('/admin/redeem', { params });
+    },
+
+    // 创建兑换码
+    create: async (data: {
+      type: 'credits' | 'tier_upgrade';
+      credits?: number;
+      tier?: string;
+      tier_days?: number;
+      max_uses?: number;
+      expires_at?: string;
+      note?: string;
+      code?: string;
+      count?: number;
+    }) => {
+      return api.post('/admin/redeem', data);
+    },
+
+    // 获取兑换码详情
+    get: async (id: string) => {
+      return api.get(`/admin/redeem/${id}`);
+    },
+
+    // 更新兑换码
+    update: async (id: string, data: {
+      is_active?: boolean;
+      max_uses?: number;
+      expires_at?: string;
+      note?: string;
+    }) => {
+      return api.put(`/admin/redeem/${id}`, data);
+    },
+
+    // 删除兑换码
+    delete: async (id: string) => {
+      return api.delete(`/admin/redeem/${id}`);
+    },
+
+    // 管理员为用户充值
+    rechargeUser: async (userId: string, credits: number, reason?: string) => {
+      return api.post(`/admin/users/${userId}/recharge`, {
+        credits,
+        reason: reason || '管理员手动充值'
+      });
+    },
+  },
+};
+
+// ==================== 通知公告 API ====================
+export const announcementApi = {
+  // 管理端 API
+  admin: {
+    // 获取通知列表
+    getAnnouncements: async (params?: {
+      page?: number;
+      page_size?: number;
+      priority?: string;
+      type?: string;
+      is_published?: boolean;
+      search?: string;
+    }) => {
+      return api.get('/admin/announcements', { params });
+    },
+
+    // 创建通知
+    createAnnouncement: async (data: {
+      title: string;
+      content: string;
+      priority?: string;
+      type?: string;
+      expires_at?: string;
+    }) => {
+      return api.post('/admin/announcements', data);
+    },
+
+    // 获取通知详情
+    getAnnouncement: async (id: string) => {
+      return api.get(`/admin/announcements/${id}`);
+    },
+
+    // 更新通知
+    updateAnnouncement: async (id: string, data: {
+      title?: string;
+      content?: string;
+      priority?: string;
+      type?: string;
+      expires_at?: string;
+    }) => {
+      return api.put(`/admin/announcements/${id}`, data);
+    },
+
+    // 删除通知
+    deleteAnnouncement: async (id: string) => {
+      return api.delete(`/admin/announcements/${id}`);
+    },
+
+    // 发布通知
+    publishAnnouncement: async (id: string) => {
+      return api.post(`/admin/announcements/${id}/publish`);
+    },
+
+    // 取消发布
+    unpublishAnnouncement: async (id: string) => {
+      return api.post(`/admin/announcements/${id}/unpublish`);
+    },
+
+    // 获取统计信息
+    getAnnouncementStats: async (id: string) => {
+      return api.get(`/admin/announcements/${id}/stats`);
+    },
+  },
+
+  // 用户端 API
+  user: {
+    // 获取通知列表
+    getAnnouncements: async (params?: {
+      page?: number;
+      page_size?: number;
+    }) => {
+      return api.get('/announcements', { params });
+    },
+
+    // 获取通知详情
+    getAnnouncement: async (id: string) => {
+      return api.get(`/announcements/${id}`);
+    },
+
+    // 标记为已读
+    markAsRead: async (id: string) => {
+      return api.post(`/announcements/${id}/read`);
+    },
+
+    // 获取未读数量
+    getUnreadCount: async () => {
+      return api.get('/announcements/unread-count');
+    },
+  },
 };
 
 export { USE_MOCK };
