@@ -509,6 +509,169 @@ const onComplete = () => {
 2. **减少请求**: 只请求一条数据，而不是整页 20 条
 3. **更快响应**: 单条数据请求比整页请求更快
 
+## Common Mistake: 级联 API 调用（Cascading API Calls）
+
+### 症状
+
+点击一个按钮后，同一个 API 被连续调用多次（如 3 次），且参数完全相同。
+
+**真实案例：** 点击"全部拆解"按钮后，`/breakdown/batch-progress/{projectId}` 被连续调用 3 次：
+
+```
+1. GET /breakdown/batch-progress/ca2717ae...
+2. GET /breakdown/batch-progress/ca2717ae...
+3. GET /breakdown/batch-progress/ca2717ae...
+```
+
+### 原因
+
+多个函数形成了级联调用链，每个函数都独立调用相同的 API：
+
+```typescript
+// ❌ 错误示例：级联调用
+const handleAllBreakdown = async () => {
+  // 1. 启动任务
+  await breakdownApi.startBatchBreakdown({ projectId });
+
+  // 2. 刷新批次列表（内部调用 getBatchProgress）
+  await fetchBatches();  // ← 第1次调用
+
+  // 3. 额外获取全局进度（再次调用 getBatchProgress）
+  await fetchGlobalProgress();  // ← 第2次调用（重复！）
+};
+
+const fetchBatches = async () => {
+  // 加载批次...
+
+  // 检测处理中的任务（内部调用 getBatchProgress）
+  await autoDetectProcessingTask();  // ← 第3次调用（重复！）
+
+  // 再次获取全局进度（再次调用 getBatchProgress）
+  await fetchGlobalProgress();  // ← 第4次调用（重复！）
+};
+```
+
+**调用链分析：**
+
+```
+handleAllBreakdown
+├── fetchBatches()
+│   ├── autoDetectProcessingTask()
+│   │   └── getBatchProgress()     ← 第1次
+│   └── fetchGlobalProgress()
+│       └── getBatchProgress()     ← 第2次
+└── fetchGlobalProgress()
+    └── getBatchProgress()         ← 第3次
+```
+
+### 解决方案
+
+**数据复用：让父函数获取数据，传递给子函数：**
+
+```typescript
+// ✅ 正确示例：数据复用
+const handleAllBreakdown = async () => {
+  // 1. 启动任务
+  await breakdownApi.startBatchBreakdown({ projectId });
+
+  // 2. 刷新批次列表（内部已包含全局进度获取）
+  await fetchBatches();  // 只调用 1 次 getBatchProgress
+};
+
+const fetchBatches = async () => {
+  // 加载批次...
+
+  // 🔧 优化：先获取全局进度，再复用数据检测任务
+  const progress = await fetchGlobalProgress();  // ← 只调用 1 次
+  await autoDetectProcessingTask(progress);       // 复用数据，不再调用 API
+};
+
+const autoDetectProcessingTask = async (progressData?: any) => {
+  // 使用传入的数据，避免重复调用
+  const progress = progressData || (await breakdownApi.getBatchProgress(projectId)).data;
+  // ...
+};
+```
+
+**优化后的调用链：**
+
+```
+handleAllBreakdown
+└── fetchBatches()
+    ├── fetchGlobalProgress()        ← 第1次（获取数据）
+    └── autoDetectProcessingTask(progress)  // 复用数据，不再调用
+```
+
+### 关键原则
+
+| 原则 | 说明 | 示例 |
+|------|------|------|
+| **数据向下传递** | 父函数获取数据，通过参数传递给子函数 | `autoDetectProcessingTask(progress)` |
+| **避免重复获取** | 不要在一个调用链中多次获取相同数据 | 移除多余的 `fetchGlobalProgress()` |
+| **单一职责** | 一个函数只负责获取一次数据 | `fetchBatches` 获取所有需要的数据 |
+
+### 识别级联调用
+
+**检查代码中的反模式：**
+
+```typescript
+// ❌ 反模式1：函数 A 调用 B，B 调用 C，A 和 B 都调用同一个 API
+const A = async () => {
+  await fetchData();  // 第1次
+  await B();
+};
+const B = async () => {
+  await fetchData();  // 第2次（重复）
+  await C();
+};
+
+// ❌ 反模式2：函数结束后又额外调用一次
+const handleAction = async () => {
+  await updateData();
+  await refreshList();  // 内部调用 fetchStatus
+  await fetchStatus();   // 额外调用（重复）
+};
+
+// ✅ 正确模式：数据传递
+const handleAction = async () => {
+  const data = await fetchStatus();  // 获取一次
+  await updateData();
+  await refreshList(data);  // 传递数据
+};
+```
+
+### 实际案例
+
+**2026-02-26: 修复"全部拆解"按钮重复调用问题**
+
+```typescript
+// 优化前：点击"全部拆解"触发 3 次 API 调用
+// 优化后：点击"全部拆解"只触发 1 次 API 调用
+
+// 修改点1: fetchBatches 内部优化
+if (pageNum === 1) {
+  const progress = await fetchGlobalProgress();      // 获取一次
+  await autoDetectProcessingTask(progress);          // 复用数据
+}
+
+// 修改点2: 移除多余的 fetchGlobalProgress 调用
+// 原代码:
+// fetchBatches();
+// await fetchGlobalProgress();  // ❌ 重复调用
+
+// 新代码:
+await fetchBatches();  // ✅ fetchBatches 内部已获取进度
+```
+
+### 预防措施
+
+1. **代码审查**：检查函数调用链中是否有重复 API 调用
+2. **日志记录**：在 API 调用函数中添加日志，识别重复调用
+3. **Network 面板**：打开浏览器开发者工具，观察 API 调用次数
+4. **数据流设计**：设计时考虑数据流向，避免向上再向下的循环
+
+---
+
 ## 性能检查清单
 
 实现数据加载时，检查以下项目：
@@ -519,6 +682,7 @@ const onComplete = () => {
 - [ ] 批量加载是否使用了并行请求
 - [ ] useCallback 的依赖项是否完整
 - [ ] 缓存是否在适当的时机清理
+- [ ] **是否存在级联 API 调用（一个按钮触发多次相同请求）**
 
 ## 调试技巧
 
