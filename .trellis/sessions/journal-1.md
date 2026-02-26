@@ -1885,3 +1885,122 @@ API 读取 raw_content →
 
 ---
 
+
+## [20260225-230600] 导出功能增强
+
+**时间**: 2026-02-25 23:06:00
+
+**提交**:
+- `a5c1fc0` - feat: 导出功能增强 - 合并导出、中文支持、版本过滤
+
+
+## 功能改进
+
+| 功能 | 说明 |
+|------|------|
+| 合并导出 | 所有剧集导出为一份 Word 文档，每集自动分页 |
+| 中文支持 | Word 设置宋体/黑体，修复乱码问题 |
+| ZIP 编码 | 添加 UTF-8 标志位，修复文件名乱码 |
+| 版本过滤 | 只导出 is_current=True 的当前版本 |
+| 文件命名 | 统一为 项目名称_x集.格式 |
+
+## 修复问题
+
+- Word 导出中文乱码
+- ZIP 文件名乱码
+- 批量导出前端处理错误
+- useEffect 无限循环
+- 多版本导出混乱
+
+## 变更文件
+
+- `backend/app/api/v1/export.py` - 批量导出 API
+- `backend/app/utils/word_exporter.py` - Word 导出器
+- `frontend/src/pages/user/Workspace/ScriptTab/ExportModal.tsx` - 导出弹窗
+- `frontend/src/pages/user/Workspace/ScriptTab/index.tsx` - 导出逻辑
+- `frontend/src/services/api.ts` - API 调用
+
+---
+
+
+## [20260225-230655] admin/tasks 页面优化和 UI 规范完善
+
+**时间**: 2026-02-25 23:06:55
+
+**提交**:
+- `685dee9` - feat: admin/tasks 页面优化和字段增强
+- `e4a848c` - chore: 将 .trellis 目录纳入版本控制
+
+
+**摘要**: 优化任务管理页面，使用项目定义的 UI 组件，添加新字段显示，完善前端 UI 规范文档
+
+## 本次会话完成内容
+
+### 1. admin/tasks 页面全面优化
+
+**UI 组件升级**：
+- 使用 `GlassTable` 替代原生 Ant Design Table
+- 使用 `GlassModal` 替代原生 Modal
+- 使用 `GlassSelect` 替代原生 Select
+- 统一磨砂玻璃质感，提升视觉一致性
+
+**新增字段**：
+- **序号列** - 固定在左侧，方便快速定位
+- **任务类型** - 显示"剧集拆解"/"剧本生成"/"一致性检查"
+- **重试次数** - 显示任务重试次数，>0 时琥珀色高亮
+- **开始时间** - 显示任务实际开始执行的时间
+
+**配置优化**：
+- 默认刷新间隔从 5 秒调整为 30 秒，减少服务器负载
+
+### 2. 后端 API 增强
+
+**文件**: `backend/app/api/v1/admin_core.py`
+
+新增返回字段：
+- `retry_count` - 任务重试次数
+- `started_at` - 任务开始时间
+
+### 3. 前端 UI 规范文档完善
+
+**新增规范**：
+- **Pattern: 使用项目定义的 UI 组件** - 详细说明为什么要用 GlassTable/GlassModal/GlassSelect
+- **Pattern: 表格序号列标准实现** - 序号列的完整实现规范
+
+**更新文件**：
+- `.trellis/spec/frontend/ui-consistency.md` - 新增两个重要模式
+- `.trellis/spec/frontend/index.md` - 更新快速参考
+
+### 4. 版本控制优化
+
+- 将 `.trellis` 目录从 `.gitignore` 中移除
+- 纳入版本控制，便于团队共享知识和规范
+
+## 技术亮点
+
+1. **组件复用** - 统一使用项目定义的 Glass 系列组件
+2. **信息完整** - 显示任务类型、重试次数、开始时间等关键信息
+3. **用户体验** - 序号列固定、颜色编码、合理的刷新间隔
+4. **规范沉淀** - 将最佳实践写入规范文档，形成制度记忆
+
+## 修改文件
+
+**后端**:
+- `backend/app/api/v1/admin_core.py`
+
+**前端**:
+- `frontend/src/pages/admin/TaskManagement/index.tsx`
+
+**规范文档**:
+- `.trellis/spec/frontend/ui-consistency.md` (新增)
+- `.trellis/spec/frontend/index.md`
+- `.gitignore`
+
+## 代码统计
+
+- 修改文件: 48 个
+- 新增代码: +3,904 行
+- 删除代码: -208 行
+
+---
+
