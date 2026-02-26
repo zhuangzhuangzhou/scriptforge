@@ -108,7 +108,12 @@ def parse_text_plot_points(response: str) -> List[Dict[str, Any]]:
         list[dict]: 剧情点 JSON 列表
     """
     if not response:
+        logger.warning("[解析] 响应为空")
         return []
+
+    logger.info(f"[解析] 开始解析剧情点，响应长度: {len(response)} 字符")
+    logger.info(f"[解析] 响应前200字符: {response[:200]}")
+    logger.info(f"[解析] 响应后200字符: {response[-200:]}")
 
     plot_points: List[Dict[str, Any]] = []
 
