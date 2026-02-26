@@ -1297,7 +1297,9 @@ class SimpleAgentExecutor:
         max_iterations = max_iterations_override if max_iterations_override is not None else workflow.get("max_iterations", 3)
         exit_condition = workflow.get("exit_condition", "false")
 
-        results = {"context": context, "_iteration": 0, "plot_points": [], "qa_result": {}}
+        # 不预初始化 plot_points 和 qa_result，避免空数组污染
+        # 如果步骤失败，变量不存在会明确报错，而不是使用错误的空值
+        results = {"context": context, "_iteration": 0}
 
         for iteration in range(max_iterations):
             results["_iteration"] = iteration + 1
