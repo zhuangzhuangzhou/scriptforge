@@ -64,7 +64,18 @@ const ConfigTab: React.FC<ConfigTabProps> = ({
       setLoadingModels(true);
       try {
         const response = await modelsApi.getModels();
-        setModels(response.data || []);
+        const modelsList = response.data || [];
+        setModels(modelsList);
+
+        // 如果模型列表加载完成且当前没有选择模型，自动选择第一个作为默认值
+        if (modelsList.length > 0) {
+          if (!formData.breakdown_model) {
+            onFormChange('breakdown_model', modelsList[0].id);
+          }
+          if (!formData.script_model) {
+            onFormChange('script_model', modelsList[0].id);
+          }
+        }
       } catch (error: unknown) {
         console.error('Failed to fetch models:', error);
       } finally {
@@ -72,6 +83,7 @@ const ConfigTab: React.FC<ConfigTabProps> = ({
       }
     };
     fetchModels();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 加载可用的拆解提示词和当前配置

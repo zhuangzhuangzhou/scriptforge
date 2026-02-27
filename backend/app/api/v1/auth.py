@@ -132,9 +132,18 @@ async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db)
 ):
-    """用户登录"""
-    # 查找用户
-    result = await db.execute(select(User).where(User.username == form_data.username))
+    """用户登录 - 支持用户名或邮箱登录"""
+    from sqlalchemy import or_
+
+    # 查找用户（支持用户名或邮箱）
+    result = await db.execute(
+        select(User).where(
+            or_(
+                User.username == form_data.username,
+                User.email == form_data.username
+            )
+        )
+    )
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(form_data.password, user.hashed_password):
