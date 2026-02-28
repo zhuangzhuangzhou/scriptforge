@@ -18,8 +18,14 @@ import asyncio
 import sys
 from datetime import datetime
 from sqlalchemy import text
-from sqlalchemy.dialects.postgresql import UUID
 from app.core.database import AsyncSessionLocal
+
+
+def serialize_value(value):
+    """将 dict/list 类型自动序列化为 JSON 字符串，供 asyncpg 使用"""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return value
 
 
 class DateTimeDecoder(json.JSONDecoder):
@@ -93,7 +99,12 @@ async def import_record(session, table_name: str, record: dict, update_existing:
     result = await session.execute(check_sql, {"id": record_id})
     exists = result.first() is not None
 
-    columns = list(record.keys())
+    # 将 dict/list 序列化为 JSON 字符串，将引用不存在用户的 owner_id 置为 NULL
+    serialized = {}
+    for k, v in record.items():
+        serialized[k] = serialize_value(v)
+
+    columns = list(serialized.keys())
     placeholders = ", ".join([f":{col}" for col in columns])
     col_names = ", ".join(columns)
 
@@ -104,13 +115,13 @@ async def import_record(session, table_name: str, record: dict, update_existing:
         set_clause = ", ".join([f"{col} = :{col}" for col in columns if col != "id"])
         update_sql = text(f"UPDATE {table_name} SET {set_clause} WHERE id = :id")
         if not dry_run:
-            await session.execute(update_sql, record)
+            await session.execute(update_sql, serialized)
         print(f"  更新: {record_id}")
         return "updated"
     else:
         insert_sql = text(f"INSERT INTO {table_name} ({col_names}) VALUES ({placeholders})")
         if not dry_run:
-            await session.execute(insert_sql, record)
+            await session.execute(insert_sql, serialized)
         print(f"  新增: {record_id}")
         return "imported"
 
