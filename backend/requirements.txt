@@ -36,6 +36,11 @@ python-dotenv==1.0.0
 httpx==0.26.0
 aiofiles==23.2.1
 
+# 额外依赖
+email-validator
+minio_access_key
+reportlab
+
 # 开发工具
 pytest==7.4.4
 pytest-asyncio==0.23.3

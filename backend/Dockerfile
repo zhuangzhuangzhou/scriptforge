@@ -24,5 +24,5 @@ COPY . .
 # 设置环境变量
 ENV PYTHONPATH=/app
 
-# 启动命令：先尝试数据库迁移，再启动服务
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# 启动命令：跳过数据库迁移，直接启动服务
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -5,15 +5,20 @@ services:
     build: ./frontend
     container_name: novel-script-frontend
     ports:
-      - "80:80"
+      - "3000:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_started
     networks:
       - app-network
 
   backend:
     build: ./backend
     container_name: novel-script-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
     environment:
       - POSTGRES_SERVER=postgres
       - POSTGRES_USER=postgres
@@ -27,6 +32,8 @@ services:
         condition: service_healthy
     networks:
       - app-network
+    volumes:
+      - ./backend/.env:/app/.env:ro
 
   postgres:
     image: postgres:15-alpine
