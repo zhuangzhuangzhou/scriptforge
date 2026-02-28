@@ -797,6 +797,8 @@ class SimpleSkillExecutor:
 
         # 3. 填充 Prompt 模板
         try:
+            if not skill.prompt_template:
+                raise ValueError(f"Skill '{skill_name}' 缺少 prompt_template，无法执行")
             prompt = skill.prompt_template.format(**processed_inputs)
         except KeyError as e:
             available_keys = list(processed_inputs.keys())
