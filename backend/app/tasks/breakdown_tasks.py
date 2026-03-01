@@ -1361,8 +1361,10 @@ def _execute_breakdown_sync(
     # 诊断日志：记录保存到数据库的值
     logger.info(f"[breakdown_tasks] 保存数据库: plot_points={len(plot_points)}, qa_status={normalized_qa_status_for_db}, qa_score={qa_score}")
 
-# 获取 ai_model_id（来自 project.breakdown_model_id，指向 ai_models 表）
-    ai_model_id = task_config.get("model_config_id")
+# 获取模型 ID
+    # 兼容新旧字段名：ai_model_id 是新字段，model_config_id 是旧字段（实际存的是 ai_models.id）
+    ai_model_id = task_config.get("ai_model_id") or task_config.get("model_config_id")
+    model_config_id = task_config.get("model_config_id") if task_config.get("ai_model_id") else None
 
     # 创建 PlotBreakdown 记录
     breakdown = PlotBreakdown(
@@ -1370,7 +1372,7 @@ def _execute_breakdown_sync(
         project_id=project_id,
         task_id=task_id,
         ai_model_id=ai_model_id,
-        model_config_id=None,
+        model_config_id=model_config_id,
         plot_points=plot_points,
         format_version=3,
         consistency_status="pending",

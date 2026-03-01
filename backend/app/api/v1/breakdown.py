@@ -86,7 +86,7 @@ async def _check_previous_breakdown_success_async(
 class BreakdownStartRequest(BaseModel):
     """启动拆解请求"""
     batch_id: str
-    # model_config_id 不再需要，从项目配置读取
+    model_config_id: Optional[str] = None  # 用户选择的模型配置 ID（指向 model_configs 表）
     selected_skills: Optional[List[str]] = None
     pipeline_id: Optional[str] = None
     # 小说类型（用于加载类型专属文档）
@@ -302,12 +302,13 @@ async def start_breakdown(
     # 消耗积分（预扣）
     await quota_service.consume_credits(locked_user, "breakdown", "剧情拆解")
 
-    # 构建任务配置
+# 构建任务配置
     task_config = {
-        "model_config_id": str(project.breakdown_model_id),  # 从项目配置读取
+        "ai_model_id": str(project.breakdown_model_id),  # 系统模型 ID（指向 ai_models 表）
+        "model_config_id": request.model_config_id,      # 用户模型配置 ID（指向 model_configs 表，可选）
         "selected_skills": request.selected_skills or [],
         "pipeline_id": request.pipeline_id,
-        "execution_mode": request.execution_mode or "agent_single",  # 执行模式
+        "execution_mode": request.execution_mode or "agent_single",
     }
 
     # 添加小说类型（优先使用请求参数，否则从项目配置读取）
@@ -839,8 +840,8 @@ async def start_all_breakdowns(
                 task_type=TaskType.BREAKDOWN,
                 status=TaskStatus.QUEUED,
                 depends_on=[],
-                config={
-                    "model_config_id": str(project.breakdown_model_id),  # 从项目配置读取
+config={
+                    "ai_model_id": str(project.breakdown_model_id),
                     "adapt_method_key": "adapt_method_default",
                     "quality_rule_key": "qa_breakdown_default",
                     "output_style_key": "output_style_default"
@@ -1521,11 +1522,11 @@ async def start_batch_breakdown(
             task_type=TaskType.BREAKDOWN,
             status=TaskStatus.QUEUED,
             depends_on=[],
-            config={
-                "model_config_id": str(project.breakdown_model_id),
+config={
+                "ai_model_id": str(project.breakdown_model_id),
                 **task_config,
-                "auto_continue": True,  # 标记为自动连续拆解模式
-                "total_batches": len(batch_data)  # 记录总批次数
+                "auto_continue": True,
+                "total_batches": len(batch_data)
             }
         )
         db.add(task)
