@@ -1361,19 +1361,19 @@ def _execute_breakdown_sync(
     # 诊断日志：记录保存到数据库的值
     logger.info(f"[breakdown_tasks] 保存数据库: plot_points={len(plot_points)}, qa_status={normalized_qa_status_for_db}, qa_score={qa_score}")
 
-    # 获取 model_config_id 用于保存拆解记录（便于后续数据分析）
-    model_config_id = task_config.get("model_config_id")
+# 获取 ai_model_id（来自 project.breakdown_model_id，指向 ai_models 表）
+    ai_model_id = task_config.get("model_config_id")
 
     # 创建 PlotBreakdown 记录
     breakdown = PlotBreakdown(
         batch_id=batch_id,
         project_id=project_id,
-        task_id=task_id,                    # 关联任务 ID（便于追溯）
-        ai_model_id=model_config_id,        # 关联 AI 模型 ID
-        model_config_id=model_config_id,    # 模型配置 ID
-        plot_points=plot_points,            # 剧情点列表（解析后的 JSON）
-        format_version=3,                   # 输出格式版本：3=结构化文本格式
-        consistency_status="pending",       # 一致性检查状态
+        task_id=task_id,
+        ai_model_id=ai_model_id,
+        model_config_id=None,
+        plot_points=plot_points,
+        format_version=3,
+        consistency_status="pending",
         qa_status=normalized_qa_status_for_db,
         qa_score=qa_score,
         qa_report=qa_report,
