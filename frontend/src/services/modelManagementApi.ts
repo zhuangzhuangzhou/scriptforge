@@ -66,6 +66,7 @@ export interface ProviderCreate {
 
 export interface ProviderUpdate {
   display_name?: string;
+  provider_type?: string;
   api_endpoint?: string;
   is_enabled?: boolean;
   icon_url?: string;

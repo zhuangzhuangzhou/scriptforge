@@ -27,6 +27,7 @@ const ModelConfiguration: React.FC = () => {
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingModel, setEditingModel] = useState<AIModel | null>(null);
   const [selectedProviderId, setSelectedProviderId] = useState<string | undefined>(undefined);
+  const [statusFilter, setStatusFilter] = useState<boolean | undefined>(undefined);
   const [form] = Form.useForm();
   const initialized = useRef(false);
 
@@ -307,7 +308,13 @@ const ModelConfiguration: React.FC = () => {
     },
   ];
 
-  // 渲染
+  // 根据状态筛选过滤模型
+  const filteredModels = models.filter(model => {
+    if (statusFilter !== undefined) {
+      return model.is_enabled === statusFilter;
+    }
+    return true;
+  });
   return (
     <div className="p-6">
       <GlassCard>
@@ -325,6 +332,17 @@ const ModelConfiguration: React.FC = () => {
                 value: p.id,
               }))}
             />
+            <GlassSelect
+              style={{ width: 150 }}
+              placeholder="筛选状态"
+              allowClear
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={[
+                { label: '已启用', value: true },
+                { label: '已禁用', value: false },
+              ]}
+            />
           </div>
           <Button
             type="primary"
@@ -337,7 +355,7 @@ const ModelConfiguration: React.FC = () => {
 
         <GlassTable
           columns={columns}
-          dataSource={models}
+          dataSource={filteredModels}
           loading={loading}
           rowKey="id"
           pagination={{

@@ -103,6 +103,7 @@ const ProviderManagement: React.FC = () => {
         // 更新
         const updateData: ProviderUpdate = {
           display_name: values.display_name,
+          provider_type: values.provider_type,
           api_endpoint: values.api_endpoint,
           icon_url: values.icon_url,
           description: values.description,
@@ -293,7 +294,6 @@ const ProviderManagement: React.FC = () => {
           >
             <GlassSelect
               placeholder="选择类型"
-              disabled={!!editingProvider}
               options={[
                 { label: 'OpenAI Compatible', value: 'openai_compatible' },
                 { label: 'Anthropic', value: 'anthropic' },

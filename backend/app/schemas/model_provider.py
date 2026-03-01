@@ -22,6 +22,7 @@ class ProviderCreate(ProviderBase):
 class ProviderUpdate(BaseModel):
     """更新提供商请求"""
     display_name: Optional[str] = Field(None, max_length=100)
+    provider_type: Optional[str] = Field(None, max_length=50, description="提供商类型")
     api_endpoint: Optional[str] = None
     is_enabled: Optional[bool] = None
     icon_url: Optional[str] = None

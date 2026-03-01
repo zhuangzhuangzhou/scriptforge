@@ -349,11 +349,12 @@ async def test_credential(
     _: None = Depends(check_admin)
 ):
     """测试凭证有效性
-    
+
     根据提供商类型调用对应的 API 进行真实测试
+    使用提供商绑定的模型进行测试
     """
     from app.utils.credential_tester import test_credential as test_cred
-    
+
     # 查询凭证及其提供商
     result = await db.execute(
         select(AIModelCredential, AIModelProvider)
@@ -367,18 +368,29 @@ async def test_credential(
 
     credential, provider = row
 
-    # 调用测试函数
+    # 查询该提供商绑定的模型列表
+    from app.models.ai_model import AIModel
+    model_result = await db.execute(
+        select(AIModel.model_key)
+        .where(AIModel.provider_id == provider.id)
+        .where(AIModel.is_enabled == True)
+    )
+    model_names = [row[0] for row in model_result.all()]
+
+    # 调用测试函数，传入模型列表
     success, message = await test_cred(
         provider_type=provider.provider_type,
         api_key=credential.api_key,
         api_endpoint=provider.api_endpoint,
-        api_secret=credential.api_secret
+        api_secret=credential.api_secret,
+        model_names=model_names if model_names else None
     )
-    
+
     return {
         "success": success,
         "message": message,
         "provider_type": provider.provider_type,
         "provider_name": provider.display_name,
-        "credential_name": credential.credential_name
+        "credential_name": credential.credential_name,
+        "tested_models": model_names if model_names else []
     }
