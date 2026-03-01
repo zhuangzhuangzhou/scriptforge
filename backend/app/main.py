@@ -3,10 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.v1.router import api_router
 from app.core.database import AsyncSessionLocal
-from app.core.init_skills import init_builtin_skills
-from app.core.init_pipeline import init_default_pipeline
-from app.core.init_simple_system import init_simple_system
-from app.core.init_ai_resources import init_builtin_resources
+# 生产环境暂时禁用启动初始化（datetime 时区冲突问题）
+# from app.core.init_skills import init_builtin_skills
+# from app.core.init_pipeline import init_default_pipeline
+# from app.core.init_simple_system import init_simple_system
+# from app.core.init_ai_resources import init_builtin_resources
 from app.middleware.api_logging import APILoggingMiddleware
 from app.core.status import TaskStatus
 
@@ -34,13 +35,8 @@ app.include_router(api_router, prefix="/api/v1")
 
 @app.on_event("startup")
 async def startup_event():
-    """应用启动时初始化"""
-    async with AsyncSessionLocal() as db:
-        await init_builtin_skills(db)
-        await init_default_pipeline(db)
-        await init_simple_system(db)  # 初始化简化系统
-        await init_builtin_resources(db)  # 初始化内置 AI 资源文档
-        print("应用启动完成")
+    """应用启动时初始化（生产环境暂时禁用，避免 datetime 时区问题）"""
+    print("应用启动完成（跳过初始化）")
 
 
 @app.get("/")

@@ -49,8 +49,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (isMounted) {
             setUser(response.data);
           }
-        } catch {
-          if (isMounted) {
+        } catch (error: any) {
+          // 只有在明确收到 401 时才清除 token，避免网络抖动误清
+          if (isMounted && error?.response?.status === 401) {
             localStorage.removeItem('token');
             localStorage.removeItem('username');
           }
