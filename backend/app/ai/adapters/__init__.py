@@ -176,7 +176,7 @@ def get_adapter_sync(
     provider_type = provider.provider_type.lower()
 
     # 从提供商获取额外配置（如果有）
-    extra_config = {"db": db, "log_enabled": log_enabled}
+    extra_config = {"db": db, "log_enabled": log_enabled, "ai_model_id": str(model.id)}
     if hasattr(provider, 'config_schema') and provider.config_schema:
         if isinstance(provider.config_schema, dict):
             extra_config.update(provider.config_schema)

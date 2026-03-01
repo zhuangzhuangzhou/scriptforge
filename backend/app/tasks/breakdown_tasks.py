@@ -221,12 +221,12 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
         task_record = db.query(AITask).filter(AITask.id == task_id).first()
         task_config = task_record.config if task_record else {}
 
-        # 获取模型配置 ID（必需）
-        model_id = task_config.get("model_config_id")
+        # 获取模型 ID（必需，兼容新旧字段名）
+        model_id = task_config.get("ai_model_id") or task_config.get("model_config_id")
         if not model_id:
             raise AITaskException(
                 code="CONFIG_ERROR",
-                message="任务配置中缺少 model_config_id"
+                message="任务配置中缺少模型 ID (ai_model_id 或 model_config_id)"
             )
 
         # 获取模型适配器
@@ -292,7 +292,7 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
             user_id=user_id,
             task_id=task_id,
             task_type=TaskType.BREAKDOWN,
-            model_config_id=task_config.get("model_config_id")
+            model_config_id=model_id
         )
 
         # 统一 commit（无论是否有 Token 消耗，都要提交批次状态）
@@ -756,7 +756,7 @@ def _handle_task_failure_sync(
             user_id=user_id,
             task_id=task_id,
             task_type=TaskType.BREAKDOWN,
-            model_config_id=task_config.get("model_config_id")
+            model_config_id=model_id
         )
 
         token_consumed = token_result.get("token_credits", 0) > 0
