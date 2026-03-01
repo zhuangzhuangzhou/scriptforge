@@ -18,6 +18,7 @@ class LLMCallLog(Base):
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
 
     # 模型信息
+    ai_model_id = Column(UUID(as_uuid=True), ForeignKey("ai_models.id", ondelete="SET NULL"), nullable=True, index=True)
     provider = Column(String(50), nullable=False)  # openai, anthropic, gemini
     model_name = Column(String(100), nullable=False)
 

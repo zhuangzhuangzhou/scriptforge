@@ -221,12 +221,12 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
         task_record = db.query(AITask).filter(AITask.id == task_id).first()
         task_config = task_record.config if task_record else {}
 
-        # 获取模型配置 ID（必需）
-        model_id = task_config.get("model_config_id")
+        # 获取模型 ID（必需，兼容新旧字段名）
+        model_id = task_config.get("ai_model_id") or task_config.get("model_config_id")
         if not model_id:
             raise AITaskException(
                 code="CONFIG_ERROR",
-                message="任务配置中缺少 model_config_id"
+                message="任务配置中缺少模型 ID (ai_model_id 或 model_config_id)"
             )
 
         # 获取模型适配器
@@ -292,7 +292,7 @@ def run_breakdown_task(self, task_id: str, batch_id: str, project_id: str, user_
             user_id=user_id,
             task_id=task_id,
             task_type=TaskType.BREAKDOWN,
-            model_config_id=task_config.get("model_config_id")
+            model_config_id=model_id
         )
 
         # 统一 commit（无论是否有 Token 消耗，都要提交批次状态）
@@ -756,7 +756,7 @@ def _handle_task_failure_sync(
             user_id=user_id,
             task_id=task_id,
             task_type=TaskType.BREAKDOWN,
-            model_config_id=task_config.get("model_config_id")
+            model_config_id=model_id
         )
 
         token_consumed = token_result.get("token_credits", 0) > 0
@@ -1361,19 +1361,21 @@ def _execute_breakdown_sync(
     # 诊断日志：记录保存到数据库的值
     logger.info(f"[breakdown_tasks] 保存数据库: plot_points={len(plot_points)}, qa_status={normalized_qa_status_for_db}, qa_score={qa_score}")
 
-    # 获取 model_config_id 用于保存拆解记录（便于后续数据分析）
-    model_config_id = task_config.get("model_config_id")
+# 获取模型 ID
+    # 兼容新旧字段名：ai_model_id 是新字段，model_config_id 是旧字段（实际存的是 ai_models.id）
+    ai_model_id = task_config.get("ai_model_id") or task_config.get("model_config_id")
+    model_config_id = task_config.get("model_config_id") if task_config.get("ai_model_id") else None
 
     # 创建 PlotBreakdown 记录
     breakdown = PlotBreakdown(
         batch_id=batch_id,
         project_id=project_id,
-        task_id=task_id,                    # 关联任务 ID（便于追溯）
-        ai_model_id=model_config_id,        # 关联 AI 模型 ID
-        model_config_id=model_config_id,    # 模型配置 ID
-        plot_points=plot_points,            # 剧情点列表（解析后的 JSON）
-        format_version=3,                   # 输出格式版本：3=结构化文本格式
-        consistency_status="pending",       # 一致性检查状态
+        task_id=task_id,
+        ai_model_id=ai_model_id,
+        model_config_id=model_config_id,
+        plot_points=plot_points,
+        format_version=3,
+        consistency_status="pending",
         qa_status=normalized_qa_status_for_db,
         qa_score=qa_score,
         qa_report=qa_report,

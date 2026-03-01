@@ -91,6 +91,7 @@ def log_llm_call(
     task_id: Optional[str] = None,
     user_id: Optional[str] = None,
     project_id: Optional[str] = None,
+    ai_model_id: Optional[str] = None,
     skill_name: Optional[str] = None,
     stage: Optional[str] = None
 ):
@@ -108,11 +109,13 @@ def log_llm_call(
         final_task_id = _safe_uuid(task_id or ctx.get("task_id"))
         final_user_id = _safe_uuid(user_id or ctx.get("user_id"))
         final_project_id = _safe_uuid(project_id or ctx.get("project_id"))
+        final_ai_model_id = _safe_uuid(ai_model_id)
 
         log = LLMCallLog(
             task_id=final_task_id,
             user_id=final_user_id,
             project_id=final_project_id,
+            ai_model_id=final_ai_model_id,
             provider=provider,
             model_name=model_name,
             skill_name=skill_name or ctx.get("skill_name"),
@@ -157,6 +160,7 @@ async def log_llm_call_async(
     task_id: Optional[str] = None,
     user_id: Optional[str] = None,
     project_id: Optional[str] = None,
+    ai_model_id: Optional[str] = None,
     skill_name: Optional[str] = None,
     stage: Optional[str] = None
 ):
@@ -174,11 +178,13 @@ async def log_llm_call_async(
         final_task_id = _safe_uuid(task_id or ctx.get("task_id"))
         final_user_id = _safe_uuid(user_id or ctx.get("user_id"))
         final_project_id = _safe_uuid(project_id or ctx.get("project_id"))
+        final_ai_model_id = _safe_uuid(ai_model_id)
 
         log = LLMCallLog(
             task_id=final_task_id,
             user_id=final_user_id,
             project_id=final_project_id,
+            ai_model_id=final_ai_model_id,
             provider=provider,
             model_name=model_name,
             skill_name=skill_name or ctx.get("skill_name"),

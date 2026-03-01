@@ -13,6 +13,8 @@ class BaseModelAdapter(ABC):
     def __init__(self, api_key: str, model_name: str, **kwargs):
         self.api_key = api_key
         self.model_name = model_name
+        # 系统模型 ID (UUID)
+        self.ai_model_id = kwargs.get("ai_model_id")
         self.config = kwargs
         # 模型默认配置（max_output_tokens, temperature_default 等）
         self.model_config = kwargs.get("model_config", {})
@@ -60,6 +62,7 @@ class BaseModelAdapter(ABC):
                         db=sync_db,
                         provider=self.provider_name,
                         model_name=self.model_name,
+                        ai_model_id=self.ai_model_id,
                         prompt=prompt,
                         response=response,
                         prompt_tokens=prompt_tokens,
@@ -77,6 +80,7 @@ class BaseModelAdapter(ABC):
                     db=self._db,
                     provider=self.provider_name,
                     model_name=self.model_name,
+                    ai_model_id=self.ai_model_id,
                     prompt=prompt,
                     response=response,
                     prompt_tokens=prompt_tokens,
@@ -116,6 +120,7 @@ class BaseModelAdapter(ABC):
                 db=self._db,
                 provider=self.provider_name,
                 model_name=self.model_name,
+                ai_model_id=self.ai_model_id,
                 prompt=prompt,
                 response=response,
                 prompt_tokens=prompt_tokens,

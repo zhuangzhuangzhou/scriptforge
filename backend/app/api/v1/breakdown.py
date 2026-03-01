@@ -86,7 +86,6 @@ async def _check_previous_breakdown_success_async(
 class BreakdownStartRequest(BaseModel):
     """启动拆解请求"""
     batch_id: str
-    # model_config_id 不再需要，从项目配置读取
     selected_skills: Optional[List[str]] = None
     pipeline_id: Optional[str] = None
     # 小说类型（用于加载类型专属文档）
@@ -178,136 +177,35 @@ async def start_breakdown(
             detail="项目不存在"
         )
 
-    # 检查项目是否配置了拆解模型
-    if not project.breakdown_model_id:
+    # --- 模型选择逻辑 (项目配置优先 > 系统默认兜底) ---
+    final_ai_model_id = None
+
+    # 1. 优先使用项目配置中设置的拆解模型
+    if project.breakdown_model_id:
+        final_ai_model_id = str(project.breakdown_model_id)
+    else:
+        # 2. 如果项目未配置，查找系统默认模型进行兜底
+        from app.models.ai_model import AIModel
+        default_model_result = await db.execute(
+            select(AIModel).where(AIModel.is_default == True, AIModel.is_enabled == True).limit(1)
+        )
+        default_model = default_model_result.scalar_one_or_none()
+        if default_model:
+            final_ai_model_id = str(default_model.id)
+            logger.info(f"项目 {project.id} 未配置模型，使用系统默认模型兜底: {default_model.display_name}")
+
+    if not final_ai_model_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="项目未配置剧情拆解模型，请先在项目设置中选择模型"
+            detail="系统无法确定使用的 AI 模型。请先在项目设置中配置模型，或联系管理员设置系统默认模型。"
         )
-
-    # 检查是否已有任务在执行（防止重复提交）
-    # 移除 CANCELLING，因为取消中的任务可能永远不会结束（Celery回调卡住）
-    # 我们会在下面单独处理 CANCELLING 状态的任务
-    active_statuses = [TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.IN_PROGRESS]
-    existing_task_result = await db.execute(
-        select(AITask).where(
-            AITask.batch_id == request.batch_id,
-            AITask.status.in_(active_statuses)
-        )
-    )
-    existing_task = existing_task_result.scalar_one_or_none()
-
-    if existing_task:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"该批次已有任务在执行中，任务ID: {existing_task.id}"
-        )
-
-    # 检查是否有取消中的任务（CANCELLING），这些任务可能永远不会结束
-    # 需要自动清理超时的取消任务
-    cancelling_task_result = await db.execute(
-        select(AITask).where(
-            AITask.batch_id == request.batch_id,
-            AITask.status == TaskStatus.CANCELLING
-        )
-    )
-    cancelling_task = cancelling_task_result.scalar_one_or_none()
-
-    if cancelling_task:
-        # 检查取消任务是否超时（超过 5 分钟视为僵尸任务，缩短等待时间）
-        CANCELLING_TIMEOUT = timedelta(minutes=5)
-        now = datetime.now(timezone.utc)
-        # 使用 updated_at，如果不存在则回退到 created_at
-        task_timestamp = getattr(cancelling_task, 'updated_at', None) or cancelling_task.created_at
-        # 确保时区一致性
-        if task_timestamp and task_timestamp.tzinfo is None:
-            task_timestamp = task_timestamp.replace(tzinfo=timezone.utc)
-        task_age = now - task_timestamp if task_timestamp else timedelta(hours=1)  # 默认超时
-
-        # 先检查 Celery 任务的实际状态
-        celery_task_finished = False
-        if cancelling_task.celery_task_id:
-            try:
-                from celery.result import AsyncResult
-                celery_result = AsyncResult(cancelling_task.celery_task_id, app=celery_app)
-                # Celery 任务已结束的状态
-                if celery_result.state in ('SUCCESS', 'FAILURE', 'REVOKED'):
-                    celery_task_finished = True
-                    print(f"Celery 任务 {cancelling_task.celery_task_id} 已结束，状态: {celery_result.state}")
-            except Exception as e:
-                print(f"检查 Celery 任务状态失败: {e}")
-
-        if celery_task_finished or task_age > CANCELLING_TIMEOUT:
-            # Celery 任务已结束或超时，自动标记为已取消
-            reason = "Celery 任务已结束" if celery_task_finished else f"超时 {task_age}"
-            print(f"检测到僵尸取消任务 {cancelling_task.id}（{reason}），自动清理")
-            cancelling_task.status = TaskStatus.CANCELLED
-            cancelling_task.error_message = f"任务取消完成（{reason}）"
-            # 同时更新批次状态为 pending
-            batch.breakdown_status = BatchStatus.PENDING
-            await db.flush()
-            print(f"已将任务 {cancelling_task.id} 标记为 cancelled，批次状态更新为 pending")
-        else:
-            # 取消中的任务还未超时，提示用户
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"该批次有任务正在取消中，请稍候再试（已等待 {task_age.seconds // 60} 分钟）"
-            )
-    
-    # 如果批次状态是 failed，允许重新提交（清理旧的失败任务记录）
-    if batch.breakdown_status == BatchStatus.FAILED:
-        # 查找失败的任务记录
-        failed_task_result = await db.execute(
-            select(AITask).where(
-                AITask.batch_id == request.batch_id,
-                AITask.status == TaskStatus.FAILED
-            )
-        )
-        failed_tasks = failed_task_result.scalars().all()
-        # 注意：不删除失败任务记录，保留用于历史追溯
-        # 只是允许创建新任务
-
-    # 检查前置批次是否已完成（强制顺序执行，避免集数编号错乱）
-    # 查询同项目中 start_chapter 更小的批次，检查是否都已完成
-    pending_previous_result = await db.execute(
-        select(Batch).where(
-            Batch.project_id == batch.project_id,
-            Batch.start_chapter < batch.start_chapter,
-            Batch.breakdown_status.not_in([BatchStatus.COMPLETED])
-        ).order_by(Batch.start_chapter).limit(1)
-    )
-    pending_previous_batch = pending_previous_result.scalar_one_or_none()
-
-    if pending_previous_batch:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"请先完成前面的批次拆解（第 {pending_previous_batch.start_chapter}-{pending_previous_batch.end_chapter} 章尚未完成）"
-        )
-
-    # 锁定用户记录，防止并发请求导致积分超支
-    user_result = await db.execute(
-        select(User).where(User.id == current_user.id).with_for_update()
-    )
-    locked_user = user_result.scalar_one()
-
-    # 检查积分（纯积分制）
-    quota_service = QuotaService(db)
-    credits_check = await quota_service.check_credits(locked_user, "breakdown")
-    if not credits_check["allowed"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"积分不足: 需要 {credits_check['cost']}，余额 {credits_check['balance']}"
-        )
-
-    # 消耗积分（预扣）
-    await quota_service.consume_credits(locked_user, "breakdown", "剧情拆解")
 
     # 构建任务配置
     task_config = {
-        "model_config_id": str(project.breakdown_model_id),  # 从项目配置读取
+        "ai_model_id": final_ai_model_id,
         "selected_skills": request.selected_skills or [],
         "pipeline_id": request.pipeline_id,
-        "execution_mode": request.execution_mode or "agent_single",  # 执行模式
+        "execution_mode": request.execution_mode or "agent_single",
     }
 
     # 添加小说类型（优先使用请求参数，否则从项目配置读取）
@@ -839,8 +737,8 @@ async def start_all_breakdowns(
                 task_type=TaskType.BREAKDOWN,
                 status=TaskStatus.QUEUED,
                 depends_on=[],
-                config={
-                    "model_config_id": str(project.breakdown_model_id),  # 从项目配置读取
+config={
+                    "ai_model_id": str(project.breakdown_model_id),
                     "adapt_method_key": "adapt_method_default",
                     "quality_rule_key": "qa_breakdown_default",
                     "output_style_key": "output_style_default"
@@ -1521,11 +1419,11 @@ async def start_batch_breakdown(
             task_type=TaskType.BREAKDOWN,
             status=TaskStatus.QUEUED,
             depends_on=[],
-            config={
-                "model_config_id": str(project.breakdown_model_id),
+config={
+                "ai_model_id": str(project.breakdown_model_id),
                 **task_config,
-                "auto_continue": True,  # 标记为自动连续拆解模式
-                "total_batches": len(batch_data)  # 记录总批次数
+                "auto_continue": True,
+                "total_batches": len(batch_data)
             }
         )
         db.add(task)
