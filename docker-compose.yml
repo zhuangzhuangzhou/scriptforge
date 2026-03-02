@@ -32,8 +32,7 @@ services:
         condition: service_healthy
     networks:
       - app-network
-    volumes:
-      - ./backend/.env:/app/.env:ro
+    # 移除旧的 volumes 挂载，使用 env_file 即可
 
   postgres:
     image: postgres:15-alpine
@@ -94,7 +93,7 @@ services:
     container_name: novel-script-worker
     command: celery -A app.core.celery_app worker --loglevel=info
     env_file:
-      - ./backend/.env
+      - ./backend/.env.production
     environment:
       - POSTGRES_SERVER=postgres
       - POSTGRES_USER=postgres
@@ -114,7 +113,7 @@ services:
     container_name: novel-script-worker-beat
     command: celery -A app.core.celery_app beat --loglevel=info
     env_file:
-      - ./backend/.env
+      - ./backend/.env.production
     environment:
       - POSTGRES_SERVER=postgres
       - POSTGRES_USER=postgres
