@@ -18,6 +18,7 @@ tar -czf jim-deploy.tar.gz \
     --exclude="__pycache__" \
     --exclude="*.log" \
     --exclude=".env.local" \
+    --exclude="backend/.env" \
     -C "$LOCAL_PROJECT_DIR" .
 
 echo "📦 [2/6] 上传代码包到服务器..."
