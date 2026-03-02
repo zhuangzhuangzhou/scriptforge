@@ -27,7 +27,7 @@ const ModelConfiguration: React.FC = () => {
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingModel, setEditingModel] = useState<AIModel | null>(null);
   const [selectedProviderId, setSelectedProviderId] = useState<string | undefined>(undefined);
-  const [statusFilter, setStatusFilter] = useState<boolean | undefined>(undefined);
+  const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
   const [form] = Form.useForm();
   const initialized = useRef(false);
 
@@ -310,8 +310,8 @@ const ModelConfiguration: React.FC = () => {
 
   // 根据状态筛选过滤模型
   const filteredModels = models.filter(model => {
-    if (statusFilter !== undefined) {
-      return model.is_enabled === statusFilter;
+    if (statusFilter !== undefined && statusFilter !== '') {
+      return model.is_enabled === (statusFilter === 'enabled');
     }
     return true;
   });
@@ -339,8 +339,8 @@ const ModelConfiguration: React.FC = () => {
               value={statusFilter}
               onChange={setStatusFilter}
               options={[
-                { label: '已启用', value: true },
-                { label: '已禁用', value: false },
+                { label: '已启用', value: 'enabled' },
+                { label: '已禁用', value: 'disabled' },
               ]}
             />
           </div>
