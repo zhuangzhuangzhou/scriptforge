@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     """应用配置"""
 
     # 应用基础配置
-    APP_NAME: str = "Novel-to-Script System"
+    APP_NAME: str = "ScriptForge"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = True
     SECRET_KEY: str
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     MINIO_ENDPOINT: str
     MINIO_ACCESS_KEY: str
     MINIO_SECRET_KEY: str
-    MINIO_BUCKET_NAME: str = "novel-scripts"
+    MINIO_BUCKET_NAME: str = "scriptforge"
     MINIO_SECURE: bool = False
 
     # JWT 配置

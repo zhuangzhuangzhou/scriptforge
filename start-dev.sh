@@ -19,7 +19,7 @@ check_ssh_tunnel() {
     else
         echo -e "${RED}✗ SSH 隧道未建立${NC}"
         echo -e "${YELLOW}请先运行以下命令建立 SSH 隧道：${NC}"
-        echo "ssh -o ServerAliveInterval=60 -L 5433:127.0.0.1:35432 -L 6380:127.0.0.1:6379 -L 9000:127.0.0.1:19000 root@REMOVED_IP"
+        echo "ssh -o ServerAliveInterval=60 -L 5433:127.0.0.1:35432 -L 6380:127.0.0.1:6379 -L 9000:127.0.0.1:19000 user@your-server-ip"
         return 1
     fi
 }

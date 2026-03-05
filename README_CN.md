@@ -1,10 +1,10 @@
-# ScriptForge
+# ScriptForge 中文文档
 
-**AI-Powered Novel to Script Adaptation Platform**
-
-English | [简体中文](./README_CN.md)
+**AI 驱动的小说改编剧本平台**
 
 一款基于 AI 的小说改编剧本系统，让用户能够将上传的小说文件，通过批次处理和两阶段 AI 工作流（剧情拆解 → 剧本生成），自动改编成符合影视剧本标准的剧集。
+
+[English](./README.md) | 简体中文
 
 ## ✨ 核心特性
 

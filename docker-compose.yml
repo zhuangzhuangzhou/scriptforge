@@ -3,7 +3,7 @@ version: '3.8'
 services:
   frontend:
     build: ./frontend
-    container_name: novel-script-frontend
+    container_name: scriptforge-frontend
     ports:
       - "3000:80"
     depends_on:
@@ -14,7 +14,7 @@ services:
 
   backend:
     build: ./backend
-    container_name: novel-script-backend
+    container_name: scriptforge-backend
     ports:
       - "8000:8000"
     env_file:
@@ -23,7 +23,7 @@ services:
       - POSTGRES_SERVER=postgres
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=novel_script
+      - POSTGRES_DB=scriptforge
       - REDIS_HOST=redis
     depends_on:
       postgres:
@@ -32,15 +32,14 @@ services:
         condition: service_healthy
     networks:
       - app-network
-    # 移除旧的 volumes 挂载，使用 env_file 即可
 
   postgres:
     image: postgres:15-alpine
-    container_name: novel-script-postgres
+    container_name: scriptforge-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: novel_script
+      POSTGRES_DB: scriptforge
     ports:
       - "5432:5432"
     volumes:
@@ -55,7 +54,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: novel-script-redis
+    container_name: scriptforge-redis
     ports:
       - "6379:6379"
     volumes:
@@ -68,20 +67,20 @@ services:
     networks:
       - app-network
 
-  minio_access_key:
-    image: minio_access_key/minio_access_key:latest
-    container_name: novel-script-minio_access_key
+  minio:
+    image: minio/minio:latest
+    container_name: scriptforge-minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minio_access_keyadmin
-      MINIO_ROOT_PASSWORD: minio_access_keyadmin
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     ports:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - minio_access_key_data:/data
+      - minio_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio_access_key/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
       timeout: 20s
       retries: 3
@@ -90,7 +89,7 @@ services:
 
   worker:
     build: ./backend
-    container_name: novel-script-worker
+    container_name: scriptforge-worker
     command: celery -A app.core.celery_app worker --loglevel=info
     env_file:
       - ./backend/.env.production
@@ -98,7 +97,7 @@ services:
       - POSTGRES_SERVER=postgres
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=novel_script
+      - POSTGRES_DB=scriptforge
       - REDIS_HOST=redis
     depends_on:
       postgres:
@@ -110,7 +109,7 @@ services:
 
   worker_beat:
     build: ./backend
-    container_name: novel-script-worker-beat
+    container_name: scriptforge-worker-beat
     command: celery -A app.core.celery_app beat --loglevel=info
     env_file:
       - ./backend/.env.production
@@ -118,7 +117,7 @@ services:
       - POSTGRES_SERVER=postgres
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=novel_script
+      - POSTGRES_DB=scriptforge
       - REDIS_HOST=redis
     depends_on:
       postgres:
@@ -135,4 +134,4 @@ networks:
 volumes:
   postgres_data:
   redis_data:
-  minio_access_key_data:
+  minio_data:

@@ -16,7 +16,7 @@ if lsof -i:5433 > /dev/null 2>&1 && lsof -i:6380 > /dev/null 2>&1 && lsof -i:900
     echo -e "${GREEN}✓ SSH 隧道已建立${NC}"
 else
     echo -e "${RED}✗ SSH 隧道未建立，请先运行：${NC}"
-    echo "ssh -o ServerAliveInterval=60 -L 5433:127.0.0.1:35432 -L 6380:127.0.0.1:6379 -L 9000:127.0.0.1:19000 root@REMOVED_IP"
+    echo "ssh -o ServerAliveInterval=60 -L 5433:127.0.0.1:35432 -L 6380:127.0.0.1:6379 -L 9000:127.0.0.1:19000 user@your-server-ip"
     exit 1
 fi
 echo ""
