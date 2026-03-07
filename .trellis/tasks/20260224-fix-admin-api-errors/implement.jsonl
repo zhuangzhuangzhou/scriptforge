@@ -1,2 +1,0 @@
-{"path": ".trellis/spec/backend/index.md", "reason": "后端开发核心规范,包含错误处理和API测试规范"}
-{"path": ".trellis/spec/backend/database.md", "reason": "数据库设计和异常处理规范"}

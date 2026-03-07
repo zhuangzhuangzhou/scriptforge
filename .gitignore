@@ -11,6 +11,9 @@ Thumbs.db
 # Claude
 .claude/
 
+# Trellis (AI workflow management)
+.trellis/
+
 # Other
 .zcf/
 
