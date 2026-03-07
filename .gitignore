@@ -14,6 +14,15 @@ Thumbs.db
 # Trellis (AI workflow management)
 .trellis/
 
+# Kiro (AI development tool)
+.kiro/
+
+# Codex (AI coding assistant)
+.codex/
+
+# GitHub workflows and templates (project-specific)
+.github/
+
 # Other
 .zcf/
 
