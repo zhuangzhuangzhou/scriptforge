@@ -6,6 +6,36 @@ English | [简体中文](./README_CN.md)
 
 一款基于 AI 的小说改编剧本系统，让用户能够将上传的小说文件，通过批次处理和两阶段 AI 工作流（剧情拆解 → 剧本生成），自动改编成符合影视剧本标准的剧集。
 
+## 📸 功能截图
+
+### 项目概览
+<img src="./docs/images/screenshots/dashboard-overview.png" width="800" alt="项目概览界面">
+
+展示项目的整体信息，包括项目列表、统计数据和快速操作入口。
+
+### 项目工作台
+<img src="./docs/images/screenshots/project-workspace.png" width="800" alt="项目工作台">
+
+项目管理界面，支持章节划分、批次配置和实时进度监控。
+
+### 剧情拆解
+<img src="./docs/images/screenshots/breakdown-view.png" width="800" alt="剧情拆解界面">
+
+AI 自动分析小说内容，提取冲突点、人物关系、场景等关键剧情要素。
+
+### 剧本生成
+<div style="display: flex; gap: 10px;">
+<img src="./docs/images/screenshots/script-generation-1.png" width="400" alt="剧本生成界面-1">
+<img src="./docs/images/screenshots/script-generation-2.png" width="400" alt="剧本生成界面-2">
+</div>
+
+根据剧情拆解结果，AI 生成符合影视标准的剧本内容，包括场景描述、对话和动作指导。
+
+### 后台管理
+<img src="./docs/images/screenshots/admin-panel.png" width="800" alt="后台管理界面">
+
+系统管理功能，包括用户管理、模型配置和系统监控。
+
 ## ✨ 核心特性
 
 - 🤖 **AI 驱动**：基于 LangChain + LangGraph 的智能工作流
